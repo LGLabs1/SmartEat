@@ -1,0 +1,1589 @@
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import '../services/api_service.dart';
+import '../services/auth_provider.dart';
+
+class POSScreen extends StatefulWidget {
+  const POSScreen({
+    Key? key,
+    this.initialAddToExistingOrder = false,
+    this.initialOrderId = '',
+    this.showAppBar = true,
+  }) : super(key: key);
+
+  final bool initialAddToExistingOrder;
+  final String initialOrderId;
+  final bool showAppBar;
+
+  @override
+  State<POSScreen> createState() => _POSScreenState();
+}
+
+class _POSScreenState extends State<POSScreen> {
+  List<Map<String, dynamic>> _cartItems = [];
+  List<Map<String, dynamic>> _menuItems = [];
+  bool _isLoading = false;
+  double _totalAmount = 0.0;
+  bool _isAdmin = false;
+  String? _lastRoleUid;
+  bool _addToExistingOrder = false;
+  String _targetPendingOrderId = '';
+  List<Map<String, dynamic>> _pendingOrders = const [];
+  final Map<String, int> _baselineQtyByMenuId = {};
+  bool _isPrefilling = false;
+  String _selectedCategory = 'All';
+
+  void _openCartSheet() {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (context) {
+        return SafeArea(
+          child: SizedBox(
+            height: MediaQuery.of(context).size.height * 0.82,
+            child: _CartPanel(
+              cartItems: _cartItems,
+              totalAmount: _totalAmount,
+              isLoading: _isLoading,
+              isAddToExistingOrder: _addToExistingOrder,
+              orderId: _targetPendingOrderId,
+              baselineQtyByMenuId: _baselineQtyByMenuId,
+              onQuantityChanged: (index, qty) => _updateQuantity(index, qty),
+              onRemove: (index) => _removeFromCart(index),
+              onCreateOrder: _createOrder,
+              actionLabel: _addToExistingOrder ? 'Add Items' : 'Create Order',
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _loadMenuItems();
+    _addToExistingOrder = widget.initialAddToExistingOrder;
+    _targetPendingOrderId = widget.initialOrderId.trim();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadRole();
+      if (_addToExistingOrder && _targetPendingOrderId.isNotEmpty) {
+        _prefillPendingOrderIntoCart(_targetPendingOrderId);
+      }
+    });
+  }
+
+  String _shortOrderId(String id) {
+    final trimmed = id.trim();
+    if (trimmed.isEmpty) return '';
+    return trimmed.length <= 6 ? trimmed : trimmed.substring(0, 6);
+  }
+
+  Future<void> _prefillPendingOrderIntoCart(String orderId) async {
+    if (_isPrefilling) return;
+    final trimmed = orderId.trim();
+    if (trimmed.isEmpty) return;
+
+    setState(() {
+      _isPrefilling = true;
+    });
+
+    try {
+      final res = await ApiService.getOrderById(trimmed);
+      final order = Map<String, dynamic>.from(res['data'] ?? const {});
+      final itemsRaw = order['items'];
+      final items = itemsRaw is List ? itemsRaw : const [];
+
+      final nextCart = <Map<String, dynamic>>[];
+      final nextBaseline = <String, int>{};
+
+      int asInt(dynamic v) {
+        if (v is int) return v;
+        if (v is num) return v.toInt();
+        return int.tryParse((v ?? '').toString()) ?? 0;
+      }
+
+      double asDouble(dynamic v) {
+        if (v is num) return v.toDouble();
+        return double.tryParse((v ?? '').toString()) ?? 0.0;
+      }
+
+      for (final raw in items) {
+        if (raw is! Map) continue;
+        final it = Map<String, dynamic>.from(raw);
+        final menuItemId = (it['menuItemId'] ?? '').toString().trim();
+        if (menuItemId.isEmpty) continue;
+        final qty = asInt(it['quantity']);
+        if (qty <= 0) continue;
+        final price = asDouble(it['price']);
+
+        final menu = _menuItems.firstWhere(
+          (m) => (m['id'] ?? '').toString().trim() == menuItemId,
+          orElse: () => const {},
+        );
+
+        final name = (menu is Map && menu.isNotEmpty)
+            ? (menu['name'] ?? '').toString()
+            : (it['name'] ?? '').toString();
+
+        nextCart.add({
+          ...(menu is Map && menu.isNotEmpty
+              ? Map<String, dynamic>.from(menu)
+              : {
+                  'id': menuItemId,
+                  'name': name,
+                  'price': price,
+                }),
+          'id': menuItemId,
+          'name': name,
+          'price': price,
+          'quantity': qty,
+          'subtotal': price * qty,
+        });
+
+        nextBaseline[menuItemId] = qty;
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _cartItems = nextCart;
+        _baselineQtyByMenuId
+          ..clear()
+          ..addAll(nextBaseline);
+        _calculateTotal();
+        _isPrefilling = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _isPrefilling = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to load order items: $e')),
+      );
+    }
+  }
+
+  bool _isAdminFromProfile(Map<String, dynamic>? profile) {
+    if (profile == null) return false;
+    final role = (profile['role'] ?? '').toString().trim().toLowerCase();
+    final dynamic isAdminRaw = profile['isAdmin'];
+    final bool isAdminFlag = isAdminRaw == true ||
+        isAdminRaw == 1 ||
+        (isAdminRaw is String && isAdminRaw.toLowerCase().trim() == 'true');
+    return isAdminFlag || role == 'admin';
+  }
+
+  Future<void> _loadRole() async {
+    final uid = context.read<AuthProvider>().user?.uid;
+    if (uid == null || uid.isEmpty) return;
+    if (_lastRoleUid == uid) return;
+    _lastRoleUid = uid;
+
+    try {
+      final profile =
+          await context.read<AuthProvider>().getCurrentUserProfile();
+      if (!mounted) return;
+      final nextIsAdmin = _isAdminFromProfile(profile);
+      final shouldReload = !_isAdmin && nextIsAdmin;
+      setState(() {
+        _isAdmin = nextIsAdmin;
+      });
+      if (shouldReload) {
+        await _loadMenuItems();
+      }
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _isAdmin = false;
+      });
+    }
+  }
+
+  Future<void> _loadMenuItems() async {
+    setState(() => _isLoading = true);
+
+    try {
+      final results = await Future.wait([
+        ApiService.getMenuItems(),
+        ApiService.getInventoryItems(),
+      ]);
+
+      final menuRes = results[0];
+      final invRes = results[1];
+
+      final inventoryItems =
+          List<Map<String, dynamic>>.from(invRes['data'] ?? const []);
+      final inventoryById = <String, Map<String, dynamic>>{
+        for (final inv in inventoryItems) (inv['id'] ?? '').toString(): inv,
+      };
+
+      final rawMenuItems =
+          List<Map<String, dynamic>>.from(menuRes['data'] ?? const []);
+
+      if (_isAdmin) {
+        final menuByInventoryId = <String, Map<String, dynamic>>{};
+        for (final m in rawMenuItems) {
+          final invId = (m['inventoryItemId'] ?? '').toString().trim();
+          if (invId.isEmpty) continue;
+          menuByInventoryId[invId] = m;
+        }
+
+        final sellingPriceByInventoryId = <String, double>{
+          for (final inv in inventoryItems)
+            (inv['id'] ?? '').toString().trim(): (inv['sellingPrice'] is num
+                ? (inv['sellingPrice'] as num).toDouble()
+                : double.tryParse((inv['sellingPrice'] ?? '').toString()) ?? 0),
+        };
+
+        final List<Future<void>> syncOps = [];
+        for (final inv in inventoryItems) {
+          final invId = (inv['id'] ?? '').toString().trim();
+          if (invId.isEmpty) continue;
+          final name = (inv['name'] ?? '').toString().trim();
+          if (name.isEmpty) continue;
+
+          final selling = sellingPriceByInventoryId[invId] ?? 0;
+          if (selling <= 0) continue;
+
+          final stockRaw = inv['currentStock'];
+          final stock = stockRaw is num
+              ? stockRaw.toInt()
+              : int.tryParse((stockRaw ?? '').toString()) ?? 0;
+
+          final existing = menuByInventoryId[invId];
+          if (existing == null) {
+            syncOps.add(() async {
+              await ApiService.createMenuItem(
+                name: name,
+                category: 'Drinks',
+                categories: const ['Drinks'],
+                inventoryItemId: invId,
+                price: selling.round(),
+                availableServings: stock,
+                description: '',
+                imageUrl: '',
+              );
+            }());
+          }
+        }
+
+        for (final entry in menuByInventoryId.entries) {
+          final invId = entry.key;
+          final menu = entry.value;
+          final selling = sellingPriceByInventoryId[invId] ?? 0;
+          if (selling > 0) continue;
+          final id = (menu['id'] ?? '').toString().trim();
+          if (id.isEmpty) continue;
+          syncOps.add(() async {
+            await ApiService.updateMenuItem(
+              id,
+              availableServings: 0,
+            );
+          }());
+        }
+
+        if (syncOps.isNotEmpty) {
+          await Future.wait(syncOps);
+          final refreshed = await ApiService.getMenuItems();
+          rawMenuItems
+            ..clear()
+            ..addAll(
+                List<Map<String, dynamic>>.from(refreshed['data'] ?? const []));
+        }
+      }
+
+      final normalizedMenuItems = rawMenuItems.map((item) {
+        if (item['price'] is String) {
+          item['price'] = double.tryParse(item['price']) ?? 0.0;
+        }
+
+        final invId = (item['inventoryItemId'] ?? '').toString().trim();
+        if (invId.isNotEmpty) {
+          final inv = inventoryById[invId];
+          if (inv != null) {
+            final stockRaw = inv['currentStock'];
+            final stock = stockRaw is num
+                ? stockRaw.toInt()
+                : int.tryParse((stockRaw ?? '').toString()) ?? 0;
+            item['availableServings'] = stock;
+            final manual = item['isAvailable'];
+            final manualOff = manual is bool && manual == false;
+            item['isAvailable'] = stock > 0 && !manualOff;
+          }
+        }
+        return item;
+      }).toList();
+
+      setState(() {
+        _menuItems = normalizedMenuItems;
+        final cats = _availableCategories();
+        if (!cats.contains(_selectedCategory)) {
+          _selectedCategory = 'All';
+        }
+        _isLoading = false;
+      });
+    } catch (e) {
+      setState(() => _isLoading = false);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error loading menu: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _loadPendingOrders() async {
+    try {
+      final res = await ApiService.getPendingOrders(limit: 25);
+      final orders = List<Map<String, dynamic>>.from(res['data'] ?? const []);
+      if (!mounted) return;
+      setState(() {
+        _pendingOrders = orders;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to load pending orders: $e')),
+      );
+    }
+  }
+
+  Future<void> _pickPendingOrder() async {
+    await _loadPendingOrders();
+    if (!mounted) return;
+
+    final selected = await showDialog<Map<String, dynamic>?>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Select Pending Order'),
+          content: SizedBox(
+            width: 520,
+            child: _pendingOrders.isEmpty
+                ? const Text('No pending orders found.')
+                : ListView.separated(
+                    shrinkWrap: true,
+                    itemCount: _pendingOrders.length,
+                    separatorBuilder: (_, __) => const Divider(height: 1),
+                    itemBuilder: (context, index) {
+                      final o = _pendingOrders[index];
+                      final id = (o['id'] ?? '').toString();
+                      final total =
+                          (o['totalAmount'] as num?)?.toDouble() ?? 0.0;
+                      return ListTile(
+                        title: Text(
+                          id.isEmpty
+                              ? 'Order'
+                              : 'Order #${id.substring(0, id.length > 6 ? 6 : id.length)}',
+                        ),
+                        subtitle: Text('₱${total.toStringAsFixed(2)}'),
+                        onTap: () => Navigator.of(context).pop(o),
+                      );
+                    },
+                  ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(null),
+              child: const Text('Cancel'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (selected == null) return;
+    final id = (selected['id'] ?? '').toString().trim();
+    if (id.isEmpty) return;
+    setState(() {
+      _targetPendingOrderId = id;
+    });
+
+    if (_addToExistingOrder && _targetPendingOrderId.isNotEmpty) {
+      await _prefillPendingOrderIntoCart(_targetPendingOrderId);
+    }
+  }
+
+  int _qtyInCart(String menuId) {
+    final idx = _cartItems.indexWhere(
+      (e) => (e['id'] ?? '').toString().trim() == menuId,
+    );
+    if (idx < 0) return 0;
+    final q = _cartItems[idx]['quantity'];
+    if (q is int) return q;
+    if (q is num) return q.toInt();
+    return int.tryParse((q ?? '').toString()) ?? 0;
+  }
+
+  void _setQtyForItem(Map<String, dynamic> item, int nextQty) {
+    final menuId = (item['id'] ?? '').toString().trim();
+    if (menuId.isEmpty) return;
+
+    final servingsRaw = item['servings'] ?? item['availableServings'] ?? 0;
+    final servings = servingsRaw is num
+        ? servingsRaw.toInt()
+        : int.tryParse((servingsRaw ?? '').toString()) ?? 0;
+    final manualAvailability = item['isAvailable'];
+    final isAvailable =
+        manualAvailability is bool ? manualAvailability : servings > 0;
+
+    if (!isAvailable && nextQty > 0) {
+      return;
+    }
+
+    final cappedQty = servings > 0 ? nextQty.clamp(0, servings) : 0;
+    final exceeded = nextQty > cappedQty;
+
+    setState(() {
+      final idx = _cartItems.indexWhere(
+        (e) => (e['id'] ?? '').toString().trim() == menuId,
+      );
+
+      if (cappedQty <= 0) {
+        if (idx >= 0) {
+          _cartItems.removeAt(idx);
+        }
+        _calculateTotal();
+        return;
+      }
+
+      final priceRaw = item['price'];
+      final price = priceRaw is num
+          ? priceRaw.toDouble()
+          : double.tryParse((priceRaw ?? '').toString()) ?? 0.0;
+
+      if (idx >= 0) {
+        _cartItems[idx]['quantity'] = cappedQty;
+        _cartItems[idx]['subtotal'] = price * cappedQty;
+      } else {
+        _cartItems.add({
+          ...item,
+          'id': menuId,
+          'quantity': cappedQty,
+          'subtotal': price * cappedQty,
+        });
+      }
+      _calculateTotal();
+    });
+
+    if (exceeded && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Only $servings left in stock.')),
+      );
+    }
+  }
+
+  List<String> _availableCategories() {
+    final set = <String>{};
+    for (final it in _menuItems) {
+      final c = (it['category'] ?? '').toString().trim();
+      if (c.isNotEmpty) set.add(c);
+    }
+    final list = set.toList()..sort((a, b) => a.compareTo(b));
+    return ['All', ...list];
+  }
+
+  Widget _buildCategoryChips() {
+    final cats = _availableCategories();
+    if (cats.length <= 1) return const SizedBox(height: 0);
+
+    return SizedBox(
+      height: 44,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+        itemCount: cats.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        itemBuilder: (context, index) {
+          final cat = cats[index];
+          final selected = _selectedCategory == cat;
+          return ChoiceChip(
+            label: Text(
+              cat,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontWeight: FontWeight.w700,
+                color: selected ? Colors.white : Colors.black87,
+              ),
+            ),
+            selected: selected,
+            onSelected: (_) {
+              setState(() {
+                _selectedCategory = cat;
+              });
+            },
+            selectedColor: Theme.of(context).colorScheme.primary,
+            backgroundColor: Colors.white,
+            side: BorderSide(color: Colors.grey.shade300),
+          );
+        },
+      ),
+    );
+  }
+
+  void _updateQuantity(int index, int quantity) {
+    if (quantity <= 0) {
+      _removeFromCart(index);
+      return;
+    }
+
+    setState(() {
+      _cartItems[index]['quantity'] = quantity;
+      _cartItems[index]['subtotal'] = quantity * _cartItems[index]['price'];
+      _calculateTotal();
+    });
+  }
+
+  void _removeFromCart(int index) {
+    setState(() {
+      _cartItems.removeAt(index);
+      _calculateTotal();
+    });
+  }
+
+  void _calculateTotal() {
+    _totalAmount = _cartItems.fold(
+      0.0,
+      (sum, item) => sum + (item['subtotal'] as double),
+    );
+  }
+
+  Future<void> _createOrder() async {
+    if (_cartItems.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Cart is empty')),
+      );
+      return;
+    }
+
+    // Hard guard: do not allow cart qty to exceed available servings, or allow
+    // ordering items manually marked unavailable.
+    final invalid = <String>[];
+    for (final cart in _cartItems) {
+      final menuId = (cart['id'] ?? '').toString().trim();
+      if (menuId.isEmpty) continue;
+      final menu = _menuItems.firstWhere(
+        (m) => (m['id'] ?? '').toString().trim() == menuId,
+        orElse: () => const <String, dynamic>{},
+      );
+      if (menu.isEmpty) continue;
+
+      final servingsRaw = menu['servings'] ?? menu['availableServings'] ?? 0;
+      final servings = servingsRaw is num
+          ? servingsRaw.toInt()
+          : int.tryParse((servingsRaw ?? '').toString()) ?? 0;
+      final manualAvailability = menu['isAvailable'];
+      final isAvailable =
+          manualAvailability is bool ? manualAvailability : servings > 0;
+
+      final qtyRaw = cart['quantity'];
+      final qty = qtyRaw is num
+          ? qtyRaw.toInt()
+          : int.tryParse((qtyRaw ?? '').toString()) ?? 0;
+
+      if (!isAvailable || servings <= 0 || qty > servings) {
+        invalid.add((menu['name'] ?? cart['name'] ?? 'Item').toString());
+      }
+    }
+
+    if (invalid.isNotEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Some items are unavailable or exceed stock: ${invalid.take(3).join(', ')}',
+          ),
+        ),
+      );
+      return;
+    }
+
+    if (_addToExistingOrder && _targetPendingOrderId.trim().isEmpty) {
+      await _pickPendingOrder();
+      if (!mounted) return;
+      if (_targetPendingOrderId.trim().isEmpty) {
+        return;
+      }
+    }
+
+    setState(() => _isLoading = true);
+
+    try {
+      final List<Map<String, dynamic>> orderItems;
+      if (_addToExistingOrder) {
+        final deltas = <Map<String, dynamic>>[];
+        for (final item in _cartItems) {
+          final menuId = (item['id'] ?? '').toString().trim();
+          if (menuId.isEmpty) continue;
+          final qtyRaw = item['quantity'];
+          final qty = qtyRaw is num
+              ? qtyRaw.toInt()
+              : int.tryParse((qtyRaw ?? '').toString()) ?? 0;
+          final baseline = _baselineQtyByMenuId[menuId] ?? 0;
+          final deltaQty = qty - baseline;
+          if (deltaQty <= 0) continue;
+          final price = item['price'];
+          final priceNum = price is num
+              ? price.toDouble()
+              : double.tryParse((price ?? '').toString()) ?? 0.0;
+          deltas.add({
+            'menuItemId': menuId,
+            'name': item['name'],
+            'quantity': deltaQty,
+            'price': priceNum,
+            'subtotal': priceNum * deltaQty,
+          });
+        }
+        if (deltas.isEmpty) {
+          setState(() => _isLoading = false);
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('No new items to add.')),
+          );
+          return;
+        }
+        orderItems = deltas;
+      } else {
+        orderItems = _cartItems
+            .map((item) => {
+                  'menuItemId': item['id'],
+                  'name': item['name'],
+                  'quantity': item['quantity'],
+                  'price': item['price'],
+                  'subtotal': item['subtotal'],
+                })
+            .toList();
+      }
+
+      if (_addToExistingOrder) {
+        await ApiService.addItemsToPendingOrder(
+          orderId: _targetPendingOrderId,
+          items: orderItems,
+        );
+      } else {
+        await ApiService.createOrder(
+          items: orderItems,
+          paymentMethod: 'cash',
+        );
+      }
+
+      if (mounted) {
+        setState(() {
+          _cartItems.clear();
+          _baselineQtyByMenuId.clear();
+          _totalAmount = 0.0;
+          _isLoading = false;
+          if (!_addToExistingOrder) {
+            _targetPendingOrderId = '';
+          }
+        });
+
+        _loadMenuItems();
+        _loadPendingOrders();
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              _addToExistingOrder
+                  ? 'Items added to order. Pending completion.'
+                  : 'Order created. Pending completion.',
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      setState(() => _isLoading = false);
+      if (mounted) {
+        String message;
+        if (e is FirebaseException) {
+          final code = (e.code).toString();
+          final details = (e.message ?? '').toString();
+          message = details.trim().isEmpty
+              ? 'Firebase error: $code'
+              : 'Firebase error: $code — $details';
+        } else {
+          // Aggressively unwrap Flutter web boxed errors
+          dynamic current = e;
+          for (int i = 0; i < 3; i++) {
+            if (current is FirebaseException) break;
+            try {
+              final next = current.error;
+              if (next == null || next == current) break;
+              current = next;
+            } catch (_) {
+              break;
+            }
+          }
+          if (current is FirebaseException) {
+            final code = (current.code).toString();
+            final details = (current.message ?? '').toString();
+            message = details.trim().isEmpty
+                ? 'Firebase error: $code'
+                : 'Firebase error: $code — $details';
+          } else {
+            message = current.toString();
+          }
+        }
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              _addToExistingOrder
+                  ? 'Error adding items: $message'
+                  : 'Error creating order: $message',
+            ),
+          ),
+        );
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth;
+        final isCompact = width < 780;
+        final isShortHeight = constraints.maxHeight < 420;
+        final crossAxisCount = width < 520
+            ? 2
+            : width >= 1100
+                ? 4
+                : width >= 820
+                    ? 3
+                    : 2;
+        final childAspectRatio = width < 520
+            ? 1.0
+            : crossAxisCount == 2
+                ? (isShortHeight ? 1.25 : 1.45)
+                : (isShortHeight ? 1.1 : 1.25);
+
+        final visibleMenuItems = _selectedCategory == 'All'
+            ? _menuItems
+            : _menuItems
+                .where((m) =>
+                    (m['category'] ?? '').toString().trim() ==
+                    _selectedCategory)
+                .toList();
+
+        return Scaffold(
+          appBar: widget.showAppBar
+              ? AppBar(
+                  title: Text(
+                    _addToExistingOrder &&
+                            _targetPendingOrderId.trim().isNotEmpty
+                        ? 'Add Items — Order #${_shortOrderId(_targetPendingOrderId)}'
+                        : 'Point of Sale',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  actions: [
+                    if (isCompact)
+                      IconButton(
+                        tooltip:
+                            _addToExistingOrder ? 'Add to Order' : 'New Order',
+                        onPressed: () async {
+                          if (_isLoading) return;
+                          final next = !_addToExistingOrder;
+                          setState(() {
+                            _addToExistingOrder = next;
+                            if (!next) {
+                              _targetPendingOrderId = '';
+                              _baselineQtyByMenuId.clear();
+                            }
+                          });
+                          if (next) {
+                            await _pickPendingOrder();
+                            if (!mounted) return;
+                            if (_targetPendingOrderId.trim().isEmpty) {
+                              setState(() {
+                                _addToExistingOrder = false;
+                              });
+                            }
+                          }
+                        },
+                        icon: Icon(
+                          _addToExistingOrder
+                              ? Icons.playlist_add_check
+                              : Icons.playlist_add,
+                        ),
+                      )
+                    else
+                      TextButton.icon(
+                        onPressed: () async {
+                          if (_isLoading) return;
+                          final next = !_addToExistingOrder;
+                          setState(() {
+                            _addToExistingOrder = next;
+                            if (!next) {
+                              _targetPendingOrderId = '';
+                              _baselineQtyByMenuId.clear();
+                            }
+                          });
+                          if (next) {
+                            await _pickPendingOrder();
+                            if (!mounted) return;
+                            if (_targetPendingOrderId.trim().isEmpty) {
+                              setState(() {
+                                _addToExistingOrder = false;
+                              });
+                            }
+                          }
+                        },
+                        icon: Icon(
+                          _addToExistingOrder
+                              ? Icons.playlist_add_check
+                              : Icons.playlist_add,
+                        ),
+                        label: Text(
+                          _addToExistingOrder ? 'Add to Order' : 'New Order',
+                        ),
+                      ),
+                    if (isCompact)
+                      IconButton(
+                        tooltip: _cartItems.isEmpty
+                            ? 'Cart'
+                            : 'Cart (${_cartItems.length})',
+                        onPressed: _openCartSheet,
+                        icon: const Icon(Icons.shopping_cart_outlined),
+                      ),
+                    IconButton(
+                      icon: const Icon(Icons.refresh),
+                      onPressed: _loadMenuItems,
+                    ),
+                  ],
+                )
+              : null,
+          bottomNavigationBar: isCompact
+              ? SafeArea(
+                  top: false,
+                  child: Container(
+                    constraints: const BoxConstraints(minHeight: 56),
+                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 6),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      border: Border(
+                        top: BorderSide(color: Colors.grey.shade200),
+                      ),
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                '₱${_totalAmount.toStringAsFixed(2)}',
+                                style: const TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                _cartItems.isEmpty
+                                    ? 'No items'
+                                    : '${_cartItems.length} item(s) in cart',
+                                style: TextStyle(
+                                  color: Colors.grey.shade700,
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        SizedBox(
+                          height: 36,
+                          child: FilledButton.icon(
+                            onPressed: _isLoading
+                                ? null
+                                : (_cartItems.isEmpty
+                                    ? _openCartSheet
+                                    : (_addToExistingOrder
+                                        ? _createOrder
+                                        : _openCartSheet)),
+                            style: FilledButton.styleFrom(
+                              minimumSize: const Size(0, 36),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 6,
+                              ),
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              visualDensity: VisualDensity.compact,
+                            ),
+                            icon: const Icon(
+                              Icons.shopping_cart_outlined,
+                              size: 18,
+                            ),
+                            label: Text(
+                              _cartItems.isEmpty
+                                  ? 'View Cart'
+                                  : _addToExistingOrder
+                                      ? 'Add Items'
+                                      : 'Checkout',
+                              style: const TextStyle(fontSize: 12),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                )
+              : null,
+          body: isCompact
+              ? Column(
+                  children: [
+                    _buildCategoryChips(),
+                    Expanded(
+                      child: _isLoading
+                          ? const Center(child: CircularProgressIndicator())
+                          : GridView.builder(
+                              padding: const EdgeInsets.all(12),
+                              gridDelegate:
+                                  SliverGridDelegateWithFixedCrossAxisCount(
+                                crossAxisCount: crossAxisCount,
+                                childAspectRatio: childAspectRatio,
+                                crossAxisSpacing: 12,
+                                mainAxisSpacing: 12,
+                              ),
+                              itemCount: visibleMenuItems.length,
+                              itemBuilder: (context, index) {
+                                final item = visibleMenuItems[index];
+                                final id = (item['id'] ?? '').toString().trim();
+                                final qty = id.isEmpty ? 0 : _qtyInCart(id);
+                                return _MenuItemCard(
+                                  item: item,
+                                  quantityInCart: qty,
+                                  onIncrement: () =>
+                                      _setQtyForItem(item, qty + 1),
+                                  onDecrement: () =>
+                                      _setQtyForItem(item, qty - 1),
+                                );
+                              },
+                            ),
+                    ),
+                  ],
+                )
+              : Row(
+                  children: [
+                    Expanded(
+                      flex: 3,
+                      child: Column(
+                        children: [
+                          _buildCategoryChips(),
+                          Expanded(
+                            child: _isLoading
+                                ? const Center(
+                                    child: CircularProgressIndicator(),
+                                  )
+                                : GridView.builder(
+                                    padding: const EdgeInsets.all(12),
+                                    gridDelegate:
+                                        SliverGridDelegateWithFixedCrossAxisCount(
+                                      crossAxisCount: crossAxisCount,
+                                      childAspectRatio: childAspectRatio,
+                                      crossAxisSpacing: 12,
+                                      mainAxisSpacing: 12,
+                                    ),
+                                    itemCount: visibleMenuItems.length,
+                                    itemBuilder: (context, index) {
+                                      final item = visibleMenuItems[index];
+                                      final id =
+                                          (item['id'] ?? '').toString().trim();
+                                      final qty =
+                                          id.isEmpty ? 0 : _qtyInCart(id);
+                                      return _MenuItemCard(
+                                        item: item,
+                                        quantityInCart: qty,
+                                        onIncrement: () =>
+                                            _setQtyForItem(item, qty + 1),
+                                        onDecrement: () =>
+                                            _setQtyForItem(item, qty - 1),
+                                      );
+                                    },
+                                  ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    SizedBox(
+                      width: width >= 1200 ? 420 : 360,
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(0, 16, 16, 16),
+                        child: _CartPanel(
+                          cartItems: _cartItems,
+                          totalAmount: _totalAmount,
+                          isLoading: _isLoading,
+                          isAddToExistingOrder: _addToExistingOrder,
+                          orderId: _targetPendingOrderId,
+                          baselineQtyByMenuId: _baselineQtyByMenuId,
+                          onQuantityChanged: (index, qty) =>
+                              _updateQuantity(index, qty),
+                          onRemove: (index) => _removeFromCart(index),
+                          onCreateOrder: _createOrder,
+                          actionLabel: _addToExistingOrder
+                              ? 'Add Items'
+                              : 'Create Order',
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+        );
+      },
+    );
+  }
+}
+
+class _CartPanel extends StatelessWidget {
+  const _CartPanel({
+    Key? key,
+    required this.cartItems,
+    required this.totalAmount,
+    required this.isLoading,
+    required this.isAddToExistingOrder,
+    required this.orderId,
+    required this.baselineQtyByMenuId,
+    required this.onQuantityChanged,
+    required this.onRemove,
+    required this.onCreateOrder,
+    this.actionLabel = 'Create Order',
+  }) : super(key: key);
+
+  final List<Map<String, dynamic>> cartItems;
+  final double totalAmount;
+  final bool isLoading;
+  final bool isAddToExistingOrder;
+  final String orderId;
+  final Map<String, int> baselineQtyByMenuId;
+  final void Function(int index, int quantity) onQuantityChanged;
+  final void Function(int index) onRemove;
+  final Future<void> Function() onCreateOrder;
+  final String actionLabel;
+
+  String _shortOrderId(String id) {
+    final trimmed = id.trim();
+    if (trimmed.isEmpty) return '';
+    return trimmed.length <= 6 ? trimmed : trimmed.substring(0, 6);
+  }
+
+  int _asInt(dynamic v) {
+    if (v is int) return v;
+    if (v is num) return v.toInt();
+    return int.tryParse((v ?? '').toString()) ?? 0;
+  }
+
+  Widget _buildAddToOrderSections(BuildContext context) {
+    final existingIndexes = <int>[];
+    final newIndexes = <int>[];
+
+    for (var i = 0; i < cartItems.length; i++) {
+      final item = cartItems[i];
+      final id = (item['id'] ?? '').toString().trim();
+      final qty = _asInt(item['quantity']);
+      final baseline = id.isEmpty ? 0 : (baselineQtyByMenuId[id] ?? 0);
+      if (baseline > 0) {
+        existingIndexes.add(i);
+      }
+      if (qty > baseline) {
+        newIndexes.add(i);
+      }
+    }
+
+    final rows = <_CartSectionRow>[];
+    rows.add(const _CartSectionRow.header('Existing items'));
+    if (existingIndexes.isEmpty) {
+      rows.add(const _CartSectionRow.note('No existing items'));
+    } else {
+      for (final idx in existingIndexes) {
+        rows.add(_CartSectionRow.existing(idx));
+      }
+    }
+
+    rows.add(const _CartSectionRow.header('New items'));
+    if (newIndexes.isEmpty) {
+      rows.add(const _CartSectionRow.note('No new items added yet'));
+    } else {
+      for (final idx in newIndexes) {
+        rows.add(_CartSectionRow.delta(idx));
+      }
+    }
+
+    return ListView.separated(
+      padding: const EdgeInsets.all(8),
+      itemCount: rows.length,
+      separatorBuilder: (_, __) =>
+          Divider(color: Colors.grey.shade200, height: 1),
+      itemBuilder: (context, i) {
+        final row = rows[i];
+        switch (row.type) {
+          case _CartSectionRowType.header:
+            return Padding(
+              padding: const EdgeInsets.fromLTRB(8, 10, 8, 10),
+              child: Text(
+                row.label,
+                style: const TextStyle(fontWeight: FontWeight.w800),
+              ),
+            );
+          case _CartSectionRowType.note:
+            return Padding(
+              padding: const EdgeInsets.fromLTRB(8, 10, 8, 10),
+              child: Text(
+                row.label,
+                style: TextStyle(color: Colors.grey.shade700),
+              ),
+            );
+          case _CartSectionRowType.existing:
+            final index = row.index;
+            final cartItem = cartItems[index];
+            final id = (cartItem['id'] ?? '').toString().trim();
+            final baseline = id.isEmpty ? 0 : (baselineQtyByMenuId[id] ?? 0);
+            final priceRaw = cartItem['price'];
+            final price = priceRaw is num
+                ? priceRaw.toDouble()
+                : double.tryParse((priceRaw ?? '').toString()) ?? 0.0;
+            final baselineSubtotal = baseline * price;
+            return ListTile(
+              dense: true,
+              contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+              title: Text((cartItem['name'] ?? '').toString()),
+              subtitle: Text('Existing x$baseline'),
+              trailing: Text('₱${baselineSubtotal.toStringAsFixed(2)}'),
+            );
+          case _CartSectionRowType.delta:
+            final index = row.index;
+            final cartItem = cartItems[index];
+            final id = (cartItem['id'] ?? '').toString().trim();
+            final qty = _asInt(cartItem['quantity']);
+            final baseline = id.isEmpty ? 0 : (baselineQtyByMenuId[id] ?? 0);
+            final delta = (qty - baseline).clamp(0, 1000000);
+
+            final priceRaw = cartItem['price'];
+            final price = priceRaw is num
+                ? priceRaw.toDouble()
+                : double.tryParse((priceRaw ?? '').toString()) ?? 0.0;
+            final deltaSubtotal = delta * price;
+
+            void setDelta(int nextDelta) {
+              final safe = nextDelta.clamp(0, 1000000);
+              onQuantityChanged(index, baseline + safe);
+            }
+
+            return ListTile(
+              dense: true,
+              contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+              title: Text((cartItem['name'] ?? '').toString()),
+              subtitle: Text('New x$delta'),
+              trailing: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(
+                      onPressed: delta <= 0 ? null : () => setDelta(delta - 1),
+                      icon: const Icon(Icons.remove_circle_outline),
+                    ),
+                    Text(
+                      delta.toString(),
+                      style: const TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                    IconButton(
+                      onPressed: () => setDelta(delta + 1),
+                      icon: const Icon(Icons.add_circle_outline),
+                    ),
+                    const SizedBox(width: 8),
+                    Text('₱${deltaSubtotal.toStringAsFixed(2)}'),
+                    const SizedBox(width: 8),
+                    IconButton(
+                      onPressed: delta <= 0 ? null : () => setDelta(0),
+                      icon: const Icon(Icons.delete_outline, color: Colors.red),
+                    ),
+                  ],
+                ),
+              ),
+            );
+        }
+      },
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      margin: EdgeInsets.zero,
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(color: Colors.grey.shade200),
+      ),
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Cart',
+                        style: TextStyle(
+                            fontSize: 18, fontWeight: FontWeight.bold),
+                      ),
+                      if (isAddToExistingOrder && orderId.trim().isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 2),
+                          child: Text(
+                            'Order #${_shortOrderId(orderId)}',
+                            style: TextStyle(
+                              color: Colors.grey.shade700,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                Text(
+                  '₱${totalAmount.toStringAsFixed(2)}',
+                  style: const TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.green,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const Divider(height: 1),
+          Expanded(
+            child: cartItems.isEmpty
+                ? const Center(child: Text('No items in cart'))
+                : (isAddToExistingOrder
+                    ? _buildAddToOrderSections(context)
+                    : ListView.separated(
+                        padding: const EdgeInsets.all(8),
+                        itemCount: cartItems.length,
+                        separatorBuilder: (_, __) =>
+                            Divider(color: Colors.grey.shade200, height: 1),
+                        itemBuilder: (context, index) {
+                          final cartItem = cartItems[index];
+                          return _CartItemTile(
+                            cartItem: cartItem,
+                            onQuantityChanged: (quantity) =>
+                                onQuantityChanged(index, quantity),
+                            onRemove: () => onRemove(index),
+                          );
+                        },
+                      )),
+          ),
+          Padding(
+            padding: const EdgeInsets.all(12),
+            child: SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: cartItems.isEmpty
+                    ? null
+                    : (isLoading ? null : onCreateOrder),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.green,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                ),
+                child: isLoading
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(
+                          color: Colors.white,
+                          strokeWidth: 2,
+                        ),
+                      )
+                    : Text(
+                        actionLabel,
+                        style: TextStyle(color: Colors.white),
+                      ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+enum _CartSectionRowType { header, note, existing, delta }
+
+class _CartSectionRow {
+  const _CartSectionRow._(this.type, this.label, this.index);
+
+  const _CartSectionRow.header(String label)
+      : this._(_CartSectionRowType.header, label, -1);
+
+  const _CartSectionRow.note(String label)
+      : this._(_CartSectionRowType.note, label, -1);
+
+  const _CartSectionRow.existing(int index)
+      : this._(_CartSectionRowType.existing, '', index);
+
+  const _CartSectionRow.delta(int index)
+      : this._(_CartSectionRowType.delta, '', index);
+
+  final _CartSectionRowType type;
+  final String label;
+  final int index;
+}
+
+class _MenuItemCard extends StatelessWidget {
+  final Map<String, dynamic> item;
+  final int quantityInCart;
+  final VoidCallback onIncrement;
+  final VoidCallback onDecrement;
+
+  const _MenuItemCard({
+    Key? key,
+    required this.item,
+    required this.quantityInCart,
+    required this.onIncrement,
+    required this.onDecrement,
+  }) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    final isShortHeight = MediaQuery.of(context).size.height < 420;
+    final servingsRaw = item['servings'] ?? item['availableServings'] ?? 0;
+    final servings = servingsRaw is num
+        ? servingsRaw.toInt()
+        : int.tryParse((servingsRaw ?? '').toString()) ?? 0;
+    final manualAvailability = item['isAvailable'];
+    final isAvailable =
+        manualAvailability is bool ? manualAvailability : servings > 0;
+    final canAdd = isAvailable && servings > 0;
+
+    final priceRaw = item['price'] ?? 0;
+    final price = priceRaw is num
+        ? priceRaw.toDouble()
+        : double.tryParse(priceRaw.toString()) ?? 0.0;
+
+    final category = (item['category'] ?? '').toString();
+
+    return Card(
+      elevation: 0,
+      color: isAvailable ? const Color(0xFFF6F8FF) : const Color(0xFFF2F2F2),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Padding(
+        padding: EdgeInsets.all(isShortHeight ? 8 : 10),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: Text(
+                    (item['name'] ?? '').toString(),
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w800,
+                    ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: isAvailable
+                        ? Colors.green.withOpacity(0.10)
+                        : Colors.red.withOpacity(0.10),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Text(
+                    isAvailable ? 'In stock' : 'Unavailable',
+                    style: TextStyle(
+                      color: isAvailable ? Colors.green : Colors.red,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 11,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            SizedBox(height: isShortHeight ? 4 : 6),
+            Row(
+              children: [
+                if (category.isNotEmpty)
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 3,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(color: Colors.black12),
+                    ),
+                    child: Text(
+                      category,
+                      style: TextStyle(
+                        color: Colors.grey.shade700,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 11,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                const Spacer(),
+                Text(
+                  'Left: $servings',
+                  style: TextStyle(
+                    color: Colors.grey.shade700,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 11,
+                  ),
+                ),
+              ],
+            ),
+            const Spacer(),
+            Text(
+              '₱${price.toStringAsFixed(2)}',
+              style: const TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.w900,
+                color: Colors.green,
+              ),
+            ),
+            SizedBox(height: isShortHeight ? 6 : 8),
+            if (isAvailable || quantityInCart > 0)
+              SizedBox(
+                width: double.infinity,
+                child: quantityInCart <= 0
+                    ? SizedBox(
+                        height: isShortHeight ? 28 : 30,
+                        child: FilledButton(
+                          onPressed: canAdd ? onIncrement : null,
+                          style: FilledButton.styleFrom(
+                            padding: EdgeInsets.zero,
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            visualDensity: VisualDensity.compact,
+                          ),
+                          child: const Text(
+                            'Add to cart',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ),
+                      )
+                    : Container(
+                        height: isShortHeight ? 28 : 30,
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(999),
+                          border: Border.all(color: Colors.black12),
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            IconButton(
+                              visualDensity: VisualDensity.compact,
+                              padding: EdgeInsets.zero,
+                              onPressed: onDecrement,
+                              icon: const Icon(Icons.remove),
+                            ),
+                            Text(
+                              quantityInCart.toString(),
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                            IconButton(
+                              visualDensity: VisualDensity.compact,
+                              padding: EdgeInsets.zero,
+                              onPressed: canAdd ? onIncrement : null,
+                              icon: const Icon(Icons.add),
+                            ),
+                          ],
+                        ),
+                      ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _CartItemTile extends StatelessWidget {
+  final Map<String, dynamic> cartItem;
+  final Function(int) onQuantityChanged;
+  final VoidCallback onRemove;
+
+  const _CartItemTile({
+    Key? key,
+    required this.cartItem,
+    required this.onQuantityChanged,
+    required this.onRemove,
+  }) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    final qty = (cartItem['quantity'] as int?) ??
+        int.tryParse((cartItem['quantity'] ?? '').toString()) ??
+        1;
+    final price = (cartItem['price'] is num)
+        ? (cartItem['price'] as num).toDouble()
+        : double.tryParse((cartItem['price'] ?? '').toString()) ?? 0.0;
+    final subtotal = (cartItem['subtotal'] is num)
+        ? (cartItem['subtotal'] as num).toDouble()
+        : double.tryParse((cartItem['subtotal'] ?? '').toString()) ??
+            (qty * price);
+
+    return ListTile(
+      title: Text(cartItem['name'] ?? ''),
+      subtitle: Text(
+        '₱${subtotal.toStringAsFixed(2)}',
+        style: const TextStyle(fontWeight: FontWeight.bold),
+      ),
+      trailing: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            IconButton(
+              icon: const Icon(Icons.remove_circle_outline),
+              onPressed: qty <= 1 ? null : () => onQuantityChanged(qty - 1),
+            ),
+            SizedBox(
+              width: 28,
+              child: Text(
+                qty.toString(),
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontWeight: FontWeight.w700),
+              ),
+            ),
+            IconButton(
+              icon: const Icon(Icons.add_circle_outline),
+              onPressed: () => onQuantityChanged(qty + 1),
+            ),
+            IconButton(
+              icon: const Icon(Icons.delete, color: Colors.red),
+              onPressed: onRemove,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}

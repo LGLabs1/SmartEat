@@ -1,0 +1,34 @@
+# Node
+node_modules/
+
+# Firebase
+.functions/
+
+# Flutter/Dart
+frontend/.dart_tool/
+frontend/build/
+frontend/.flutter-plugins
+frontend/.flutter-plugins-dependencies
+frontend/.metadata
+frontend/.packages
+frontend/.pub-cache/
+
+# Android/iOS build outputs
+frontend/android/.gradle/
+frontend/android/app/build/
+frontend/ios/Flutter/Flutter.framework/
+frontend/ios/Flutter/Flutter.podspec
+frontend/ios/Pods/
+
+# IDE
+.vscode/
+.idea/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets
+*.env
+*.env.*

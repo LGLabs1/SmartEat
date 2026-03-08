@@ -1,0 +1,185 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /email_verifications/{docId} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function userDoc() {
+      return isSignedIn()
+        ? get(/databases/$(database)/documents/users/$(request.auth.uid)).data
+        : null;
+    }
+
+    function userEateryId() {
+      return userDoc() != null ? userDoc().eateryId : null;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        userDoc().isAdmin == true
+        || userDoc().role == 'admin'
+      );
+    }
+
+    function isApprovedStaff() {
+      return isSignedIn() && (userDoc().approved == true || !(userDoc().approved is bool));
+    }
+
+    function canAccessEateryData(docEateryId) {
+      return isSignedIn()
+        && docEateryId == userEateryId()
+        && (isAdmin() || isApprovedStaff());
+    }
+
+    function isPendingOrderAppendUpdate() {
+      return resource.data.status == 'pending'
+        && request.resource.data.eateryId == resource.data.eateryId
+        && request.resource.data.status == resource.data.status
+        && request.resource.data.diff(resource.data).changedKeys().hasOnly([
+          'items',
+          'totalAmount',
+          'updatedAt'
+        ])
+        && request.resource.data.items is list
+        && request.resource.data.totalAmount is number;
+    }
+
+    match /users/{userId} {
+      allow read: if isSignedIn() && request.auth.uid == userId;
+
+      allow read: if isAdmin() && resource.data.eateryId == userEateryId();
+
+      allow create: if isSignedIn()
+        && request.auth.uid == userId
+        && request.resource.data.isAdmin is bool;
+
+      allow update: if isSignedIn()
+        && request.auth.uid == userId
+        && request.resource.data.isAdmin == resource.data.isAdmin
+        && request.resource.data.role == resource.data.role
+        && request.resource.data.eateryId == resource.data.eateryId
+        && request.resource.data.approved == resource.data.approved;
+
+      allow update: if isAdmin()
+        && resource.data.eateryId == userEateryId();
+
+      allow delete: if false;
+    }
+
+    match /eateries/{eateryId} {
+      allow get: if isSignedIn();
+      allow list: if false;
+      allow create: if isSignedIn()
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.eateryId == eateryId;
+      allow update, delete: if false;
+    }
+
+    match /menu/{docId} {
+      allow read: if canAccessEateryData(resource.data.eateryId);
+      allow create: if isAdmin() && request.resource.data.eateryId == userEateryId();
+      allow update, delete: if isAdmin() && resource.data.eateryId == userEateryId();
+    }
+
+    match /orders/{docId} {
+      allow read: if canAccessEateryData(resource.data.eateryId);
+      allow create: if canAccessEateryData(request.resource.data.eateryId);
+      allow update: if isAdmin() && resource.data.eateryId == userEateryId();
+      allow update: if canAccessEateryData(resource.data.eateryId)
+        && isPendingOrderAppendUpdate();
+      allow delete: if isAdmin() && resource.data.eateryId == userEateryId();
+    }
+
+    match /inventory/{docId} {
+      allow read: if canAccessEateryData(resource.data.eateryId);
+      allow create: if isAdmin() && request.resource.data.eateryId == userEateryId();
+      allow update, delete: if isAdmin() && resource.data.eateryId == userEateryId();
+    }
+
+    match /inventory_usage/{docId} {
+      allow read: if canAccessEateryData(resource.data.eateryId);
+      allow create: if isAdmin() && request.resource.data.eateryId == userEateryId();
+      allow update, delete: if isAdmin() && resource.data.eateryId == userEateryId();
+    }
+
+    match /analytics/{docId} {
+      allow read: if canAccessEateryData(resource.data.eateryId);
+      allow create: if isAdmin() && request.resource.data.eateryId == userEateryId();
+      allow update, delete: if isAdmin() && resource.data.eateryId == userEateryId();
+    }
+
+    match /recipes/{docId} {
+      allow read: if canAccessEateryData(resource.data.eateryId);
+      allow create: if isAdmin() && request.resource.data.eateryId == userEateryId();
+      allow update, delete: if isAdmin() && resource.data.eateryId == userEateryId();
+    }
+
+    match /staff_profiles/{docId} {
+      allow read: if (resource != null && canAccessEateryData(resource.data.eateryId))
+        || (resource == null && isAdmin() && docId.matches('^' + userEateryId() + '_.*$'));
+      allow create: if isAdmin()
+        && request.resource.data.eateryId == userEateryId()
+        && request.resource.data.uid is string
+        && request.resource.data.dailyRate is number
+        && (!('halfDayMultiplier' in request.resource.data)
+          || request.resource.data.halfDayMultiplier is number);
+      allow update: if isAdmin()
+        && resource.data.eateryId == userEateryId()
+        && request.resource.data.eateryId == resource.data.eateryId
+        && request.resource.data.uid == resource.data.uid
+        && request.resource.data.dailyRate is number
+        && (!('halfDayMultiplier' in request.resource.data)
+          || request.resource.data.halfDayMultiplier is number);
+      allow delete: if false;
+    }
+
+    match /staff_attendance/{docId} {
+      allow read: if isAdmin() && resource.data.eateryId == userEateryId();
+      allow create: if isAdmin()
+        && request.resource.data.eateryId == userEateryId()
+        && request.resource.data.uid is string
+        && request.resource.data.date is string
+        && request.resource.data.present is bool
+        && (!('workUnit' in request.resource.data)
+          || request.resource.data.workUnit is number);
+      allow update: if isAdmin()
+        && resource.data.eateryId == userEateryId()
+        && request.resource.data.eateryId == resource.data.eateryId
+        && request.resource.data.uid == resource.data.uid
+        && request.resource.data.date == resource.data.date
+        && request.resource.data.present is bool
+        && (!('workUnit' in request.resource.data)
+          || request.resource.data.workUnit is number);
+      allow delete: if false;
+    }
+
+    match /payroll_payouts/{docId} {
+      allow read: if isAdmin() && resource.data.eateryId == userEateryId();
+      allow create: if isAdmin()
+        && request.resource.data.eateryId == userEateryId()
+        && request.resource.data.uid is string
+        && request.resource.data.weekStart is string
+        && request.resource.data.amount is number
+        && (!('type' in request.resource.data)
+          || request.resource.data.type in ['weekly', 'advance']);
+      allow update: if isAdmin()
+        && resource.data.eateryId == userEateryId()
+        && request.resource.data.eateryId == resource.data.eateryId
+        && request.resource.data.uid == resource.data.uid
+        && request.resource.data.weekStart == resource.data.weekStart
+        && request.resource.data.amount is number
+        && (!('type' in request.resource.data)
+          || request.resource.data.type == resource.data.type);
+      allow delete: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
