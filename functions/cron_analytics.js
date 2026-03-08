@@ -10,6 +10,28 @@ function requireEnv(name) {
   return v;
 }
 
+function parseServiceAccount(raw) {
+  const trimmed = String(raw || '').trim();
+  if (!trimmed) throw new Error('Empty service account secret');
+
+  // 1) Try raw JSON first
+  try {
+    return JSON.parse(trimmed);
+  } catch (_) {
+    // continue
+  }
+
+  // 2) Try base64-encoded JSON (common workaround for multiline secrets)
+  try {
+    const decoded = Buffer.from(trimmed, 'base64').toString('utf8').trim();
+    return JSON.parse(decoded);
+  } catch (_) {
+    throw new Error(
+      'Invalid FIREBASE_SERVICE_ACCOUNT_JSON. Paste the full service-account JSON (starting with {) or a base64-encoded JSON string.'
+    );
+  }
+}
+
 function formatYMD(date) {
   const y = date.getFullYear();
   const m = String(date.getMonth() + 1).padStart(2, '0');
@@ -29,7 +51,7 @@ function addDays(d, days) {
 
 async function main() {
   const serviceAccountJson = requireEnv('FIREBASE_SERVICE_ACCOUNT_JSON');
-  const serviceAccount = JSON.parse(serviceAccountJson);
+  const serviceAccount = parseServiceAccount(serviceAccountJson);
 
   if (!admin.apps.length) {
     admin.initializeApp({
