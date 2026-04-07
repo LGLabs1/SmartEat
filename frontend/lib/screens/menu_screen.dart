@@ -6,9 +6,16 @@ import '../services/api_service.dart';
 import '../services/auth_provider.dart';
 
 class MenuScreen extends StatefulWidget {
-  const MenuScreen({Key? key, this.globalSearchQuery}) : super(key: key);
+  const MenuScreen({
+    Key? key,
+    this.globalSearchQuery,
+    this.showAppBar = true,
+    this.onOpenDrawer,
+  }) : super(key: key);
 
   final ValueNotifier<String>? globalSearchQuery;
+  final bool showAppBar;
+  final VoidCallback? onOpenDrawer;
 
   @override
   State<MenuScreen> createState() => _MenuScreenState();
@@ -36,6 +43,8 @@ class _MenuScreenState extends State<MenuScreen> {
   bool _isAdmin = false;
   String? _lastRoleUid;
   VoidCallback? _globalSearchListener;
+  // Track pinned item IDs
+  List<String> _pinnedItemIds = [];
 
   Future<void> _setItemAvailability(
       Map<String, dynamic> item, bool value) async {
@@ -191,6 +200,7 @@ class _MenuScreenState extends State<MenuScreen> {
     setState(() => _isLoading = true);
 
     try {
+      // Load menu items first
       final results = await Future.wait([
         ApiService.getMenuItems(),
         ApiService.getInventoryItems(),
@@ -203,6 +213,9 @@ class _MenuScreenState extends State<MenuScreen> {
           List<Map<String, dynamic>>.from(menuRes['data'] ?? const []);
       final inventoryItems =
           List<Map<String, dynamic>>.from(invRes['data'] ?? const []);
+
+      // Load pinned items separately (don't block on this)
+      _loadPinnedItems();
 
       if (_isAdmin) {
         DateTime? _parseDocDate(dynamic raw) {
@@ -384,6 +397,77 @@ class _MenuScreenState extends State<MenuScreen> {
     }
   }
 
+  Future<void> _loadPinnedItems() async {
+    try {
+      final profile =
+          await context.read<AuthProvider>().getCurrentUserProfile();
+      final eateryId = (profile?['eateryId'] ?? '').toString();
+      if (eateryId.isEmpty) return;
+
+      final doc = await FirebaseFirestore.instance
+          .collection('eateries')
+          .doc(eateryId)
+          .collection('settings')
+          .doc('pinned_menu_items')
+          .get();
+
+      if (doc.exists && doc.data() != null) {
+        final data = doc.data()!;
+        final pinned = data['pinnedIds'] as List<dynamic>? ?? [];
+        _pinnedItemIds = pinned.map((e) => e.toString()).toList();
+      }
+    } catch (_) {
+      // Silently fail - pinned items are not critical
+    }
+  }
+
+  Future<void> _togglePinItem(String itemId) async {
+    try {
+      final profile =
+          await context.read<AuthProvider>().getCurrentUserProfile();
+      final eateryId = (profile?['eateryId'] ?? '').toString();
+      if (eateryId.isEmpty) return;
+
+      setState(() {
+        if (_pinnedItemIds.contains(itemId)) {
+          _pinnedItemIds.remove(itemId);
+        } else {
+          _pinnedItemIds.add(itemId);
+        }
+      });
+
+      await FirebaseFirestore.instance
+          .collection('eateries')
+          .doc(eateryId)
+          .collection('settings')
+          .doc('pinned_menu_items')
+          .set({
+        'eateryId': eateryId,
+        'pinnedIds': _pinnedItemIds,
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(_pinnedItemIds.contains(itemId)
+              ? 'Item pinned to top'
+              : 'Item unpinned'),
+          duration: const Duration(seconds: 1),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to update pin: $e')),
+      );
+    }
+  }
+
+  bool _isPinned(String itemId) {
+    return _pinnedItemIds.contains(itemId);
+  }
+
   @override
   Widget build(BuildContext context) {
     final categories = <String>{
@@ -411,19 +495,40 @@ class _MenuScreenState extends State<MenuScreen> {
     }).toList();
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Menu Management'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.add),
-            onPressed: _showAddItemDialog,
-          ),
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: _loadMenuItems,
-          ),
-        ],
-      ),
+      appBar: widget.showAppBar
+          ? AppBar(
+              leading: widget.onOpenDrawer != null
+                  ? IconButton(
+                      icon: const Icon(Icons.menu),
+                      tooltip: 'Menu',
+                      onPressed: widget.onOpenDrawer,
+                    )
+                  : (Navigator.of(context).canPop()
+                      ? IconButton(
+                          icon: const Icon(Icons.arrow_back),
+                          onPressed: () => Navigator.of(context).maybePop(),
+                        )
+                      : null),
+              title: const Text('Menu Management'),
+              actions: [
+                IconButton(
+                  icon: const Icon(Icons.add),
+                  onPressed: _showAddItemDialog,
+                ),
+                IconButton(
+                  icon: const Icon(Icons.refresh),
+                  onPressed: _loadMenuItems,
+                ),
+              ],
+            )
+          : null,
+      floatingActionButton: (!widget.showAppBar && _isAdmin)
+          ? FloatingActionButton.extended(
+              onPressed: _showAddItemDialog,
+              icon: const Icon(Icons.add),
+              label: const Text('Add Menu'),
+            )
+          : null,
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
           : Column(
@@ -454,13 +559,15 @@ class _MenuScreenState extends State<MenuScreen> {
                       : LayoutBuilder(
                           builder: (context, constraints) {
                             final width = constraints.maxWidth;
-                            final crossAxisCount = width >= 1100
-                                ? 4
-                                : width >= 800
-                                    ? 3
-                                    : width >= 520
-                                        ? 2
-                                        : 1;
+                            final crossAxisCount = width >= 1200
+                                ? 5
+                                : width >= 900
+                                    ? 4
+                                    : width >= 600
+                                        ? 3
+                                        : width >= 400
+                                            ? 2
+                                            : 1;
 
                             Widget header(String title) {
                               return Padding(
@@ -533,13 +640,17 @@ class _MenuScreenState extends State<MenuScreen> {
                                           crossAxisSpacing: 8,
                                           mainAxisSpacing: 8,
                                           childAspectRatio:
-                                              crossAxisCount == 1 ? 3.3 : 1.28,
+                                              crossAxisCount == 1 ? 3.0 : 1.25,
                                         ),
                                         itemCount: items.length,
                                         itemBuilder: (context, index) {
                                           final item = items[index];
                                           return _MenuGridCard(
                                             item: item,
+                                            isPinned: _isPinned(
+                                                (item['id'] ?? '').toString()),
+                                            onPinToggle: () => _togglePinItem(
+                                                (item['id'] ?? '').toString()),
                                             onEdit: () =>
                                                 _showEditItemDialog(item),
                                             onDelete: _isAdmin
@@ -567,13 +678,17 @@ class _MenuScreenState extends State<MenuScreen> {
                                 crossAxisSpacing: 8,
                                 mainAxisSpacing: 8,
                                 childAspectRatio:
-                                    crossAxisCount == 1 ? 3.3 : 1.28,
+                                    crossAxisCount == 1 ? 3.0 : 1.25,
                               ),
                               itemCount: filteredItems.length,
                               itemBuilder: (context, index) {
                                 final item = filteredItems[index];
                                 return _MenuGridCard(
                                   item: item,
+                                  isPinned:
+                                      _isPinned((item['id'] ?? '').toString()),
+                                  onPinToggle: () => _togglePinItem(
+                                      (item['id'] ?? '').toString()),
                                   onEdit: () => _showEditItemDialog(item),
                                   onDelete: _isAdmin
                                       ? () => _confirmDeleteMenuItem(item)
@@ -633,6 +748,8 @@ class _MenuGridCard extends StatelessWidget {
   final VoidCallback onEdit;
   final VoidCallback? onDelete;
   final ValueChanged<bool>? onToggleAvailability;
+  final bool isPinned;
+  final VoidCallback? onPinToggle;
 
   const _MenuGridCard({
     Key? key,
@@ -640,6 +757,8 @@ class _MenuGridCard extends StatelessWidget {
     required this.onEdit,
     this.onDelete,
     this.onToggleAvailability,
+    this.isPinned = false,
+    this.onPinToggle,
   }) : super(key: key);
 
   @override
@@ -750,30 +869,70 @@ class _MenuGridCard extends StatelessWidget {
                     child: PopupMenuButton<String>(
                       tooltip: 'Actions',
                       itemBuilder: (context) => [
+                        PopupMenuItem(
+                          value: 'pin',
+                          child: Row(
+                            children: [
+                              Icon(
+                                isPinned
+                                    ? Icons.push_pin
+                                    : Icons.push_pin_outlined,
+                                size: 18,
+                              ),
+                              const SizedBox(width: 8),
+                              Text(isPinned ? 'Unpin from top' : 'Pin to top'),
+                            ],
+                          ),
+                        ),
                         const PopupMenuItem(
                           value: 'edit',
-                          child: Text('Edit'),
+                          child: Row(
+                            children: [
+                              Icon(Icons.edit, size: 18),
+                              SizedBox(width: 8),
+                              Text('Edit'),
+                            ],
+                          ),
                         ),
                         if (onDelete != null)
                           const PopupMenuItem(
                             value: 'delete',
-                            child: Text('Delete'),
+                            child: Row(
+                              children: [
+                                Icon(Icons.delete_outline,
+                                    size: 18, color: Colors.red),
+                                SizedBox(width: 8),
+                                Text('Delete',
+                                    style: TextStyle(color: Colors.red)),
+                              ],
+                            ),
                           ),
                       ],
                       onSelected: (value) {
-                        if (value == 'edit') {
+                        if (value == 'pin') {
+                          onPinToggle?.call();
+                        } else if (value == 'edit') {
                           onEdit();
                         } else if (value == 'delete') {
                           onDelete?.call();
                         }
                       },
                       child: Container(
-                        padding: const EdgeInsets.all(8),
+                        padding: const EdgeInsets.all(4),
                         decoration: BoxDecoration(
-                          color: Colors.white.withValues(alpha: 0.9),
+                          color: isPinned
+                              ? Colors.red.withValues(alpha: 0.9)
+                              : Colors.white.withValues(alpha: 0.9),
                           borderRadius: BorderRadius.circular(999),
+                          border: isPinned
+                              ? Border.all(color: Colors.red.shade700, width: 1)
+                              : null,
                         ),
-                        child: const Icon(Icons.more_horiz, size: 18),
+                        child: Icon(
+                          isPinned ? Icons.push_pin : Icons.more_horiz,
+                          size: 14,
+                          color: isPinned ? Colors.white : null,
+                        ),
                       ),
                     ),
                   ),
@@ -782,36 +941,51 @@ class _MenuGridCard extends StatelessWidget {
             ),
           ),
           Padding(
-            padding: const EdgeInsets.fromLTRB(10, 6, 10, 8),
+            padding: const EdgeInsets.fromLTRB(8, 4, 8, 6),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w700,
-                  ),
+                Row(
+                  children: [
+                    if (isPinned)
+                      Padding(
+                        padding: const EdgeInsets.only(right: 4),
+                        child: Icon(
+                          Icons.push_pin,
+                          size: 10,
+                          color: Colors.red.shade700,
+                        ),
+                      ),
+                    Expanded(
+                      child: Text(
+                        name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 2),
+                const SizedBox(height: 1),
                 Text(
                   category,
                   style: TextStyle(
-                    color: Colors.grey.shade700,
-                    fontSize: 11,
+                    color: Colors.grey.shade600,
+                    fontSize: 10,
                   ),
                   overflow: TextOverflow.ellipsis,
                 ),
-                const SizedBox(height: 4),
+                const SizedBox(height: 3),
                 Row(
                   children: [
                     Expanded(
                       child: Container(
                         padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 4,
+                          horizontal: 6,
+                          vertical: 3,
                         ),
                         decoration: BoxDecoration(
                           color: Colors.green.shade50,
@@ -821,7 +995,7 @@ class _MenuGridCard extends StatelessWidget {
                         child: Text(
                           priceText,
                           style: TextStyle(
-                            fontSize: 11,
+                            fontSize: 10,
                             fontWeight: FontWeight.w800,
                             color: Colors.green.shade800,
                           ),
@@ -830,12 +1004,12 @@ class _MenuGridCard extends StatelessWidget {
                         ),
                       ),
                     ),
-                    const SizedBox(width: 8),
+                    const SizedBox(width: 6),
                     Expanded(
                       child: Container(
                         padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 4,
+                          horizontal: 6,
+                          vertical: 3,
                         ),
                         decoration: BoxDecoration(
                           color: Colors.indigo.shade50,
@@ -843,12 +1017,12 @@ class _MenuGridCard extends StatelessWidget {
                           border: Border.all(color: Colors.indigo.shade200),
                         ),
                         child: Text(
-                          availableServings == null
-                              ? 'Servings: —'
-                              : 'Servings: $availableServings',
+                          availableServings == null || availableServings == -1
+                              ? '—'
+                              : '$availableServings',
                           style: TextStyle(
                             color: Colors.indigo.shade800,
-                            fontSize: 11,
+                            fontSize: 10,
                             fontWeight: FontWeight.w700,
                           ),
                           overflow: TextOverflow.ellipsis,
@@ -886,14 +1060,11 @@ class _AddItemDialogState extends State<_AddItemDialog> {
   final _nameController = TextEditingController();
   int _price = 0;
   int _availableServings = 0;
+  bool _isUnlimitedServings = false;
   final _descriptionController = TextEditingController();
   final _imageUrlController = TextEditingController();
   bool _isLoading = false;
   final Set<String> _selectedCategories = <String>{};
-
-  List<Map<String, dynamic>> _recipes = const [];
-  String _selectedRecipeId = '';
-
   String _selectedInventoryItemId = '';
 
   static const List<String> _categoryOptions = <String>[
@@ -913,24 +1084,6 @@ class _AddItemDialogState extends State<_AddItemDialog> {
   @override
   void initState() {
     super.initState();
-    _loadRecipes();
-  }
-
-  Future<void> _loadRecipes() async {
-    try {
-      final res = await ApiService.getRecipes();
-      if (!mounted) return;
-      final recipes = List<Map<String, dynamic>>.from(res['data'] ?? const []);
-      recipes.sort((a, b) {
-        final an = (a['name'] ?? '').toString().toLowerCase();
-        final bn = (b['name'] ?? '').toString().toLowerCase();
-        return an.compareTo(bn);
-      });
-      setState(() => _recipes = recipes);
-    } catch (_) {
-      if (!mounted) return;
-      setState(() => _recipes = const []);
-    }
   }
 
   @override
@@ -956,30 +1109,6 @@ class _AddItemDialogState extends State<_AddItemDialog> {
                   ),
                   validator: (value) =>
                       value?.isEmpty ?? true ? 'Required' : null,
-                ),
-                const SizedBox(height: 12),
-                DropdownButtonFormField<String>(
-                  value: _selectedRecipeId,
-                  decoration: const InputDecoration(
-                    labelText: 'Recipe (Optional)',
-                    border: OutlineInputBorder(),
-                  ),
-                  items: [
-                    const DropdownMenuItem(
-                      value: '',
-                      child: Text('None'),
-                    ),
-                    ..._recipes.map((r) {
-                      final id = (r['id'] ?? '').toString();
-                      final name = (r['name'] ?? '').toString();
-                      return DropdownMenuItem(
-                        value: id,
-                        child: Text(name.isEmpty ? 'Untitled recipe' : name),
-                      );
-                    }),
-                  ],
-                  onChanged: (value) =>
-                      setState(() => _selectedRecipeId = value ?? ''),
                 ),
                 const SizedBox(height: 12),
                 DropdownButtonFormField<String>(
@@ -1055,6 +1184,7 @@ class _AddItemDialogState extends State<_AddItemDialog> {
                 ),
                 const SizedBox(height: 12),
                 Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Expanded(
                       child: _IntStepperTextFormField(
@@ -1065,16 +1195,49 @@ class _AddItemDialogState extends State<_AddItemDialog> {
                         validator: (v) => v <= 0 ? 'Required' : null,
                       ),
                     ),
-                    const SizedBox(width: 12),
+                    const SizedBox(width: 8),
                     Expanded(
-                      child: _IntStepperTextFormField(
-                        labelText: 'Servings',
-                        value: _availableServings,
-                        min: 0,
-                        enabled: !inventoryLinked,
-                        onChanged: (v) =>
-                            setState(() => _availableServings = v),
-                        validator: (v) => v < 0 ? 'Invalid' : null,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _IntStepperTextFormField(
+                            labelText: 'Servings',
+                            value: _availableServings,
+                            min: 0,
+                            enabled: !inventoryLinked && !_isUnlimitedServings,
+                            onChanged: (v) =>
+                                setState(() => _availableServings = v),
+                            validator: (v) => v < 0 ? 'Invalid' : null,
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    SizedBox(
+                      width: 80,
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Unspecified',
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: inventoryLinked
+                                  ? Colors.grey
+                                  : Colors.black87,
+                            ),
+                          ),
+                          Transform.scale(
+                            scale: 0.7,
+                            child: Switch(
+                              value: _isUnlimitedServings,
+                              onChanged: inventoryLinked
+                                  ? null
+                                  : (v) =>
+                                      setState(() => _isUnlimitedServings = v),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ],
@@ -1144,10 +1307,9 @@ class _AddItemDialogState extends State<_AddItemDialog> {
         name: name,
         category: category,
         categories: cats,
-        recipeId: _selectedRecipeId.trim().isEmpty ? null : _selectedRecipeId,
         inventoryItemId: invId.isEmpty ? null : invId,
         price: _price,
-        availableServings: servingsToSave,
+        availableServings: _isUnlimitedServings ? -1 : servingsToSave,
         description: _descriptionController.text,
         imageUrl: _imageUrlController.text.trim(),
       );
@@ -1202,13 +1364,12 @@ class _EditItemDialogState extends State<_EditItemDialog> {
   late final TextEditingController _nameController;
   int _price = 0;
   int _availableServings = 0;
+  bool _isUnlimitedServings = false;
   late final TextEditingController _descriptionController;
   late final TextEditingController _imageUrlController;
   bool _isLoading = false;
   final Set<String> _selectedCategories = <String>{};
 
-  List<Map<String, dynamic>> _recipes = const [];
-  String _selectedRecipeId = '';
   String _selectedInventoryItemId = '';
   bool _manualIsAvailable = true;
 
@@ -1247,12 +1408,10 @@ class _EditItemDialogState extends State<_EditItemDialog> {
     _availableServings = servingsRaw is num
         ? servingsRaw.toInt()
         : int.tryParse(servingsRaw?.toString() ?? '') ?? 0;
+    _isUnlimitedServings = _availableServings == -1;
 
     final inv = (widget.item['inventoryItemId'] ?? '').toString();
     _selectedInventoryItemId = inv;
-
-    final recipe = (widget.item['recipeId'] ?? '').toString();
-    _selectedRecipeId = recipe;
 
     final rawCats = widget.item['categories'];
     if (rawCats is List) {
@@ -1267,31 +1426,6 @@ class _EditItemDialogState extends State<_EditItemDialog> {
 
     final manual = widget.item['isAvailable'];
     _manualIsAvailable = manual is bool ? manual : (_availableServings > 0);
-
-    _loadRecipes();
-  }
-
-  Future<void> _loadRecipes() async {
-    try {
-      final res = await ApiService.getRecipes();
-      if (!mounted) return;
-      final recipes = List<Map<String, dynamic>>.from(res['data'] ?? const []);
-      recipes.sort((a, b) {
-        final an = (a['name'] ?? '').toString().toLowerCase();
-        final bn = (b['name'] ?? '').toString().toLowerCase();
-        return an.compareTo(bn);
-      });
-      setState(() {
-        _recipes = recipes;
-        final ids = recipes.map((r) => (r['id'] ?? '').toString()).toSet();
-        if (_selectedRecipeId.isNotEmpty && !ids.contains(_selectedRecipeId)) {
-          _selectedRecipeId = '';
-        }
-      });
-    } catch (_) {
-      if (!mounted) return;
-      setState(() => _recipes = const []);
-    }
   }
 
   @override
@@ -1317,30 +1451,6 @@ class _EditItemDialogState extends State<_EditItemDialog> {
                   ),
                   validator: (value) =>
                       value?.isEmpty ?? true ? 'Required' : null,
-                ),
-                const SizedBox(height: 12),
-                DropdownButtonFormField<String>(
-                  value: _selectedRecipeId,
-                  decoration: const InputDecoration(
-                    labelText: 'Recipe (Optional)',
-                    border: OutlineInputBorder(),
-                  ),
-                  items: [
-                    const DropdownMenuItem(
-                      value: '',
-                      child: Text('None'),
-                    ),
-                    ..._recipes.map((r) {
-                      final id = (r['id'] ?? '').toString();
-                      final name = (r['name'] ?? '').toString();
-                      return DropdownMenuItem(
-                        value: id,
-                        child: Text(name.isEmpty ? 'Untitled recipe' : name),
-                      );
-                    }),
-                  ],
-                  onChanged: (value) =>
-                      setState(() => _selectedRecipeId = value ?? ''),
                 ),
                 const SizedBox(height: 12),
                 DropdownButtonFormField<String>(
@@ -1416,6 +1526,7 @@ class _EditItemDialogState extends State<_EditItemDialog> {
                 ),
                 const SizedBox(height: 12),
                 Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Expanded(
                       child: _IntStepperTextFormField(
@@ -1426,16 +1537,49 @@ class _EditItemDialogState extends State<_EditItemDialog> {
                         validator: (v) => v <= 0 ? 'Required' : null,
                       ),
                     ),
-                    const SizedBox(width: 12),
+                    const SizedBox(width: 8),
                     Expanded(
-                      child: _IntStepperTextFormField(
-                        labelText: 'Servings',
-                        value: _availableServings,
-                        min: 0,
-                        enabled: !inventoryLinked,
-                        onChanged: (v) =>
-                            setState(() => _availableServings = v),
-                        validator: (v) => v < 0 ? 'Invalid' : null,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _IntStepperTextFormField(
+                            labelText: 'Servings',
+                            value: _availableServings,
+                            min: 0,
+                            enabled: !inventoryLinked && !_isUnlimitedServings,
+                            onChanged: (v) =>
+                                setState(() => _availableServings = v),
+                            validator: (v) => v < 0 ? 'Invalid' : null,
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    SizedBox(
+                      width: 80,
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Unspecified',
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: inventoryLinked
+                                  ? Colors.grey
+                                  : Colors.black87,
+                            ),
+                          ),
+                          Transform.scale(
+                            scale: 0.7,
+                            child: Switch(
+                              value: _isUnlimitedServings,
+                              onChanged: inventoryLinked
+                                  ? null
+                                  : (v) =>
+                                      setState(() => _isUnlimitedServings = v),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ],
@@ -1518,10 +1662,9 @@ class _EditItemDialogState extends State<_EditItemDialog> {
         name: _nameController.text,
         category: _selectedCategories.isEmpty ? '' : _selectedCategories.first,
         categories: _selectedCategories.toList()..sort(),
-        recipeId: _selectedRecipeId,
         price: _price,
         inventoryItemId: invId,
-        availableServings: servingsToSave,
+        availableServings: _isUnlimitedServings ? -1 : servingsToSave,
         isAvailable: _manualIsAvailable,
         description: _descriptionController.text,
         imageUrl: _imageUrlController.text.trim(),

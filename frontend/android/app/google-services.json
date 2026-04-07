@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "362576674400",
+    "project_id": "smart-eat-2eaf7",
+    "storage_bucket": "smart-eat-2eaf7.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:362576674400:android:f9965ac89a4b5557eecd05",
+        "android_client_info": {
+          "package_name": "com.example.smarteat"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAFb3IRH3lxjmhrp_0LPZRU5dyLWXq7KWM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

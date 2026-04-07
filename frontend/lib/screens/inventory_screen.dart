@@ -6,12 +6,25 @@ import '../models/inventory_item.dart';
 import '../services/auth_provider.dart';
 
 class InventoryScreen extends StatefulWidget {
-  const InventoryScreen({Key? key, this.globalSearchQuery}) : super(key: key);
-
   final ValueNotifier<String>? globalSearchQuery;
+  final bool showAppBar;
+  final VoidCallback? onOpenDrawer;
+  final VoidCallback? onBackNeeded;
+  final bool isInDetailView;
+  final Function(VoidCallback resetFn)? onResetRequest;
+
+  const InventoryScreen({
+    Key? key,
+    this.globalSearchQuery,
+    this.showAppBar = true,
+    this.onOpenDrawer,
+    this.onBackNeeded,
+    this.isInDetailView = false,
+    this.onResetRequest,
+  }) : super(key: key);
 
   @override
-  State<InventoryScreen> createState() => _InventoryScreenState();
+  State<InventoryScreen> createState() => InventoryScreenState();
 }
 
 class _InventoryTable extends StatefulWidget {
@@ -572,7 +585,7 @@ class _StockStatusCard extends StatelessWidget {
   }
 }
 
-class _InventoryScreenState extends State<InventoryScreen> {
+class InventoryScreenState extends State<InventoryScreen> {
   List<InventoryItem> _inventoryItems = [];
   List<InventoryItem> _lowStockItems = [];
   List<InventoryItem> _outOfStockItems = [];
@@ -653,6 +666,34 @@ class _InventoryScreenState extends State<InventoryScreen> {
       if (!mounted) return;
       setState(() {
         _isAdmin = false;
+      });
+    }
+  }
+
+  void resetToGrid() {
+    setState(() {
+      _showCategoryGrid = true;
+      _selectedCategory = 'All';
+      _selectedStockStatus = null;
+    });
+  }
+
+  void _goToPreviousCategory() {
+    final categories = _categories.where((c) => c != 'All').toList();
+    final currentIndex = categories.indexOf(_selectedCategory);
+    if (currentIndex > 0) {
+      setState(() {
+        _selectedCategory = categories[currentIndex - 1];
+      });
+    }
+  }
+
+  void _goToNextCategory() {
+    final categories = _categories.where((c) => c != 'All').toList();
+    final currentIndex = categories.indexOf(_selectedCategory);
+    if (currentIndex < categories.length - 1) {
+      setState(() {
+        _selectedCategory = categories[currentIndex + 1];
       });
     }
   }
@@ -752,51 +793,140 @@ class _InventoryScreenState extends State<InventoryScreen> {
     return base.where((item) => item.name.toLowerCase().contains(q)).toList();
   }
 
+  String? _categoryHelperText(String category) {
+    switch (category.trim().toLowerCase()) {
+      case 'vegetables':
+        return 'Examples: lettuce, tomatoes, onions, carrots, potatoes, leafy greens.';
+      case 'meat':
+        return 'Examples: chicken, pork, beef, fish, processed meats.';
+      case 'dairy':
+        return 'Examples: milk, cheese, butter, cream, yogurt.';
+      case 'grains':
+        return 'Examples: rice, pasta, bread, flour, oats.';
+      case 'spices':
+        return 'Examples: salt, pepper, garlic powder, chili, herbs, seasoning mixes.';
+      case 'beverages':
+        return 'Examples: coffee, tea, juices, softdrinks, water, syrups.';
+      default:
+        return null;
+    }
+  }
+
+  Widget _buildCategoryEmptyState(BuildContext context) {
+    final helper = _categoryHelperText(_selectedCategory);
+    final title = _searchQuery.trim().isNotEmpty
+        ? 'No items match your search'
+        : 'No inventory items found';
+
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 520),
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.inventory_2_outlined,
+                size: 56,
+                color: Colors.grey.shade400,
+              ),
+              const SizedBox(height: 12),
+              Text(
+                title,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              if (helper != null && helper.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Text(
+                  helper,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 13,
+                    height: 1.35,
+                    color: Colors.grey.shade700,
+                  ),
+                ),
+              ],
+              const SizedBox(height: 16),
+              FilledButton.icon(
+                onPressed: _showAddItemDialog,
+                icon: const Icon(Icons.add),
+                label: const Text('Add Item'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: Text(
-          _showCategoryGrid
-              ? 'Inventory'
-              : _selectedStockStatus == 'all'
-                  ? 'All Inventory'
-                  : _selectedStockStatus == 'low'
-                      ? 'Low Stock'
-                      : _selectedStockStatus == 'out'
-                          ? 'Out of Stock'
-                          : _selectedCategory,
-        ),
-        centerTitle: false,
-        titleSpacing: 8,
-        leading: _showCategoryGrid
-            ? null
-            : IconButton(
-                icon: const Icon(Icons.arrow_back),
-                onPressed: () {
-                  setState(() {
-                    _showCategoryGrid = true;
-                    _selectedCategory = 'All';
-                    _selectedStockStatus = null;
-                  });
-                },
+      appBar: widget.showAppBar
+          ? AppBar(
+              title: Text(
+                _showCategoryGrid
+                    ? 'Inventory'
+                    : _selectedStockStatus == 'all'
+                        ? 'All Inventory'
+                        : _selectedStockStatus == 'low'
+                            ? 'Low Stock'
+                            : _selectedStockStatus == 'out'
+                                ? 'Out of Stock'
+                                : _selectedCategory,
               ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.add),
-            onPressed: _showAddItemDialog,
-          ),
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: _loadInventory,
-          ),
-        ],
-      ),
+              centerTitle: false,
+              titleSpacing: 8,
+              leading: _showCategoryGrid
+                  ? (widget.onOpenDrawer != null
+                      ? IconButton(
+                          icon: const Icon(Icons.menu),
+                          tooltip: 'Menu',
+                          onPressed: widget.onOpenDrawer,
+                        )
+                      : null)
+                  : IconButton(
+                      icon: const Icon(Icons.arrow_back),
+                      tooltip: 'Back',
+                      onPressed: () {
+                        setState(() {
+                          _showCategoryGrid = true;
+                          _selectedCategory = 'All';
+                          _selectedStockStatus = null;
+                        });
+                        widget.onOpenDrawer?.call();
+                      },
+                    ),
+              actions: [
+                IconButton(
+                  icon: const Icon(Icons.add),
+                  onPressed: _showAddItemDialog,
+                ),
+                IconButton(
+                  icon: const Icon(Icons.refresh),
+                  onPressed: _loadInventory,
+                ),
+              ],
+            )
+          : null,
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
           : _showCategoryGrid
               ? _buildCategoryGrid(context)
               : _buildCategoryItemsList(context),
+      floatingActionButton: _isLoading
+          ? null
+          : FloatingActionButton.extended(
+              onPressed: _showAddItemDialog,
+              icon: const Icon(Icons.add),
+              label: const Text('Add Item'),
+            ),
     );
   }
 
@@ -859,6 +989,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
                   _selectedCategory = 'All';
                   _showCategoryGrid = false;
                 });
+                widget.onBackNeeded?.call();
               },
             );
 
@@ -873,6 +1004,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
                   _selectedCategory = 'All';
                   _showCategoryGrid = false;
                 });
+                widget.onBackNeeded?.call();
               },
             );
 
@@ -887,6 +1019,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
                   _selectedCategory = 'All';
                   _showCategoryGrid = false;
                 });
+                widget.onBackNeeded?.call();
               },
             );
 
@@ -951,6 +1084,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
                               _selectedCategory = category;
                               _showCategoryGrid = false;
                             });
+                            widget.onBackNeeded?.call();
                           },
                         ),
                       );
@@ -978,6 +1112,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
                               _selectedCategory = category;
                               _showCategoryGrid = false;
                             });
+                            widget.onBackNeeded?.call();
                           },
                         );
                       },
@@ -999,11 +1134,56 @@ class _InventoryScreenState extends State<InventoryScreen> {
   }
 
   Widget _buildCategoryItemsList(BuildContext context) {
+    final categories = _categories.where((c) => c != 'All').toList();
+    final currentIndex = categories.indexOf(_selectedCategory);
+    final hasPrevious = currentIndex > 0;
+    final hasNext = currentIndex < categories.length - 1;
+
     return Column(
       children: [
+        // Category navigation subheader
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            border: Border(
+              bottom: BorderSide(color: Colors.grey.shade200),
+            ),
+          ),
+          child: Row(
+            children: [
+              IconButton(
+                onPressed: hasPrevious ? _goToPreviousCategory : null,
+                icon: Icon(
+                  Icons.arrow_back_ios,
+                  color: hasPrevious ? Colors.blue : Colors.grey.shade300,
+                ),
+                tooltip: hasPrevious ? 'Previous category' : null,
+              ),
+              Expanded(
+                child: Text(
+                  _selectedCategory,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+              IconButton(
+                onPressed: hasNext ? _goToNextCategory : null,
+                icon: Icon(
+                  Icons.arrow_forward_ios,
+                  color: hasNext ? Colors.blue : Colors.grey.shade300,
+                ),
+                tooltip: hasNext ? 'Next category' : null,
+              ),
+            ],
+          ),
+        ),
         Expanded(
           child: _filteredItems.isEmpty
-              ? const Center(child: Text('No inventory items found'))
+              ? _buildCategoryEmptyState(context)
               : Padding(
                   padding: const EdgeInsets.all(16),
                   child: _InventoryTable(
@@ -1503,6 +1683,9 @@ class _AddItemDialogState extends State<_AddItemDialog> {
   String? _selectedCategory;
   String? _selectedUnit;
 
+  // Currency symbol from business settings
+  String get _currencySymbol => '₱';
+
   final List<String> _categories = const [
     'Vegetables',
     'Meat',
@@ -1677,10 +1860,10 @@ class _AddItemDialogState extends State<_AddItemDialog> {
                       cell(
                         TextFormField(
                           controller: _unitCostController,
-                          decoration: const InputDecoration(
+                          decoration: InputDecoration(
                             labelText: 'Unit Cost',
-                            border: OutlineInputBorder(),
-                            prefixText: '₱ ',
+                            border: const OutlineInputBorder(),
+                            prefixText: '$_currencySymbol ',
                           ),
                           keyboardType: TextInputType.number,
                           inputFormatters: [
@@ -1691,31 +1874,6 @@ class _AddItemDialogState extends State<_AddItemDialog> {
                           validator: (value) {
                             if (value == null || value.trim().isEmpty) {
                               return 'Required';
-                            }
-                            final parsed = double.tryParse(value.trim());
-                            if (parsed == null) return 'Invalid number';
-                            if (parsed < 0) return 'Must be \u2265 0';
-                            return null;
-                          },
-                        ),
-                      ),
-                      cell(
-                        TextFormField(
-                          controller: _sellingPriceController,
-                          decoration: const InputDecoration(
-                            labelText: 'Selling Price (Optional)',
-                            border: OutlineInputBorder(),
-                            prefixText: '₱ ',
-                          ),
-                          keyboardType: TextInputType.number,
-                          inputFormatters: [
-                            FilteringTextInputFormatter.allow(
-                              RegExp(r'^[0-9]*\.?[0-9]*$'),
-                            ),
-                          ],
-                          validator: (value) {
-                            if (value == null || value.trim().isEmpty) {
-                              return null;
                             }
                             final parsed = double.tryParse(value.trim());
                             if (parsed == null) return 'Invalid number';
@@ -1778,9 +1936,7 @@ class _AddItemDialogState extends State<_AddItemDialog> {
         unit: _unitController.text.trim(),
         minStock: double.tryParse(_minStockController.text.trim()) ?? 0,
         unitCost: double.tryParse(_unitCostController.text.trim()) ?? 0,
-        sellingPrice: _sellingPriceController.text.trim().isEmpty
-            ? null
-            : double.tryParse(_sellingPriceController.text.trim()),
+        sellingPrice: null,
         supplier: _supplierController.text,
       );
 
@@ -1810,7 +1966,6 @@ class _AddItemDialogState extends State<_AddItemDialog> {
     _minStockController.dispose();
     _unitController.dispose();
     _unitCostController.dispose();
-    _sellingPriceController.dispose();
     _supplierController.dispose();
     super.dispose();
   }

@@ -36,9 +36,16 @@ service cloud.firestore {
         && (isAdmin() || isApprovedStaff());
     }
 
-    function isPendingOrderAppendUpdate() {
+    function canAccessEatery(eateryId) {
+      return isSignedIn()
+        && eateryId == userEateryId()
+        && (isAdmin() || isApprovedStaff());
+    }
+
+    function isPendingOrderAppendUpdate(eateryId) {
       return resource.data.status == 'pending'
         && request.resource.data.eateryId == resource.data.eateryId
+        && request.resource.data.eateryId == eateryId
         && request.resource.data.status == resource.data.status
         && request.resource.data.diff(resource.data).changedKeys().hasOnly([
           'items',
@@ -80,57 +87,73 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
-    match /menu/{docId} {
-      allow read: if canAccessEateryData(resource.data.eateryId);
-      allow create: if isAdmin() && request.resource.data.eateryId == userEateryId();
-      allow update, delete: if isAdmin() && resource.data.eateryId == userEateryId();
-    }
-
-    match /orders/{docId} {
-      allow read: if canAccessEateryData(resource.data.eateryId);
-      allow create: if canAccessEateryData(request.resource.data.eateryId);
-      allow update: if isAdmin() && resource.data.eateryId == userEateryId();
-      allow update: if canAccessEateryData(resource.data.eateryId)
-        && isPendingOrderAppendUpdate();
-      allow delete: if isAdmin() && resource.data.eateryId == userEateryId();
-    }
-
-    match /inventory/{docId} {
-      allow read: if canAccessEateryData(resource.data.eateryId);
-      allow create: if isAdmin() && request.resource.data.eateryId == userEateryId();
-      allow update, delete: if isAdmin() && resource.data.eateryId == userEateryId();
-    }
-
-    match /inventory_usage/{docId} {
-      allow read: if canAccessEateryData(resource.data.eateryId);
-      allow create: if isAdmin() && request.resource.data.eateryId == userEateryId();
-      allow update, delete: if isAdmin() && resource.data.eateryId == userEateryId();
-    }
-
-    match /analytics/{docId} {
-      allow read: if canAccessEateryData(resource.data.eateryId);
-      allow create: if isAdmin() && request.resource.data.eateryId == userEateryId();
-      allow update, delete: if isAdmin() && resource.data.eateryId == userEateryId();
-    }
-
-    match /recipes/{docId} {
-      allow read: if canAccessEateryData(resource.data.eateryId);
-      allow create: if isAdmin() && request.resource.data.eateryId == userEateryId();
-      allow update, delete: if isAdmin() && resource.data.eateryId == userEateryId();
-    }
-
-    match /staff_profiles/{docId} {
-      allow read: if (resource != null && canAccessEateryData(resource.data.eateryId))
-        || (resource == null && isAdmin() && docId.matches('^' + userEateryId() + '_.*$'));
+    match /eateries/{eateryId}/menu/{docId} {
+      allow read: if canAccessEatery(eateryId);
       allow create: if isAdmin()
-        && request.resource.data.eateryId == userEateryId()
+        && eateryId == userEateryId()
+        && request.resource.data.eateryId == eateryId;
+      allow update, delete: if isAdmin()
+        && eateryId == userEateryId()
+        && resource.data.eateryId == eateryId;
+    }
+
+    match /eateries/{eateryId}/orders/{docId} {
+      allow read: if canAccessEatery(eateryId);
+      allow create: if canAccessEatery(eateryId)
+        && request.resource.data.eateryId == eateryId;
+      allow update: if isAdmin()
+        && eateryId == userEateryId();
+      allow update: if canAccessEatery(eateryId)
+        && isPendingOrderAppendUpdate(eateryId);
+      allow delete: if isAdmin()
+        && eateryId == userEateryId();
+    }
+
+    match /eateries/{eateryId}/inventory/{docId} {
+      allow read: if canAccessEatery(eateryId);
+      allow create: if isAdmin()
+        && eateryId == userEateryId()
+        && request.resource.data.eateryId == eateryId;
+      allow update, delete: if isAdmin()
+        && eateryId == userEateryId()
+        && resource.data.eateryId == eateryId;
+    }
+
+    match /eateries/{eateryId}/inventory_usage/{docId} {
+      allow read: if canAccessEatery(eateryId);
+      allow create: if isAdmin()
+        && eateryId == userEateryId()
+        && request.resource.data.eateryId == eateryId;
+      allow update, delete: if isAdmin()
+        && eateryId == userEateryId()
+        && resource.data.eateryId == eateryId;
+    }
+
+    match /eateries/{eateryId}/recipes/{docId} {
+      allow read: if canAccessEatery(eateryId);
+      allow create: if isAdmin()
+        && eateryId == userEateryId()
+        && request.resource.data.eateryId == eateryId;
+      allow update, delete: if isAdmin()
+        && eateryId == userEateryId()
+        && resource.data.eateryId == eateryId;
+    }
+
+    match /eateries/{eateryId}/staff_profiles/{uid} {
+      allow read: if canAccessEatery(eateryId);
+      allow create: if isAdmin()
+        && eateryId == userEateryId()
+        && request.resource.data.eateryId == eateryId
+        && request.resource.data.uid == uid
         && request.resource.data.uid is string
         && request.resource.data.dailyRate is number
         && (!('halfDayMultiplier' in request.resource.data)
           || request.resource.data.halfDayMultiplier is number);
       allow update: if isAdmin()
-        && resource.data.eateryId == userEateryId()
-        && request.resource.data.eateryId == resource.data.eateryId
+        && eateryId == userEateryId()
+        && resource.data.eateryId == eateryId
+        && request.resource.data.eateryId == eateryId
+        && request.resource.data.uid == uid
         && request.resource.data.uid == resource.data.uid
         && request.resource.data.dailyRate is number
         && (!('halfDayMultiplier' in request.resource.data)
@@ -138,37 +161,165 @@ service cloud.firestore {
       allow delete: if false;
     }
 
-    match /staff_attendance/{docId} {
-      allow read: if isAdmin() && resource.data.eateryId == userEateryId();
-      allow create: if isAdmin()
-        && request.resource.data.eateryId == userEateryId()
+    match /eateries/{eateryId}/analytics_daily/{docId} {
+      allow read: if canAccessEatery(eateryId);
+      allow create, update, delete: if isAdmin() && eateryId == userEateryId();
+    }
+
+    match /eateries/{eateryId}/predictions/{docId} {
+      allow read: if canAccessEatery(eateryId);
+      allow create, update, delete: if isAdmin() && eateryId == userEateryId();
+    }
+
+    match /eateries/{eateryId}/expenses/{docId} {
+      allow read: if canAccessEatery(eateryId);
+      allow create: if isSignedIn()
+        && isAdmin()
+        && eateryId == userEateryId()
+        && request.resource.data.eateryId == eateryId;
+      allow update, delete: if isSignedIn()
+        && isAdmin()
+        && eateryId == userEateryId()
+        && resource.data.eateryId == eateryId;
+    }
+
+    match /eateries/{eateryId}/payables/{docId} {
+      allow read: if canAccessEatery(eateryId);
+      allow create: if canAccessEatery(eateryId)
+        && request.resource.data.eateryId == eateryId
+        && request.resource.data.keys().hasAll(['name', 'amount']);
+      allow update: if canAccessEatery(eateryId)
+        && resource.data.eateryId == eateryId
+        && request.resource.data.eateryId == eateryId;
+      allow delete: if isSignedIn()
+        && isAdmin()
+        && eateryId == userEateryId()
+        && resource.data.eateryId == eateryId;
+    }
+
+    match /eateries/{eateryId}/notifications/{docId} {
+      allow read: if canAccessEatery(eateryId);
+      allow create: if isSignedIn()
+        && eateryId == userEateryId()
+        && request.resource.data.eateryId == eateryId;
+      allow update: if isSignedIn()
+        && canAccessEatery(eateryId)
+        && resource.data.eateryId == eateryId
+        && request.resource.data.eateryId == eateryId;
+      allow delete: if isSignedIn()
+        && isAdmin()
+        && eateryId == userEateryId()
+        && resource.data.eateryId == eateryId;
+    }
+
+    match /eateries/{eateryId}/settings/{docId} {
+      allow read: if canAccessEatery(eateryId);
+      allow create: if canAccessEatery(eateryId)
+        && request.resource.data.eateryId == eateryId;
+      allow update: if canAccessEatery(eateryId)
+        && resource.data.eateryId == eateryId
+        && request.resource.data.eateryId == eateryId;
+      allow delete: if isAdmin()
+        && eateryId == userEateryId()
+        && resource.data.eateryId == eateryId;
+    }
+
+    match /menu/{docId} {
+      allow read, write: if false;
+    }
+
+    match /orders/{docId} {
+      allow read, write: if false;
+    }
+
+    match /inventory/{docId} {
+      allow read, write: if false;
+    }
+
+    match /inventory_usage/{docId} {
+      allow read, write: if false;
+    }
+
+    match /analytics/{docId} {
+      allow read, write: if false;
+    }
+
+    match /recipes/{docId} {
+      allow read, write: if false;
+    }
+
+    match /staff_profiles/{docId} {
+      allow read, write: if false;
+    }
+
+    match /eateries/{eateryId}/staff_attendance/{docId} {
+      allow read: if canAccessEatery(eateryId);
+      allow create: if canAccessEatery(eateryId)
+        && request.resource.data.eateryId == eateryId
         && request.resource.data.uid is string
         && request.resource.data.date is string
         && request.resource.data.present is bool
         && (!('workUnit' in request.resource.data)
           || request.resource.data.workUnit is number);
-      allow update: if isAdmin()
-        && resource.data.eateryId == userEateryId()
+      allow update: if canAccessEatery(eateryId)
+        && resource.data.eateryId == eateryId
         && request.resource.data.eateryId == resource.data.eateryId
         && request.resource.data.uid == resource.data.uid
         && request.resource.data.date == resource.data.date
         && request.resource.data.present is bool
         && (!('workUnit' in request.resource.data)
           || request.resource.data.workUnit is number);
-      allow delete: if false;
+      allow delete: if isAdmin()
+        && eateryId == userEateryId()
+        && resource.data.eateryId == eateryId;
     }
 
-    match /payroll_payouts/{docId} {
-      allow read: if isAdmin() && resource.data.eateryId == userEateryId();
+    match /eateries/{eateryId}/admin_profiles/{uid} {
+      allow read: if canAccessEatery(eateryId);
       allow create: if isAdmin()
-        && request.resource.data.eateryId == userEateryId()
+        && eateryId == userEateryId()
+        && request.resource.data.eateryId == eateryId
+        && request.resource.data.uid == uid
+        && request.resource.data.uid is string;
+      allow update: if isAdmin()
+        && eateryId == userEateryId()
+        && resource.data.eateryId == eateryId
+        && request.resource.data.eateryId == resource.data.eateryId
+        && request.resource.data.uid == uid
+        && request.resource.data.uid == resource.data.uid;
+      allow delete: if isAdmin()
+        && eateryId == userEateryId()
+        && resource.data.eateryId == eateryId;
+    }
+
+    match /eateries/{eateryId}/staff_meals/{docId} {
+      allow read: if canAccessEatery(eateryId);
+      allow create: if canAccessEatery(eateryId)
+        && request.resource.data.eateryId == eateryId
+        && request.resource.data.staffId is string
+        && request.resource.data.items is list
+        && request.resource.data.status in ['pending', 'completed'];
+      allow update: if canAccessEatery(eateryId)
+        && resource.data.eateryId == eateryId
+        && request.resource.data.eateryId == resource.data.eateryId
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt']);
+      allow delete: if isAdmin()
+        && eateryId == userEateryId()
+        && resource.data.eateryId == eateryId;
+    }
+
+    match /eateries/{eateryId}/payroll_payouts/{docId} {
+      allow read: if canAccessEatery(eateryId);
+      allow create: if canAccessEatery(eateryId)
+        && request.resource.data.eateryId == eateryId
         && request.resource.data.uid is string
         && request.resource.data.weekStart is string
         && request.resource.data.amount is number
         && (!('type' in request.resource.data)
           || request.resource.data.type in ['weekly', 'advance']);
       allow update: if isAdmin()
-        && resource.data.eateryId == userEateryId()
+        && eateryId == userEateryId()
+        && resource.data.eateryId == eateryId
         && request.resource.data.eateryId == resource.data.eateryId
         && request.resource.data.uid == resource.data.uid
         && request.resource.data.weekStart == resource.data.weekStart
@@ -178,8 +329,30 @@ service cloud.firestore {
       allow delete: if false;
     }
 
-    match /{document=**} {
-      allow read, write: if false;
+    match /notifications/{docId} {
+      allow read: if isSignedIn()
+        && resource.data.eateryId == userEateryId()
+        && (isAdmin() || isApprovedStaff());
+      allow create: if isSignedIn()
+        && request.resource.data.eateryId == userEateryId();
+      allow update: if isSignedIn()
+        && resource.data.eateryId == userEateryId()
+        && request.resource.data.eateryId == resource.data.eateryId
+        && (isAdmin() || isApprovedStaff());
+      allow delete: if isSignedIn()
+        && isAdmin()
+        && resource.data.eateryId == userEateryId();
+    }
+
+    match /user_preferences/{userId} {
+      allow read: if isSignedIn() && request.auth.uid == userId;
+      allow create: if isSignedIn()
+        && request.auth.uid == userId
+        && request.resource.data.keys().hasAll(['notificationsEnabled', 'lowStockEnabled', 'billRemindersEnabled', 'orderAlertsEnabled']);
+      allow update: if isSignedIn()
+        && request.auth.uid == userId
+        && request.auth.uid == resource.data.userId;
+      allow delete: if false;
     }
   }
 }

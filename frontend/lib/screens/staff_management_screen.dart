@@ -3,12 +3,19 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../services/auth_provider.dart';
+import '../services/api_service.dart';
 
 class StaffManagementScreen extends StatefulWidget {
-  const StaffManagementScreen({Key? key, this.globalSearchQuery})
-      : super(key: key);
+  const StaffManagementScreen({
+    Key? key,
+    this.globalSearchQuery,
+    this.showAppBar = true,
+    this.onOpenDrawer,
+  }) : super(key: key);
 
   final ValueNotifier<String>? globalSearchQuery;
+  final bool showAppBar;
+  final VoidCallback? onOpenDrawer;
 
   @override
   State<StaffManagementScreen> createState() => _StaffManagementScreenState();
@@ -16,8 +23,6 @@ class StaffManagementScreen extends StatefulWidget {
 
 class _StaffManagementScreenState extends State<StaffManagementScreen> {
   DateTime _weekStart = _startOfWeek(DateTime.now());
-
-  static const double _defaultHalfDayMultiplier = 0.5;
 
   static DateTime _dateOnly(DateTime d) => DateTime(d.year, d.month, d.day);
 
@@ -71,8 +76,10 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
   }) async {
     final userName = _displayNameFromUserDoc(userData, uid);
     final profileRef = FirebaseFirestore.instance
+        .collection('eateries')
+        .doc(eateryId)
         .collection('staff_profiles')
-        .doc('${eateryId}_$uid');
+        .doc(uid);
 
     Map<String, dynamic> existing;
     try {
@@ -86,112 +93,59 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
       return;
     }
 
-    final positionController = TextEditingController(
-      text: (existing['position'] ?? '').toString(),
-    );
-    final rateController = TextEditingController(
-      text: (() {
-        final rate = existing['dailyRate'];
-        if (rate is num) return rate.toString();
-        final s = (rate ?? '').toString().trim();
-        return s;
-      })(),
-    );
+    // Get joined date from createdAt
+    String joinedDate = 'Unknown';
+    final createdAt = existing['createdAt'];
+    if (createdAt != null) {
+      try {
+        if (createdAt is Timestamp) {
+          joinedDate = _fmtDate(createdAt.toDate());
+        } else if (createdAt is String) {
+          joinedDate = createdAt;
+        }
+      } catch (_) {
+        joinedDate = 'Unknown';
+      }
+    }
 
-    final halfDayMultiplierController = TextEditingController(
-      text: (() {
-        final v = existing['halfDayMultiplier'];
-        if (v is num) return v.toString();
-        final s = (v ?? '').toString().trim();
-        return s;
-      })(),
-    );
+    final email = (userData['email'] ?? '').toString();
+    final legacyRole = userData['role']?.toString().trim().toLowerCase();
+    final isAdmin = (userData['isAdmin'] == true) || (legacyRole == 'admin');
 
-    String status = (existing['status'] ?? 'active').toString().trim();
-    if (status.isEmpty) status = 'active';
+    // Profile data
+    final position = (existing['position'] ?? '').toString().trim();
+    final dailyRate = existing['dailyRate'];
+    final rate = dailyRate is num ? dailyRate.toDouble() : 0.0;
+    final halfDayRate = existing['halfDayRate'];
+    final halfRate = halfDayRate is num ? halfDayRate.toDouble() : 0.0;
+    final status = (existing['status'] ?? 'active').toString().trim();
 
-    final saved = await showDialog<bool>(
+    final result = await showDialog<_StaffProfileResult>(
       context: context,
       builder: (context) {
-        return AlertDialog(
-          title: Text('Staff profile: $userName'),
-          content: SizedBox(
-            width: 520,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
-                  controller: positionController,
-                  decoration: const InputDecoration(
-                    labelText: 'Position',
-                  ),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: rateController,
-                  keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(
-                    labelText: 'Daily rate (₱)',
-                  ),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: halfDayMultiplierController,
-                  keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(
-                    labelText: 'Half-day multiplier (e.g. 0.5)',
-                  ),
-                ),
-                const SizedBox(height: 12),
-                DropdownButtonFormField<String>(
-                  value: status,
-                  items: const [
-                    DropdownMenuItem(value: 'active', child: Text('Active')),
-                    DropdownMenuItem(
-                        value: 'inactive', child: Text('Inactive')),
-                  ],
-                  onChanged: (v) => status = (v ?? 'active'),
-                  decoration: const InputDecoration(
-                    labelText: 'Status',
-                  ),
-                ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.of(context).pop(true),
-              child: const Text('Save'),
-            ),
-          ],
+        return _StaffProfileDialog(
+          userName: userName,
+          email: email,
+          isAdmin: isAdmin,
+          joinedDate: joinedDate,
+          position: position,
+          dailyRate: rate,
+          halfDayRate: halfRate,
+          status: status,
         );
       },
     );
 
-    final nextPosition = positionController.text.trim();
-    final nextDailyRate = _asDouble(rateController.text, fallback: 0);
-    final nextHalfDayMultiplier = _asDouble(
-      halfDayMultiplierController.text,
-      fallback: _defaultHalfDayMultiplier,
-    );
+    if (result == null) return;
 
-    positionController.dispose();
-    rateController.dispose();
-    halfDayMultiplierController.dispose();
-
-    if (saved != true) return;
-
+    // Save changes
     await profileRef.set({
       'eateryId': eateryId,
       'uid': uid,
-      'position': nextPosition,
-      'dailyRate': nextDailyRate,
-      'halfDayMultiplier': nextHalfDayMultiplier,
-      'status': status,
+      'position': result.position,
+      'dailyRate': result.dailyRate,
+      'halfDayRate': result.halfDayRate,
+      'status': result.status,
       'updatedAt': FieldValue.serverTimestamp(),
       'createdAt': existing['createdAt'] ?? FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
@@ -296,6 +250,8 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
     final docId = '${eateryId}_${uid}_${_fmtDate(day)}';
     final present = workUnit > 0;
     await FirebaseFirestore.instance
+        .collection('eateries')
+        .doc(eateryId)
         .collection('staff_attendance')
         .doc(docId)
         .set({
@@ -390,7 +346,24 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
 
         if (profileSnapshot.hasError) {
           return Scaffold(
-            appBar: AppBar(title: const Text('Staff Management')),
+            appBar: widget.showAppBar
+                ? AppBar(
+                    leading: widget.onOpenDrawer != null
+                        ? IconButton(
+                            icon: const Icon(Icons.menu),
+                            tooltip: 'Menu',
+                            onPressed: widget.onOpenDrawer,
+                          )
+                        : (Navigator.of(context).canPop()
+                            ? IconButton(
+                                icon: const Icon(Icons.arrow_back),
+                                onPressed: () =>
+                                    Navigator.of(context).maybePop(),
+                              )
+                            : null),
+                    title: const Text('Staff Management'),
+                  )
+                : null,
             body: Center(
               child: Padding(
                 padding: const EdgeInsets.all(16),
@@ -416,7 +389,24 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
         final isAdmin = _isAdminFromProfile(profile);
         if (!isAdmin) {
           return Scaffold(
-            appBar: AppBar(title: const Text('Staff Management')),
+            appBar: widget.showAppBar
+                ? AppBar(
+                    leading: widget.onOpenDrawer != null
+                        ? IconButton(
+                            icon: const Icon(Icons.menu),
+                            tooltip: 'Menu',
+                            onPressed: widget.onOpenDrawer,
+                          )
+                        : (Navigator.of(context).canPop()
+                            ? IconButton(
+                                icon: const Icon(Icons.arrow_back),
+                                onPressed: () =>
+                                    Navigator.of(context).maybePop(),
+                              )
+                            : null),
+                    title: const Text('Staff Management'),
+                  )
+                : null,
             body: const Center(
               child: Padding(
                 padding: EdgeInsets.all(16),
@@ -430,120 +420,508 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
         final weekLabel = '${_fmtDate(_weekStart)} to ${_fmtDate(weekEnd)}';
 
         return DefaultTabController(
-          length: 3,
+          length: 4,
           child: Scaffold(
-            appBar: AppBar(
-              title: const Text('Staff Management'),
-              bottom: const TabBar(
-                tabs: [
-                  Tab(text: 'Staff'),
-                  Tab(text: 'Attendance'),
-                  Tab(text: 'Payroll'),
-                ],
-              ),
-              actions: [
-                IconButton(
-                  tooltip: 'Previous week',
-                  onPressed: () {
-                    setState(() {
-                      _weekStart = _weekStart.subtract(const Duration(days: 7));
-                    });
-                  },
-                  icon: const Icon(Icons.chevron_left),
-                ),
-                Center(
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 6),
-                    child: Text(
-                      weekLabel,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w600,
-                        fontSize: 12,
+            appBar: widget.showAppBar
+                ? AppBar(
+                    leading: widget.onOpenDrawer != null
+                        ? IconButton(
+                            icon: const Icon(Icons.menu),
+                            tooltip: 'Menu',
+                            onPressed: widget.onOpenDrawer,
+                          )
+                        : (Navigator.of(context).canPop()
+                            ? IconButton(
+                                icon: const Icon(Icons.arrow_back),
+                                onPressed: () =>
+                                    Navigator.of(context).maybePop(),
+                              )
+                            : null),
+                    title: const Text('Staff Management'),
+                    bottom: const TabBar(
+                      tabs: [
+                        Tab(text: 'Staff'),
+                        Tab(text: 'Attendance'),
+                        Tab(text: 'Payroll'),
+                        Tab(text: 'Meals'),
+                      ],
+                    ),
+                    actions: [
+                      IconButton(
+                        tooltip: 'Previous week',
+                        onPressed: () {
+                          setState(() {
+                            _weekStart =
+                                _weekStart.subtract(const Duration(days: 7));
+                          });
+                        },
+                        icon: const Icon(Icons.chevron_left),
                       ),
+                      Center(
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 6),
+                          child: Text(
+                            weekLabel,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w600,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: 'Next week',
+                        onPressed: () {
+                          setState(() {
+                            _weekStart =
+                                _weekStart.add(const Duration(days: 7));
+                          });
+                        },
+                        icon: const Icon(Icons.chevron_right),
+                      ),
+                      const SizedBox(width: 4),
+                    ],
+                  )
+                : null,
+            body: Column(
+              children: [
+                if (!widget.showAppBar)
+                  Material(
+                    color: Colors.white,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const TabBar(
+                          tabs: [
+                            Tab(text: 'Staff'),
+                            Tab(text: 'Admins'),
+                            Tab(text: 'Attendance'),
+                            Tab(text: 'Payroll'),
+                            Tab(text: 'Meals'),
+                          ],
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(12, 6, 12, 6),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.end,
+                            children: [
+                              IconButton(
+                                tooltip: 'Previous week',
+                                onPressed: () {
+                                  setState(() {
+                                    _weekStart = _weekStart
+                                        .subtract(const Duration(days: 7));
+                                  });
+                                },
+                                icon: const Icon(Icons.chevron_left),
+                              ),
+                              Padding(
+                                padding:
+                                    const EdgeInsets.symmetric(horizontal: 6),
+                                child: Text(
+                                  weekLabel,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ),
+                              IconButton(
+                                tooltip: 'Next week',
+                                onPressed: () {
+                                  setState(() {
+                                    _weekStart =
+                                        _weekStart.add(const Duration(days: 7));
+                                  });
+                                },
+                                icon: const Icon(Icons.chevron_right),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
                     ),
                   ),
+                Expanded(
+                  child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+                    stream: FirebaseFirestore.instance
+                        .collection('users')
+                        .where('eateryId', isEqualTo: eateryId)
+                        .snapshots(),
+                    builder: (context, usersSnap) {
+                      if (usersSnap.hasError) {
+                        return Center(
+                          child: Padding(
+                            padding: const EdgeInsets.all(16),
+                            child: Text(
+                                'Failed to load users: ${usersSnap.error}'),
+                          ),
+                        );
+                      }
+                      if (!usersSnap.hasData) {
+                        return const Center(child: CircularProgressIndicator());
+                      }
+
+                      final userDocs = usersSnap.data!.docs;
+                      final usersByUid = <String, Map<String, dynamic>>{
+                        for (final d in userDocs) d.id: d.data(),
+                      };
+
+                      return TabBarView(
+                        children: [
+                          _StaffTab(
+                            eateryId: eateryId,
+                            usersByUid: usersByUid,
+                            globalSearchQuery: widget.globalSearchQuery,
+                            onEditProfile: (uid, data) => _editStaffProfile(
+                              context,
+                              eateryId: eateryId,
+                              uid: uid,
+                              userData: data,
+                            ),
+                          ),
+                          _AdminsTab(
+                            eateryId: eateryId,
+                            usersByUid: usersByUid,
+                            onEditProfile: (uid, data) => _editStaffProfile(
+                              context,
+                              eateryId: eateryId,
+                              uid: uid,
+                              userData: data,
+                            ),
+                          ),
+                          _AttendanceTab(
+                            eateryId: eateryId,
+                            usersByUid: usersByUid,
+                            weekStart: _weekStart,
+                            onEncodeAttendance: (uid, label) =>
+                                _encodeAttendance(
+                              context,
+                              eateryId: eateryId,
+                              uid: uid,
+                              userLabel: label,
+                            ),
+                          ),
+                          _PayrollTab(
+                            eateryId: eateryId,
+                            usersByUid: usersByUid,
+                            weekStart: _weekStart,
+                            onRecordPayout: (uid, label, amount, type) =>
+                                _recordPayout(
+                              context,
+                              eateryId: eateryId,
+                              uid: uid,
+                              weekStart: _weekStart,
+                              amount: amount,
+                              userLabel: label,
+                              type: type,
+                            ),
+                          ),
+                          _MealsTab(eateryId: eateryId),
+                        ],
+                      );
+                    },
+                  ),
                 ),
-                IconButton(
-                  tooltip: 'Next week',
-                  onPressed: () {
-                    setState(() {
-                      _weekStart = _weekStart.add(const Duration(days: 7));
-                    });
-                  },
-                  icon: const Icon(Icons.chevron_right),
-                ),
-                const SizedBox(width: 4),
               ],
-            ),
-            body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-              stream: FirebaseFirestore.instance
-                  .collection('users')
-                  .where('eateryId', isEqualTo: eateryId)
-                  .snapshots(),
-              builder: (context, usersSnap) {
-                if (usersSnap.hasError) {
-                  return Center(
-                    child: Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Text('Failed to load users: ${usersSnap.error}'),
-                    ),
-                  );
-                }
-                if (!usersSnap.hasData) {
-                  return const Center(child: CircularProgressIndicator());
-                }
-
-                final userDocs = usersSnap.data!.docs;
-                final usersByUid = <String, Map<String, dynamic>>{
-                  for (final d in userDocs) d.id: d.data(),
-                };
-
-                return TabBarView(
-                  children: [
-                    _StaffTab(
-                      eateryId: eateryId,
-                      usersByUid: usersByUid,
-                      globalSearchQuery: widget.globalSearchQuery,
-                      onEditProfile: (uid, data) => _editStaffProfile(
-                        context,
-                        eateryId: eateryId,
-                        uid: uid,
-                        userData: data,
-                      ),
-                    ),
-                    _AttendanceTab(
-                      eateryId: eateryId,
-                      usersByUid: usersByUid,
-                      weekStart: _weekStart,
-                      onEncodeAttendance: (uid, label) => _encodeAttendance(
-                        context,
-                        eateryId: eateryId,
-                        uid: uid,
-                        userLabel: label,
-                      ),
-                    ),
-                    _PayrollTab(
-                      eateryId: eateryId,
-                      usersByUid: usersByUid,
-                      weekStart: _weekStart,
-                      onRecordPayout: (uid, label, amount, type) =>
-                          _recordPayout(
-                        context,
-                        eateryId: eateryId,
-                        uid: uid,
-                        weekStart: _weekStart,
-                        amount: amount,
-                        userLabel: label,
-                        type: type,
-                      ),
-                    ),
-                  ],
-                );
-              },
             ),
           ),
         );
       },
+    );
+  }
+}
+
+class _StaffProfileResult {
+  final String position;
+  final double dailyRate;
+  final double halfDayRate;
+  final String status;
+
+  _StaffProfileResult({
+    required this.position,
+    required this.dailyRate,
+    required this.halfDayRate,
+    required this.status,
+  });
+}
+
+class _StaffProfileDialog extends StatefulWidget {
+  final String userName;
+  final String email;
+  final bool isAdmin;
+  final String joinedDate;
+  final String position;
+  final double dailyRate;
+  final double halfDayRate;
+  final String status;
+
+  const _StaffProfileDialog({
+    required this.userName,
+    required this.email,
+    required this.isAdmin,
+    required this.joinedDate,
+    required this.position,
+    required this.dailyRate,
+    required this.halfDayRate,
+    required this.status,
+  });
+
+  @override
+  State<_StaffProfileDialog> createState() => _StaffProfileDialogState();
+}
+
+class _StaffProfileDialogState extends State<_StaffProfileDialog> {
+  late bool _isEditing;
+  late TextEditingController _positionController;
+  late TextEditingController _dailyRateController;
+  late TextEditingController _halfDayRateController;
+  late String _status;
+
+  @override
+  void initState() {
+    super.initState();
+    _isEditing = false;
+    _positionController = TextEditingController(text: widget.position);
+    _dailyRateController = TextEditingController(
+      text: widget.dailyRate > 0 ? widget.dailyRate.toStringAsFixed(2) : '',
+    );
+    _halfDayRateController = TextEditingController(
+      text: widget.halfDayRate > 0 ? widget.halfDayRate.toStringAsFixed(2) : '',
+    );
+    _status = widget.status;
+  }
+
+  @override
+  void dispose() {
+    _positionController.dispose();
+    _dailyRateController.dispose();
+    _halfDayRateController.dispose();
+    super.dispose();
+  }
+
+  double _parseDouble(String value) {
+    if (value.trim().isEmpty) return 0.0;
+    return double.tryParse(value.trim()) ?? 0.0;
+  }
+
+  Widget _buildReadOnlyView() {
+    return SizedBox(
+      width: 520,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // User info header
+          Row(
+            children: [
+              CircleAvatar(
+                backgroundColor:
+                    widget.isAdmin ? Colors.indigo : Colors.grey.shade400,
+                child: Icon(
+                  widget.isAdmin
+                      ? Icons.admin_panel_settings
+                      : Icons.badge_outlined,
+                  color: Colors.white,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      widget.userName,
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    Text(
+                      widget.email.isNotEmpty ? widget.email : 'No email',
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: Colors.grey.shade600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          const Divider(),
+          const SizedBox(height: 12),
+
+          // Joined date
+          _buildInfoRow(Icons.calendar_today, 'Joined', widget.joinedDate),
+          const SizedBox(height: 12),
+
+          // Role
+          _buildInfoRow(
+            widget.isAdmin ? Icons.admin_panel_settings : Icons.badge_outlined,
+            'Role',
+            widget.isAdmin ? 'Admin' : 'Staff',
+          ),
+          const SizedBox(height: 12),
+
+          // Position
+          _buildInfoRow(Icons.work_outline, 'Position',
+              widget.position.isNotEmpty ? widget.position : 'Not set'),
+          const SizedBox(height: 12),
+
+          // Daily rate
+          _buildInfoRow(
+            Icons.attach_money,
+            'Daily Rate',
+            widget.dailyRate > 0
+                ? '₱${widget.dailyRate.toStringAsFixed(2)}'
+                : 'Not set',
+          ),
+          const SizedBox(height: 12),
+
+          // Half-day rate (now exact amount)
+          _buildInfoRow(
+            Icons.timer_outlined,
+            'Half-Day Rate',
+            widget.halfDayRate > 0
+                ? '₱${widget.halfDayRate.toStringAsFixed(2)}'
+                : 'Not set',
+          ),
+          const SizedBox(height: 12),
+
+          // Status
+          _buildInfoRow(
+            Icons.circle,
+            'Status',
+            widget.status.isNotEmpty ? widget.status : 'active',
+            statusColor: widget.status == 'active' ? Colors.green : Colors.grey,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildInfoRow(IconData icon, String label, String value,
+      {Color? statusColor}) {
+    return Row(
+      children: [
+        Icon(icon, size: 20, color: statusColor ?? Colors.grey.shade600),
+        const SizedBox(width: 12),
+        Expanded(
+          flex: 2,
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: 14,
+              color: Colors.grey.shade700,
+            ),
+          ),
+        ),
+        Expanded(
+          flex: 3,
+          child: Text(
+            value,
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+              color: statusColor ?? Colors.grey.shade900,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildEditView() {
+    return SizedBox(
+      width: 520,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          TextField(
+            controller: _positionController,
+            decoration: const InputDecoration(
+              labelText: 'Position',
+              prefixIcon: Icon(Icons.work_outline),
+            ),
+          ),
+          const SizedBox(height: 16),
+          TextField(
+            controller: _dailyRateController,
+            keyboardType: TextInputType.number,
+            decoration: const InputDecoration(
+              labelText: 'Daily rate (₱)',
+              prefixIcon: Icon(Icons.attach_money),
+            ),
+          ),
+          const SizedBox(height: 16),
+          TextField(
+            controller: _halfDayRateController,
+            keyboardType: TextInputType.number,
+            decoration: const InputDecoration(
+              labelText: 'Half-day rate (₱) - exact amount',
+              prefixIcon: Icon(Icons.timer_outlined),
+              helperText: 'Enter exact amount (not percentage)',
+            ),
+          ),
+          const SizedBox(height: 16),
+          DropdownButtonFormField<String>(
+            value: _status,
+            items: const [
+              DropdownMenuItem(value: 'active', child: Text('Active')),
+              DropdownMenuItem(value: 'inactive', child: Text('Inactive')),
+            ],
+            onChanged: (v) {
+              if (v != null) {
+                setState(() => _status = v);
+              }
+            },
+            decoration: const InputDecoration(
+              labelText: 'Status',
+              prefixIcon: Icon(Icons.circle_outlined),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text('Staff profile: ${widget.userName}'),
+      content: _isEditing ? _buildEditView() : _buildReadOnlyView(),
+      actions: [
+        if (!_isEditing) ...[
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Close'),
+          ),
+          FilledButton.icon(
+            onPressed: () => setState(() => _isEditing = true),
+            icon: const Icon(Icons.edit),
+            label: const Text('Edit'),
+          ),
+        ] else ...[
+          TextButton(
+            onPressed: () => setState(() => _isEditing = false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () {
+              final result = _StaffProfileResult(
+                position: _positionController.text.trim(),
+                dailyRate: _parseDouble(_dailyRateController.text),
+                halfDayRate: _parseDouble(_halfDayRateController.text),
+                status: _status,
+              );
+              Navigator.of(context).pop(result);
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ],
     );
   }
 }
@@ -596,17 +974,18 @@ class _StaffTab extends StatelessWidget {
 
       return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
         stream: FirebaseFirestore.instance
+            .collection('eateries')
+            .doc(eateryId)
             .collection('staff_profiles')
-            .where('eateryId', isEqualTo: eateryId)
             .snapshots(),
         builder: (context, profilesSnap) {
           final profileByUid = <String, Map<String, dynamic>>{};
           if (profilesSnap.hasData) {
             for (final d in profilesSnap.data!.docs) {
               final data = d.data();
-              final uid = (data['uid'] ?? '').toString().trim();
-              if (uid.isEmpty) continue;
-              profileByUid[uid] = data;
+              final docUid = d.id.toString().trim();
+              if (docUid.isEmpty) continue;
+              profileByUid[docUid] = data;
             }
           }
 
@@ -696,17 +1075,18 @@ class _StaffTab extends StatelessWidget {
 
         return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
           stream: FirebaseFirestore.instance
+              .collection('eateries')
+              .doc(eateryId)
               .collection('staff_profiles')
-              .where('eateryId', isEqualTo: eateryId)
               .snapshots(),
           builder: (context, profilesSnap) {
             final profileByUid = <String, Map<String, dynamic>>{};
             if (profilesSnap.hasData) {
               for (final d in profilesSnap.data!.docs) {
                 final data = d.data();
-                final uid = (data['uid'] ?? '').toString().trim();
-                if (uid.isEmpty) continue;
-                profileByUid[uid] = data;
+                final docUid = d.id.toString().trim();
+                if (docUid.isEmpty) continue;
+                profileByUid[docUid] = data;
               }
             }
 
@@ -781,6 +1161,136 @@ class _StaffTab extends StatelessWidget {
   }
 }
 
+class _AdminsTab extends StatelessWidget {
+  const _AdminsTab({
+    required this.eateryId,
+    required this.usersByUid,
+    required this.onEditProfile,
+  });
+
+  final String eateryId;
+  final Map<String, Map<String, dynamic>> usersByUid;
+  final Future<void> Function(String uid, Map<String, dynamic> userData)
+      onEditProfile;
+
+  String _displayName(Map<String, dynamic> data, String uid) {
+    final firstName = (data['firstName'] ?? '').toString().trim();
+    final lastName = (data['lastName'] ?? '').toString().trim();
+    final name = ('$firstName $lastName').trim();
+    if (name.isNotEmpty) return name;
+    final email = (data['email'] ?? '').toString().trim();
+    if (email.isNotEmpty) return email;
+    return uid;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Filter only admin users
+    final adminEntries = usersByUid.entries.where((e) {
+      final data = e.value;
+      final legacyRole = data['role']?.toString().trim().toLowerCase();
+      return (data['isAdmin'] == true) || (legacyRole == 'admin');
+    }).toList()
+      ..sort((a, b) => _displayName(a.value, a.key)
+          .toLowerCase()
+          .compareTo(_displayName(b.value, b.key).toLowerCase()));
+
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: FirebaseFirestore.instance
+          .collection('eateries')
+          .doc(eateryId)
+          .collection('admin_profiles')
+          .snapshots(),
+      builder: (context, profilesSnap) {
+        final profileByUid = <String, Map<String, dynamic>>{};
+        if (profilesSnap.hasData) {
+          for (final d in profilesSnap.data!.docs) {
+            final data = d.data();
+            final docUid = d.id.toString().trim();
+            if (docUid.isEmpty) continue;
+            profileByUid[docUid] = data;
+          }
+        }
+
+        if (adminEntries.isEmpty) {
+          return Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  Icons.admin_panel_settings_outlined,
+                  size: 64,
+                  color: Colors.grey.shade300,
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  'No admins found',
+                  style: TextStyle(
+                    fontSize: 16,
+                    color: Colors.grey.shade600,
+                  ),
+                ),
+              ],
+            ),
+          );
+        }
+
+        return ListView.separated(
+          padding: const EdgeInsets.all(12),
+          itemCount: adminEntries.length,
+          separatorBuilder: (_, __) => const SizedBox(height: 8),
+          itemBuilder: (context, index) {
+            final uid = adminEntries[index].key;
+            final userData = adminEntries[index].value;
+            final label = _displayName(userData, uid);
+            final email = (userData['email'] ?? '').toString();
+
+            final p = profileByUid[uid] ?? const <String, dynamic>{};
+            final position = (p['position'] ?? '').toString().trim();
+            final status = (p['status'] ?? 'active').toString().trim();
+            final joinedAt = p['joinedAt'] ?? userData['createdAt'];
+
+            return Card(
+              elevation: 0,
+              color: Colors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+                side: BorderSide(color: Colors.indigo.shade200),
+              ),
+              child: ListTile(
+                onTap: () => onEditProfile(uid, userData),
+                leading: CircleAvatar(
+                  backgroundColor: Colors.indigo,
+                  child: const Icon(
+                    Icons.admin_panel_settings,
+                    color: Colors.white,
+                  ),
+                ),
+                title: Text(
+                  label,
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+                subtitle: Text(
+                  '${email.isEmpty ? uid : email}\n'
+                  'Admin · ${status.isEmpty ? 'active' : status}'
+                  '${position.isEmpty ? '' : ' · $position'}'
+                  '${joinedAt != null ? '\nJoined: ${joinedAt.toString().split('T').first}' : ''}',
+                ),
+                isThreeLine: true,
+                trailing: IconButton(
+                  tooltip: 'Edit',
+                  icon: const Icon(Icons.edit),
+                  onPressed: () => onEditProfile(uid, userData),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+}
+
 class _AttendanceTab extends StatelessWidget {
   const _AttendanceTab({
     required this.eateryId,
@@ -819,8 +1329,9 @@ class _AttendanceTab extends StatelessWidget {
 
     return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
       stream: FirebaseFirestore.instance
+          .collection('eateries')
+          .doc(eateryId)
           .collection('staff_attendance')
-          .where('eateryId', isEqualTo: eateryId)
           .where('date', isGreaterThanOrEqualTo: startKey)
           .where('date', isLessThanOrEqualTo: endKey)
           .snapshots(),
@@ -1027,13 +1538,15 @@ class _PayrollTab extends StatelessWidget {
     final endKey = _fmtDate(weekEnd);
 
     final profilesStream = FirebaseFirestore.instance
+        .collection('eateries')
+        .doc(eateryId)
         .collection('staff_profiles')
-        .where('eateryId', isEqualTo: eateryId)
         .snapshots();
 
     final attendanceStream = FirebaseFirestore.instance
+        .collection('eateries')
+        .doc(eateryId)
         .collection('staff_attendance')
-        .where('eateryId', isEqualTo: eateryId)
         .where('date', isGreaterThanOrEqualTo: startKey)
         .where('date', isLessThanOrEqualTo: endKey)
         .snapshots();
@@ -1048,7 +1561,7 @@ class _PayrollTab extends StatelessWidget {
       stream: profilesStream,
       builder: (context, profSnap) {
         final rateByUid = <String, double>{};
-        final halfMultByUid = <String, double>{};
+        final halfDayRateByUid = <String, double>{};
         if (profSnap.hasData) {
           for (final d in profSnap.data!.docs) {
             final p = d.data();
@@ -1058,11 +1571,9 @@ class _PayrollTab extends StatelessWidget {
             final rate = raw is num ? raw.toDouble() : 0.0;
             rateByUid[uid] = rate;
 
-            final rawHalf = p['halfDayMultiplier'];
-            final half = rawHalf is num
-                ? rawHalf.toDouble()
-                : _StaffManagementScreenState._defaultHalfDayMultiplier;
-            halfMultByUid[uid] = half;
+            final rawHalf = p['halfDayRate'];
+            final halfRate = rawHalf is num ? rawHalf.toDouble() : 0.0;
+            halfDayRateByUid[uid] = halfRate;
           }
         }
 
@@ -1120,11 +1631,10 @@ class _PayrollTab extends StatelessWidget {
                   final fullDays = fullDaysByUid[uid] ?? 0;
                   final halfDays = halfDaysByUid[uid] ?? 0;
                   final rate = rateByUid[uid] ?? 0.0;
-                  final halfMult = halfMultByUid[uid] ??
-                      _StaffManagementScreenState._defaultHalfDayMultiplier;
+                  final halfDayRate = halfDayRateByUid[uid] ?? 0.0;
 
-                  final gross =
-                      (rate * fullDays) + (rate * halfMult * halfDays);
+                  // Calculate gross using exact half-day rate
+                  final gross = (rate * fullDays) + (halfDayRate * halfDays);
                   grandTotal += gross;
                   final advances = advancesByUid[uid] ?? 0.0;
                   final net = (gross - advances) < 0 ? 0.0 : (gross - advances);
@@ -1136,7 +1646,7 @@ class _PayrollTab extends StatelessWidget {
                     'fullDays': fullDays,
                     'halfDays': halfDays,
                     'rate': rate,
-                    'halfMult': halfMult,
+                    'halfDayRate': halfDayRate,
                     'gross': gross,
                     'advances': advances,
                     'net': net,
@@ -1184,7 +1694,7 @@ class _PayrollTab extends StatelessWidget {
                       final label = r['label'] as String;
                       final fullDays = r['fullDays'] as int;
                       final halfDays = r['halfDays'] as int;
-                      final halfMult = r['halfMult'] as double;
+                      final halfDayRate = r['halfDayRate'] as double;
                       final gross = r['gross'] as double;
                       final advances = r['advances'] as double;
                       final net = r['net'] as double;
@@ -1203,7 +1713,7 @@ class _PayrollTab extends StatelessWidget {
                             style: const TextStyle(fontWeight: FontWeight.w700),
                           ),
                           subtitle: Text(
-                            'Full: $fullDays · Half: $halfDays (x${halfMult.toStringAsFixed(2)})\n'
+                            'Full: $fullDays · Half: $halfDays @ ₱${halfDayRate.toStringAsFixed(2)}/half-day\n'
                             'Gross: ${_fmtMoney(gross)} · Advances: ${_fmtMoney(advances)}',
                           ),
                           isThreeLine: true,
@@ -1293,6 +1803,315 @@ class _PayrollTab extends StatelessWidget {
           },
         );
       },
+    );
+  }
+}
+
+class _MealsTab extends StatefulWidget {
+  final String eateryId;
+
+  const _MealsTab({required this.eateryId});
+
+  @override
+  State<_MealsTab> createState() => _MealsTabState();
+}
+
+class _MealsTabState extends State<_MealsTab> {
+  bool _isLoading = true;
+  List<Map<String, dynamic>> _mealOrders = [];
+  DateTime _startDate = DateTime.now().subtract(const Duration(days: 7));
+  DateTime _endDate = DateTime.now();
+
+  @override
+  void initState() {
+    super.initState();
+    _loadMealOrders();
+  }
+
+  Future<void> _loadMealOrders() async {
+    setState(() => _isLoading = true);
+    try {
+      final response = await ApiService.getStaffMealOrders(
+        eateryId: widget.eateryId,
+        startDate: _startDate,
+        endDate: _endDate,
+      );
+      if (mounted) {
+        setState(() {
+          _mealOrders = List<Map<String, dynamic>>.from(response['data'] ?? []);
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isLoading = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to load meal orders: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _updateOrderStatus(String orderId, String status) async {
+    try {
+      await ApiService.updateStaffMealOrderStatus(
+        orderId,
+        eateryId: widget.eateryId,
+        status: status,
+      );
+      if (!mounted) return;
+      await _loadMealOrders();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Order $status')),
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to update order: $e')),
+        );
+      }
+    }
+  }
+
+  double _calculateTotalCost() {
+    return _mealOrders.fold(0.0, (sum, order) {
+      final items = (order['items'] as List?) ?? [];
+      return sum +
+          items.fold(0.0, (itemSum, item) {
+            final price = (item['price'] as num?)?.toDouble() ?? 0.0;
+            final qty = (item['quantity'] as num?)?.toInt() ?? 0;
+            return itemSum + (price * qty);
+          });
+    });
+  }
+
+  void _showOrderDetails(Map<String, dynamic> order) {
+    final items = (order['items'] as List?) ?? [];
+    final total = items.fold(0.0, (sum, item) {
+      final price = (item['price'] as num?)?.toDouble() ?? 0.0;
+      final qty = (item['quantity'] as num?)?.toInt() ?? 0;
+      return sum + (price * qty);
+    });
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Order by ${order['staffName'] ?? 'Unknown'}'),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Status: ${order['status'] ?? 'unknown'}',
+                style: TextStyle(
+                  color: (order['status'] ?? '') == 'completed'
+                      ? Colors.green
+                      : Colors.orange,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text('Date: ${order['createdAt'] ?? ''}'),
+              if (order['notes'] != null &&
+                  order['notes'].toString().isNotEmpty)
+                Text('Notes: ${order['notes']}'),
+              const SizedBox(height: 16),
+              const Divider(),
+              const Text('Items:',
+                  style: TextStyle(fontWeight: FontWeight.bold)),
+              ...items.map((item) => ListTile(
+                    title: Text(item['name'] ?? 'Unknown'),
+                    trailing: Text(
+                      '${item['quantity']} x ₱${(item['price'] as num?)?.toStringAsFixed(2) ?? '0.00'}',
+                    ),
+                  )),
+              const Divider(),
+              Align(
+                alignment: Alignment.centerRight,
+                child: Text(
+                  'Total: ₱${total.toStringAsFixed(2)}',
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 16,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Close'),
+          ),
+          if (order['status'] == 'pending')
+            ElevatedButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+                _updateOrderStatus(order['id'], 'completed');
+              },
+              child: const Text('Mark Completed'),
+            ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final totalCost = _calculateTotalCost();
+
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Date range picker and summary
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: InkWell(
+                          onTap: () async {
+                            final date = await showDatePicker(
+                              context: context,
+                              initialDate: _startDate,
+                              firstDate: DateTime.now().subtract(
+                                const Duration(days: 365),
+                              ),
+                              lastDate: _endDate,
+                            );
+                            if (date != null) {
+                              setState(() => _startDate = date);
+                              _loadMealOrders();
+                            }
+                          },
+                          child: InputDecorator(
+                            decoration: const InputDecoration(
+                              labelText: 'From',
+                              border: OutlineInputBorder(),
+                            ),
+                            child: Text(
+                              '${_startDate.year}-${_startDate.month.toString().padLeft(2, '0')}-${_startDate.day.toString().padLeft(2, '0')}',
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: InkWell(
+                          onTap: () async {
+                            final date = await showDatePicker(
+                              context: context,
+                              initialDate: _endDate,
+                              firstDate: _startDate,
+                              lastDate: DateTime.now(),
+                            );
+                            if (date != null) {
+                              setState(() => _endDate = date);
+                              _loadMealOrders();
+                            }
+                          },
+                          child: InputDecorator(
+                            decoration: const InputDecoration(
+                              labelText: 'To',
+                              border: OutlineInputBorder(),
+                            ),
+                            child: Text(
+                              '${_endDate.year}-${_endDate.month.toString().padLeft(2, '0')}-${_endDate.day.toString().padLeft(2, '0')}',
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        'Total Orders: ${_mealOrders.length}',
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                      Text(
+                        'Total Cost: ₱${totalCost.toStringAsFixed(2)}',
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: Colors.blue,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          // Meal orders list
+          Expanded(
+            child: _isLoading
+                ? const Center(child: CircularProgressIndicator())
+                : _mealOrders.isEmpty
+                    ? const Center(child: Text('No meal orders found'))
+                    : ListView.builder(
+                        itemCount: _mealOrders.length,
+                        itemBuilder: (context, index) {
+                          final order = _mealOrders[index];
+                          final items = (order['items'] as List?) ?? [];
+                          final itemCount = items.fold(0, (sum, item) {
+                            return sum +
+                                ((item['quantity'] as num?)?.toInt() ?? 0);
+                          });
+                          final total = items.fold(0.0, (sum, item) {
+                            final price =
+                                (item['price'] as num?)?.toDouble() ?? 0.0;
+                            final qty =
+                                (item['quantity'] as num?)?.toInt() ?? 0;
+                            return sum + (price * qty);
+                          });
+
+                          return Card(
+                            child: ListTile(
+                              leading: CircleAvatar(
+                                backgroundColor: order['status'] == 'completed'
+                                    ? Colors.green
+                                    : Colors.orange,
+                                child: Icon(
+                                  order['status'] == 'completed'
+                                      ? Icons.check
+                                      : Icons.access_time,
+                                  color: Colors.white,
+                                ),
+                              ),
+                              title: Text(order['staffName'] ?? 'Unknown'),
+                              subtitle: Text(
+                                '$itemCount items • ₱${total.toStringAsFixed(2)}',
+                              ),
+                              trailing: Text(
+                                order['createdAt'] != null
+                                    ? order['createdAt']
+                                        .toString()
+                                        .substring(0, 10)
+                                    : '',
+                                style: TextStyle(
+                                  color: Colors.grey.shade600,
+                                  fontSize: 12,
+                                ),
+                              ),
+                              onTap: () => _showOrderDetails(order),
+                            ),
+                          );
+                        },
+                      ),
+          ),
+        ],
+      ),
     );
   }
 }

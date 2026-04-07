@@ -65,9 +65,10 @@ async function main() {
   const windowDays = Number(process.env.ANALYTICS_WINDOW_DAYS || 90);
   const since = addDays(now, -windowDays);
 
-  // Completed orders only
+  // Completed orders only (multi-eatery)
+  // Reads from: eateries/{eateryId}/orders/{orderId}
   const ordersSnap = await db
-    .collection('orders')
+    .collectionGroup('orders')
     .where('status', '==', 'completed')
     .where('completedAt', '>=', admin.firestore.Timestamp.fromDate(since))
     .get();
@@ -82,7 +83,7 @@ async function main() {
 
   for (const doc of ordersSnap.docs) {
     const o = doc.data() || {};
-    const eateryId = String(o.eateryId || '').trim();
+    const eateryId = String(doc.ref?.parent?.parent?.id || o.eateryId || '').trim();
     if (!eateryId) continue;
 
     const completedAt = o.completedAt?.toDate ? o.completedAt.toDate() : null;
@@ -118,8 +119,8 @@ async function main() {
 
   // Write daily aggregates + basic 7-day item forecasts back to Firestore.
   // Collections written:
-  // analytics_daily/{eateryId}/days/{yyyy-mm-dd}
-  // predictions/{eateryId}/demandForecast (doc)
+  // eateries/{eateryId}/analytics_daily/{yyyy-mm-dd}
+  // eateries/{eateryId}/predictions/latest
   const writes = [];
   const today = startOfDay(now);
 
@@ -128,9 +129,9 @@ async function main() {
 
     for (const dayKey of Object.keys(perDay)) {
       const ref = db
-        .collection('analytics_daily')
+        .collection('eateries')
         .doc(eateryId)
-        .collection('days')
+        .collection('analytics_daily')
         .doc(dayKey);
 
       const payload = {
@@ -193,7 +194,11 @@ async function main() {
       });
     }
 
-    const predRef = db.collection('predictions').doc(eateryId);
+    const predRef = db
+      .collection('eateries')
+      .doc(eateryId)
+      .collection('predictions')
+      .doc('latest');
     writes.push(
       predRef.set(
         {

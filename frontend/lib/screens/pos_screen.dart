@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'dart:math';
 import '../services/api_service.dart';
 import '../services/auth_provider.dart';
 
@@ -29,10 +30,12 @@ class _POSScreenState extends State<POSScreen> {
   String? _lastRoleUid;
   bool _addToExistingOrder = false;
   String _targetPendingOrderId = '';
+  String _newOrderTempId = '';
   List<Map<String, dynamic>> _pendingOrders = const [];
   final Map<String, int> _baselineQtyByMenuId = {};
   bool _isPrefilling = false;
   String _selectedCategory = 'All';
+  List<String> _pinnedItemIds = [];
 
   void _openCartSheet() {
     showModalBottomSheet<void>(
@@ -48,7 +51,9 @@ class _POSScreenState extends State<POSScreen> {
               totalAmount: _totalAmount,
               isLoading: _isLoading,
               isAddToExistingOrder: _addToExistingOrder,
-              orderId: _targetPendingOrderId,
+              orderId:
+                  _addToExistingOrder ? _targetPendingOrderId : _newOrderTempId,
+              isNewOrder: !_addToExistingOrder,
               baselineQtyByMenuId: _baselineQtyByMenuId,
               onQuantityChanged: (index, qty) => _updateQuantity(index, qty),
               onRemove: (index) => _removeFromCart(index),
@@ -79,6 +84,14 @@ class _POSScreenState extends State<POSScreen> {
     final trimmed = id.trim();
     if (trimmed.isEmpty) return '';
     return trimmed.length <= 6 ? trimmed : trimmed.substring(0, 6);
+  }
+
+  String _generateOrderId() {
+    // Generate a Firestore-compatible document ID (20 characters)
+    const chars =
+        'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    final rnd = Random.secure();
+    return List.generate(20, (_) => chars[rnd.nextInt(chars.length)]).join();
   }
 
   Future<void> _prefillPendingOrderIntoCart(String orderId) async {
@@ -223,6 +236,9 @@ class _POSScreenState extends State<POSScreen> {
       final rawMenuItems =
           List<Map<String, dynamic>>.from(menuRes['data'] ?? const []);
 
+      // Load pinned items
+      _loadPinnedItems();
+
       if (_isAdmin) {
         final menuByInventoryId = <String, Map<String, dynamic>>{};
         for (final m in rawMenuItems) {
@@ -335,6 +351,36 @@ class _POSScreenState extends State<POSScreen> {
     }
   }
 
+  Future<void> _loadPinnedItems() async {
+    try {
+      final profile =
+          await context.read<AuthProvider>().getCurrentUserProfile();
+      final eateryId = (profile?['eateryId'] ?? '').toString();
+      if (eateryId.isEmpty) return;
+
+      final doc = await FirebaseFirestore.instance
+          .collection('eateries')
+          .doc(eateryId)
+          .collection('settings')
+          .doc('pinned_menu_items')
+          .get();
+
+      if (doc.exists && doc.data() != null) {
+        final data = doc.data()!;
+        final pinned = data['pinnedIds'] as List<dynamic>? ?? [];
+        setState(() {
+          _pinnedItemIds = pinned.map((e) => e.toString()).toList();
+        });
+      }
+    } catch (_) {
+      // Silently fail - pinned items are not critical
+    }
+  }
+
+  bool _isPinned(String itemId) {
+    return _pinnedItemIds.contains(itemId);
+  }
+
   Future<void> _loadPendingOrders() async {
     try {
       final res = await ApiService.getPendingOrders(limit: 25);
@@ -426,16 +472,20 @@ class _POSScreenState extends State<POSScreen> {
     final servings = servingsRaw is num
         ? servingsRaw.toInt()
         : int.tryParse((servingsRaw ?? '').toString()) ?? 0;
+    final isUnlimited = servings == -1;
     final manualAvailability = item['isAvailable'];
-    final isAvailable =
-        manualAvailability is bool ? manualAvailability : servings > 0;
+    final isAvailable = manualAvailability is bool
+        ? manualAvailability
+        : (isUnlimited || servings > 0);
 
     if (!isAvailable && nextQty > 0) {
       return;
     }
 
-    final cappedQty = servings > 0 ? nextQty.clamp(0, servings) : 0;
-    final exceeded = nextQty > cappedQty;
+    // For unlimited items, don't cap quantity; for limited items, cap at servings
+    final cappedQty =
+        isUnlimited ? nextQty : (servings > 0 ? nextQty.clamp(0, servings) : 0);
+    final exceeded = !isUnlimited && nextQty > cappedQty;
 
     setState(() {
       final idx = _cartItems.indexWhere(
@@ -447,7 +497,15 @@ class _POSScreenState extends State<POSScreen> {
           _cartItems.removeAt(idx);
         }
         _calculateTotal();
+        if (_cartItems.isEmpty) {
+          _newOrderTempId = '';
+        }
         return;
+      }
+
+      // Generate real order ID for new orders when first item is added
+      if (!_addToExistingOrder && _newOrderTempId.isEmpty) {
+        _newOrderTempId = _generateOrderId();
       }
 
       final priceRaw = item['price'];
@@ -478,12 +536,134 @@ class _POSScreenState extends State<POSScreen> {
 
   List<String> _availableCategories() {
     final set = <String>{};
+    // Add 'Pinned' if there are pinned items
+    if (_pinnedItemIds.isNotEmpty) {
+      set.add('📌 Pinned');
+    }
     for (final it in _menuItems) {
       final c = (it['category'] ?? '').toString().trim();
       if (c.isNotEmpty) set.add(c);
     }
-    final list = set.toList()..sort((a, b) => a.compareTo(b));
+    final list = set.toList()
+      ..sort((a, b) {
+        // Always show Pinned first, then alphabetically
+        if (a == '📌 Pinned') return -1;
+        if (b == '📌 Pinned') return 1;
+        return a.compareTo(b);
+      });
     return ['All', ...list];
+  }
+
+  List<String> _extractCategories(Map<String, dynamic> item) {
+    final raw = item['categories'];
+    if (raw is List) {
+      return raw
+          .map((e) => e.toString().trim())
+          .where((e) => e.isNotEmpty)
+          .toList();
+    }
+
+    final single = (item['category'] ?? '').toString().trim();
+    return single.isEmpty ? const [] : [single];
+  }
+
+  Widget _buildMenuByCategory({
+    required List<Map<String, dynamic>> items,
+    required int crossAxisCount,
+    required double childAspectRatio,
+  }) {
+    Widget header(String title) {
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(12, 14, 12, 8),
+        child: Row(
+          children: [
+            Text(
+              title,
+              style: const TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Divider(
+                color: Colors.grey.shade300,
+                height: 1,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    final grouped = <String, List<Map<String, dynamic>>>{};
+
+    // First, add pinned items as a separate group if showing All
+    final pinnedItems = items
+        .where((item) => _isPinned((item['id'] ?? '').toString()))
+        .toList();
+    if (pinnedItems.isNotEmpty) {
+      grouped['📌 Pinned'] = pinnedItems;
+    }
+
+    // Then group by category (including pinned items in their original category too)
+    for (final item in items) {
+      final cats = _extractCategories(item);
+      final key = (cats.isNotEmpty
+              ? cats.first
+              : (item['category'] ?? '').toString().trim())
+          .trim();
+      final normalized = key.isEmpty ? 'Uncategorized' : key;
+      // Add to category group (pinned items appear in both)
+      grouped.putIfAbsent(normalized, () => []).add(item);
+    }
+
+    final keys = grouped.keys.toList()
+      ..sort((a, b) {
+        // Always show Pinned first
+        if (a == '📌 Pinned') return -1;
+        if (b == '📌 Pinned') return 1;
+        return a.toLowerCase().compareTo(b.toLowerCase());
+      });
+
+    return ListView.builder(
+      padding: const EdgeInsets.only(bottom: 16),
+      itemCount: keys.length,
+      itemBuilder: (context, sectionIndex) {
+        final key = keys[sectionIndex];
+        final sectionItems = grouped[key] ?? const [];
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            header(key),
+            GridView.builder(
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: crossAxisCount,
+                childAspectRatio: childAspectRatio,
+                crossAxisSpacing: 12,
+                mainAxisSpacing: 12,
+              ),
+              itemCount: sectionItems.length,
+              itemBuilder: (context, index) {
+                final item = sectionItems[index];
+                final id = (item['id'] ?? '').toString().trim();
+                final qty = id.isEmpty ? 0 : _qtyInCart(id);
+                return _MenuItemCard(
+                  item: item,
+                  quantityInCart: qty,
+                  onIncrement: () => _setQtyForItem(item, qty + 1),
+                  onDecrement: () => _setQtyForItem(item, qty - 1),
+                );
+              },
+            ),
+          ],
+        );
+      },
+    );
   }
 
   Widget _buildCategoryChips() {
@@ -576,6 +756,7 @@ class _POSScreenState extends State<POSScreen> {
       final servings = servingsRaw is num
           ? servingsRaw.toInt()
           : int.tryParse((servingsRaw ?? '').toString()) ?? 0;
+      final isUnlimited = servings == -1;
       final manualAvailability = menu['isAvailable'];
       final isAvailable =
           manualAvailability is bool ? manualAvailability : servings > 0;
@@ -585,7 +766,9 @@ class _POSScreenState extends State<POSScreen> {
           ? qtyRaw.toInt()
           : int.tryParse((qtyRaw ?? '').toString()) ?? 0;
 
-      if (!isAvailable || servings <= 0 || qty > servings) {
+      if (!isAvailable ||
+          (!isUnlimited && servings <= 0) ||
+          (!isUnlimited && qty > servings)) {
         invalid.add((menu['name'] ?? cart['name'] ?? 'Item').toString());
       }
     }
@@ -666,6 +849,7 @@ class _POSScreenState extends State<POSScreen> {
         await ApiService.createOrder(
           items: orderItems,
           paymentMethod: 'cash',
+          orderId: _newOrderTempId.isNotEmpty ? _newOrderTempId : null,
         );
       }
 
@@ -675,6 +859,7 @@ class _POSScreenState extends State<POSScreen> {
           _baselineQtyByMenuId.clear();
           _totalAmount = 0.0;
           _isLoading = false;
+          _newOrderTempId = '';
           if (!_addToExistingOrder) {
             _targetPendingOrderId = '';
           }
@@ -754,18 +939,22 @@ class _POSScreenState extends State<POSScreen> {
                     ? 3
                     : 2;
         final childAspectRatio = width < 520
-            ? 1.0
+            ? 0.7
             : crossAxisCount == 2
-                ? (isShortHeight ? 1.25 : 1.45)
-                : (isShortHeight ? 1.1 : 1.25);
+                ? (isShortHeight ? 0.85 : 0.9)
+                : (isShortHeight ? 0.8 : 0.85);
 
-        final visibleMenuItems = _selectedCategory == 'All'
+        final filteredMenuItems = _selectedCategory == 'All'
             ? _menuItems
-            : _menuItems
-                .where((m) =>
-                    (m['category'] ?? '').toString().trim() ==
-                    _selectedCategory)
-                .toList();
+            : _selectedCategory == '📌 Pinned'
+                ? _menuItems
+                    .where((m) => _isPinned((m['id'] ?? '').toString()))
+                    .toList()
+                : _menuItems
+                    .where((m) =>
+                        (m['category'] ?? '').toString().trim() ==
+                        _selectedCategory)
+                    .toList();
 
         return Scaffold(
           appBar: widget.showAppBar
@@ -941,30 +1130,37 @@ class _POSScreenState extends State<POSScreen> {
                     Expanded(
                       child: _isLoading
                           ? const Center(child: CircularProgressIndicator())
-                          : GridView.builder(
-                              padding: const EdgeInsets.all(12),
-                              gridDelegate:
-                                  SliverGridDelegateWithFixedCrossAxisCount(
-                                crossAxisCount: crossAxisCount,
-                                childAspectRatio: childAspectRatio,
-                                crossAxisSpacing: 12,
-                                mainAxisSpacing: 12,
-                              ),
-                              itemCount: visibleMenuItems.length,
-                              itemBuilder: (context, index) {
-                                final item = visibleMenuItems[index];
-                                final id = (item['id'] ?? '').toString().trim();
-                                final qty = id.isEmpty ? 0 : _qtyInCart(id);
-                                return _MenuItemCard(
-                                  item: item,
-                                  quantityInCart: qty,
-                                  onIncrement: () =>
-                                      _setQtyForItem(item, qty + 1),
-                                  onDecrement: () =>
-                                      _setQtyForItem(item, qty - 1),
-                                );
-                              },
-                            ),
+                          : (_selectedCategory == 'All'
+                              ? _buildMenuByCategory(
+                                  items: filteredMenuItems,
+                                  crossAxisCount: crossAxisCount,
+                                  childAspectRatio: childAspectRatio,
+                                )
+                              : GridView.builder(
+                                  padding: const EdgeInsets.all(12),
+                                  gridDelegate:
+                                      SliverGridDelegateWithFixedCrossAxisCount(
+                                    crossAxisCount: crossAxisCount,
+                                    childAspectRatio: childAspectRatio,
+                                    crossAxisSpacing: 12,
+                                    mainAxisSpacing: 12,
+                                  ),
+                                  itemCount: filteredMenuItems.length,
+                                  itemBuilder: (context, index) {
+                                    final item = filteredMenuItems[index];
+                                    final id =
+                                        (item['id'] ?? '').toString().trim();
+                                    final qty = id.isEmpty ? 0 : _qtyInCart(id);
+                                    return _MenuItemCard(
+                                      item: item,
+                                      quantityInCart: qty,
+                                      onIncrement: () =>
+                                          _setQtyForItem(item, qty + 1),
+                                      onDecrement: () =>
+                                          _setQtyForItem(item, qty - 1),
+                                    );
+                                  },
+                                )),
                     ),
                   ],
                 )
@@ -980,32 +1176,39 @@ class _POSScreenState extends State<POSScreen> {
                                 ? const Center(
                                     child: CircularProgressIndicator(),
                                   )
-                                : GridView.builder(
-                                    padding: const EdgeInsets.all(12),
-                                    gridDelegate:
-                                        SliverGridDelegateWithFixedCrossAxisCount(
-                                      crossAxisCount: crossAxisCount,
-                                      childAspectRatio: childAspectRatio,
-                                      crossAxisSpacing: 12,
-                                      mainAxisSpacing: 12,
-                                    ),
-                                    itemCount: visibleMenuItems.length,
-                                    itemBuilder: (context, index) {
-                                      final item = visibleMenuItems[index];
-                                      final id =
-                                          (item['id'] ?? '').toString().trim();
-                                      final qty =
-                                          id.isEmpty ? 0 : _qtyInCart(id);
-                                      return _MenuItemCard(
-                                        item: item,
-                                        quantityInCart: qty,
-                                        onIncrement: () =>
-                                            _setQtyForItem(item, qty + 1),
-                                        onDecrement: () =>
-                                            _setQtyForItem(item, qty - 1),
-                                      );
-                                    },
-                                  ),
+                                : (_selectedCategory == 'All'
+                                    ? _buildMenuByCategory(
+                                        items: filteredMenuItems,
+                                        crossAxisCount: crossAxisCount,
+                                        childAspectRatio: childAspectRatio,
+                                      )
+                                    : GridView.builder(
+                                        padding: const EdgeInsets.all(12),
+                                        gridDelegate:
+                                            SliverGridDelegateWithFixedCrossAxisCount(
+                                          crossAxisCount: crossAxisCount,
+                                          childAspectRatio: childAspectRatio,
+                                          crossAxisSpacing: 12,
+                                          mainAxisSpacing: 12,
+                                        ),
+                                        itemCount: filteredMenuItems.length,
+                                        itemBuilder: (context, index) {
+                                          final item = filteredMenuItems[index];
+                                          final id = (item['id'] ?? '')
+                                              .toString()
+                                              .trim();
+                                          final qty =
+                                              id.isEmpty ? 0 : _qtyInCart(id);
+                                          return _MenuItemCard(
+                                            item: item,
+                                            quantityInCart: qty,
+                                            onIncrement: () =>
+                                                _setQtyForItem(item, qty + 1),
+                                            onDecrement: () =>
+                                                _setQtyForItem(item, qty - 1),
+                                          );
+                                        },
+                                      )),
                           ),
                         ],
                       ),
@@ -1019,7 +1222,10 @@ class _POSScreenState extends State<POSScreen> {
                           totalAmount: _totalAmount,
                           isLoading: _isLoading,
                           isAddToExistingOrder: _addToExistingOrder,
-                          orderId: _targetPendingOrderId,
+                          orderId: _addToExistingOrder
+                              ? _targetPendingOrderId
+                              : _newOrderTempId,
+                          isNewOrder: !_addToExistingOrder,
                           baselineQtyByMenuId: _baselineQtyByMenuId,
                           onQuantityChanged: (index, qty) =>
                               _updateQuantity(index, qty),
@@ -1047,6 +1253,7 @@ class _CartPanel extends StatelessWidget {
     required this.isLoading,
     required this.isAddToExistingOrder,
     required this.orderId,
+    required this.isNewOrder,
     required this.baselineQtyByMenuId,
     required this.onQuantityChanged,
     required this.onRemove,
@@ -1059,6 +1266,7 @@ class _CartPanel extends StatelessWidget {
   final bool isLoading;
   final bool isAddToExistingOrder;
   final String orderId;
+  final bool isNewOrder;
   final Map<String, int> baselineQtyByMenuId;
   final void Function(int index, int quantity) onQuantityChanged;
   final void Function(int index) onRemove;
@@ -1236,13 +1444,18 @@ class _CartPanel extends StatelessWidget {
                         style: TextStyle(
                             fontSize: 18, fontWeight: FontWeight.bold),
                       ),
-                      if (isAddToExistingOrder && orderId.trim().isNotEmpty)
+                      if ((isAddToExistingOrder || isNewOrder) &&
+                          orderId.trim().isNotEmpty)
                         Padding(
                           padding: const EdgeInsets.only(top: 2),
                           child: Text(
-                            'Order #${_shortOrderId(orderId)}',
+                            isNewOrder
+                                ? 'New Order #${_shortOrderId(orderId)}'
+                                : 'Order #${_shortOrderId(orderId)}',
                             style: TextStyle(
-                              color: Colors.grey.shade700,
+                              color: isNewOrder
+                                  ? Colors.blue.shade700
+                                  : Colors.grey.shade700,
                               fontWeight: FontWeight.w600,
                             ),
                           ),
@@ -1360,10 +1573,12 @@ class _MenuItemCard extends StatelessWidget {
     final servings = servingsRaw is num
         ? servingsRaw.toInt()
         : int.tryParse((servingsRaw ?? '').toString()) ?? 0;
+    final isUnlimited = servings == -1;
     final manualAvailability = item['isAvailable'];
-    final isAvailable =
-        manualAvailability is bool ? manualAvailability : servings > 0;
-    final canAdd = isAvailable && servings > 0;
+    final isAvailable = manualAvailability is bool
+        ? manualAvailability
+        : (isUnlimited || servings > 0);
+    final canAdd = isAvailable && (isUnlimited || servings > 0);
 
     final priceRaw = item['price'] ?? 0;
     final price = priceRaw is num
@@ -1445,7 +1660,7 @@ class _MenuItemCard extends StatelessWidget {
                   ),
                 const Spacer(),
                 Text(
-                  'Left: $servings',
+                  isUnlimited ? 'Left: —' : 'Left: $servings',
                   style: TextStyle(
                     color: Colors.grey.shade700,
                     fontWeight: FontWeight.w700,

@@ -258,14 +258,14 @@ exports.createAccountAfterEmailOtp = onCall(async (request) => {
 });
 
 exports.onOrderCreatedAdjustMenuServings = onDocumentCreated(
-  'orders/{orderId}',
+  'eateries/{eateryId}/orders/{orderId}',
   async (event) => {
     const snap = event.data;
     if (!snap) return;
 
     const orderRef = snap.ref;
     const order = snap.data() || {};
-    const eateryId = String(order.eateryId || '').trim();
+    const eateryId = String(event.params?.eateryId || order.eateryId || '').trim();
     const items = Array.isArray(order.items) ? order.items : [];
 
     if (!eateryId || items.length === 0) {
@@ -281,6 +281,16 @@ exports.onOrderCreatedAdjustMenuServings = onDocumentCreated(
     }
 
     try {
+      if (String(order.eateryId || '').trim() !== eateryId) {
+        await orderRef.set(
+          {
+            eateryId,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        );
+      }
+
       await admin.firestore().runTransaction(async (tx) => {
         const norm = (s) =>
           String(s || '')
@@ -296,7 +306,12 @@ exports.onOrderCreatedAdjustMenuServings = onDocumentCreated(
           if (!menuItemId || !Number.isFinite(quantity) || quantity <= 0) {
             throw new Error('Invalid order item');
           }
-          const menuRef = admin.firestore().collection('menu').doc(menuItemId);
+          const menuRef = admin
+            .firestore()
+            .collection('eateries')
+            .doc(eateryId)
+            .collection('menu')
+            .doc(menuItemId);
           menuReads.push({ menuRef, quantity });
         }
 
@@ -315,7 +330,7 @@ exports.onOrderCreatedAdjustMenuServings = onDocumentCreated(
           }
           const menu = menuSnap.data() || {};
           const menuEateryId = String(menu.eateryId || '').trim();
-          if (!menuEateryId || menuEateryId !== eateryId) {
+          if (menuEateryId && menuEateryId !== eateryId) {
             throw new Error('Access denied');
           }
 
@@ -340,6 +355,8 @@ exports.onOrderCreatedAdjustMenuServings = onDocumentCreated(
           if (inventoryItemId) {
             const invRef = admin
               .firestore()
+              .collection('eateries')
+              .doc(eateryId)
               .collection('inventory')
               .doc(inventoryItemId);
             invLinkReads.push({ invRef, quantity, menuRef, menu });
@@ -361,7 +378,12 @@ exports.onOrderCreatedAdjustMenuServings = onDocumentCreated(
 
           const recipeId = String(menu.recipeId || '').trim();
           if (recipeId) {
-            const recipeRef = admin.firestore().collection('recipes').doc(recipeId);
+            const recipeRef = admin
+              .firestore()
+              .collection('eateries')
+              .doc(eateryId)
+              .collection('recipes')
+              .doc(recipeId);
             recipeReads.push({ recipeRef, quantity, menuItemId });
           }
         }
@@ -371,8 +393,9 @@ exports.onOrderCreatedAdjustMenuServings = onDocumentCreated(
         if (needsInventoryByName) {
           const inventoryQuery = admin
             .firestore()
-            .collection('inventory')
-            .where('eateryId', '==', eateryId);
+            .collection('eateries')
+            .doc(eateryId)
+            .collection('inventory');
           const inventorySnap = await tx.get(inventoryQuery);
 
           inventoryByName = new Map();

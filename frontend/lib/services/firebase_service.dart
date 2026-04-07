@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:flutter/foundation.dart';
 import 'dart:async';
 import 'dart:math';
 
@@ -62,6 +63,19 @@ class FirebaseService {
   static const String inventoryUsageCollection = 'inventory_usage';
   static const String analyticsCollection = 'analytics';
   static const String recipesCollection = 'recipes';
+  static const String expensesCollection = 'expenses';
+  static const String payablesCollection = 'payables';
+  static const String staffMealsCollection = 'staff_meals';
+
+  static CollectionReference<Map<String, dynamic>> _eaterySubcollection(
+    String eateryId,
+    String name,
+  ) {
+    return _firestore
+        .collection(eateriesCollection)
+        .doc(eateryId)
+        .collection(name);
+  }
 
   static const String _eateryIdAlphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
@@ -73,14 +87,155 @@ class FirebaseService {
     ).join();
   }
 
-  // Recipe methods
+  // Finance/Expenses methods
+  static Future<List<Map<String, dynamic>>> getExpenses() async {
+    try {
+      final eateryId = await _requireCurrentEateryId();
+      final querySnapshot = await _withRetry(
+        () => _eaterySubcollection(eateryId, expensesCollection)
+            .orderBy('createdAt', descending: true)
+            .get(),
+      );
+      return querySnapshot.docs.map((doc) {
+        final Map<String, dynamic> result = {'id': doc.id};
+        result.addAll(doc.data());
+        return result;
+      }).toList();
+    } catch (e) {
+      throw Exception('Failed to fetch expenses: $e');
+    }
+  }
+
+  static Future<Map<String, dynamic>> createExpense(
+    Map<String, dynamic> expenseData,
+  ) async {
+    try {
+      await _requireAdmin();
+      final eateryId = await _requireCurrentEateryId();
+      final docRef =
+          await _eaterySubcollection(eateryId, expensesCollection).add({
+        ...expenseData,
+        'eateryId': eateryId,
+        'createdAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+      final docSnapshot = await docRef.get();
+      return {
+        'id': docRef.id,
+        ...?docSnapshot.data(),
+      };
+    } catch (e) {
+      throw Exception('Failed to create expense: $e');
+    }
+  }
+
+  static Future<void> deleteExpense(String id) async {
+    try {
+      await _requireAdmin();
+      final eateryId = await _requireCurrentEateryId();
+      await _eaterySubcollection(eateryId, expensesCollection).doc(id).delete();
+    } catch (e) {
+      throw Exception('Failed to delete expense: $e');
+    }
+  }
+
+  // Finance/Payables methods
+  static Future<List<Map<String, dynamic>>> getPayables() async {
+    try {
+      final eateryId = await _requireCurrentEateryId();
+      final querySnapshot = await _withRetry(
+        () => _eaterySubcollection(eateryId, payablesCollection)
+            .orderBy('createdAt', descending: true)
+            .get(),
+      );
+      return querySnapshot.docs.map((doc) {
+        final Map<String, dynamic> result = {'id': doc.id};
+        result.addAll(doc.data());
+        return result;
+      }).toList();
+    } catch (e) {
+      throw Exception('Failed to fetch payables: $e');
+    }
+  }
+
+  static Future<Map<String, dynamic>> createPayable(
+    Map<String, dynamic> payableData,
+  ) async {
+    try {
+      await _requireAdmin();
+      final eateryId = await _requireCurrentEateryId();
+      final docRef =
+          await _eaterySubcollection(eateryId, payablesCollection).add({
+        ...payableData,
+        'eateryId': eateryId,
+        'status': payableData['status'] ?? 'unpaid',
+        'createdAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+      final docSnapshot = await docRef.get();
+      return {
+        'id': docRef.id,
+        ...?docSnapshot.data(),
+      };
+    } catch (e) {
+      throw Exception('Failed to create payable: $e');
+    }
+  }
+
+  static Future<void> updatePayableStatus(String id,
+      {required String status}) async {
+    try {
+      await _requireAdmin();
+      final eateryId = await _requireCurrentEateryId();
+      await _eaterySubcollection(eateryId, payablesCollection).doc(id).update({
+        'status': status,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+    } catch (e) {
+      throw Exception('Failed to update payable: $e');
+    }
+  }
+
+  static Future<Map<String, dynamic>> updatePayable(
+    String id,
+    Map<String, dynamic> payableData,
+  ) async {
+    try {
+      await _requireAdmin();
+      final eateryId = await _requireCurrentEateryId();
+      await _eaterySubcollection(eateryId, payablesCollection).doc(id).update({
+        ...payableData,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+      final docSnapshot =
+          await _eaterySubcollection(eateryId, payablesCollection)
+              .doc(id)
+              .get();
+      return {
+        'id': id,
+        ...?docSnapshot.data(),
+      };
+    } catch (e) {
+      throw Exception('Failed to update payable: $e');
+    }
+  }
+
+  static Future<void> deletePayable(String id) async {
+    try {
+      await _requireAdmin();
+      final eateryId = await _requireCurrentEateryId();
+      await _eaterySubcollection(eateryId, payablesCollection).doc(id).delete();
+    } catch (e) {
+      throw Exception('Failed to delete payable: $e');
+    }
+  }
+
+  // Recipe methods (retained for compatibility)
   static Future<List<Map<String, dynamic>>> getRecipes() async {
     try {
       final eateryId = await _requireCurrentEateryId();
-      final querySnapshot = await _firestore
-          .collection(recipesCollection)
-          .where('eateryId', isEqualTo: eateryId)
-          .get();
+      final querySnapshot =
+          await _eaterySubcollection(eateryId, recipesCollection).get();
 
       final items = querySnapshot.docs.map((doc) {
         final Map<String, dynamic> result = {'id': doc.id};
@@ -100,28 +255,6 @@ class FirebaseService {
     }
   }
 
-  static Future<Map<String, dynamic>> getOrderById(String orderId) async {
-    try {
-      final eateryId = await _requireCurrentEateryId();
-      final doc =
-          await _firestore.collection(ordersCollection).doc(orderId).get();
-      if (!doc.exists) {
-        throw Exception('Order not found');
-      }
-      final data = doc.data() ?? <String, dynamic>{};
-      final orderEateryId = (data['eateryId'] ?? '').toString().trim();
-      if (orderEateryId.isEmpty || orderEateryId != eateryId) {
-        throw Exception('Access denied');
-      }
-      return {
-        'id': doc.id,
-        ...data,
-      };
-    } catch (e) {
-      throw Exception('Failed to fetch order: $e');
-    }
-  }
-
   static Future<Map<String, dynamic>> createRecipe(
     Map<String, dynamic> recipeData,
   ) async {
@@ -129,7 +262,8 @@ class FirebaseService {
       await _requireAdmin();
       final eateryId = await _requireCurrentEateryId();
 
-      final docRef = await _firestore.collection(recipesCollection).add({
+      final docRef =
+          await _eaterySubcollection(eateryId, recipesCollection).add({
         ...recipeData,
         'eateryId': eateryId,
         'createdAt': FieldValue.serverTimestamp(),
@@ -143,6 +277,25 @@ class FirebaseService {
       };
     } catch (e) {
       throw Exception('Failed to create recipe: $e');
+    }
+  }
+
+  static Future<Map<String, dynamic>> getOrderById(String orderId) async {
+    try {
+      final eateryId = await _requireCurrentEateryId();
+      final doc = await _eaterySubcollection(eateryId, ordersCollection)
+          .doc(orderId)
+          .get();
+      if (!doc.exists) {
+        throw Exception('Order not found');
+      }
+      final data = doc.data() ?? <String, dynamic>{};
+      return {
+        'id': doc.id,
+        ...data,
+      };
+    } catch (e) {
+      throw Exception('Failed to fetch order: $e');
     }
   }
 
@@ -193,17 +346,23 @@ class FirebaseService {
 
   // Initialize Firebase
   static Future<void> initializeFirebase() async {
-    await Firebase.initializeApp(
-      options: const FirebaseOptions(
-        apiKey: "AIzaSyAv-5-Db8gu2D1hzBZoCSFwSbeKcmWxuJM",
-        authDomain: "smart-eat-2eaf7.firebaseapp.com",
-        projectId: "smart-eat-2eaf7",
-        storageBucket: "smart-eat-2eaf7.firebasestorage.app",
-        messagingSenderId: "362576674400",
-        appId: "1:362576674400:web:1ef49ac6e0d384f4eecd05",
-        measurementId: "G-630LE42NK7",
-      ),
-    );
+    if (kIsWeb) {
+      // Web uses hardcoded Firebase options
+      await Firebase.initializeApp(
+        options: const FirebaseOptions(
+          apiKey: "AIzaSyAv-5-Db8gu2D1hzBZoCSFwSbeKcmWxuJM",
+          authDomain: "smart-eat-2eaf7.firebaseapp.com",
+          projectId: "smart-eat-2eaf7",
+          storageBucket: "smart-eat-2eaf7.firebasestorage.app",
+          messagingSenderId: "362576674400",
+          appId: "1:362576674400:web:1ef49ac6e0d384f4eecd05",
+          measurementId: "G-630LE42NK7",
+        ),
+      );
+    } else {
+      // Android/iOS use native configuration from google-services.json/GoogleService-Info.plist
+      await Firebase.initializeApp();
+    }
   }
 
   // Get current user
@@ -281,6 +440,63 @@ class FirebaseService {
           : 'Firebase error: $code — $msg';
     }
 
+    // Handle the specific Flutter web boxed error case
+    final errorString = e.toString();
+    if (errorString.contains('Dart exception thrown from converted Future')) {
+      print('DEBUG: Detected converted Future error, attempting safe unwrap');
+
+      // Try to extract nested error using safe property access
+      dynamic nestedError;
+      try {
+        // Use hasProperty check before accessing
+        final hasErrorProp = (e as dynamic).hasProperty != null
+            ? (e as dynamic).hasProperty('error')
+            : true;
+        if (hasErrorProp) {
+          nestedError = (e as dynamic).error;
+        }
+      } catch (_) {
+        nestedError = null;
+      }
+
+      if (nestedError != null) {
+        print('DEBUG: Found nested error: ${nestedError.runtimeType}');
+        // Recursively extract from nested error
+        final nestedStr = _extractErrorDetails(nestedError);
+        if (nestedStr.isNotEmpty &&
+            !nestedStr
+                .contains('Dart exception thrown from converted Future')) {
+          return nestedStr;
+        }
+        // If recursive extraction didn't work, try toString on nested
+        try {
+          final nestedToStr = nestedError.toString();
+          if (nestedToStr.isNotEmpty &&
+              !nestedToStr
+                  .contains('Dart exception thrown from converted Future')) {
+            return nestedToStr;
+          }
+        } catch (_) {}
+      }
+
+      // Try to get message property safely
+      dynamic messageObj;
+      try {
+        messageObj = (e as dynamic).message;
+      } catch (_) {}
+
+      if (messageObj != null) {
+        final msgStr = messageObj.toString();
+        if (msgStr.isNotEmpty &&
+            !msgStr.contains('Dart exception thrown from converted Future')) {
+          return msgStr;
+        }
+      }
+
+      // Fallback: return a cleaned-up version
+      return 'Transaction failed. Please try again or check inventory levels.';
+    }
+
     dynamic current = e;
     for (int i = 0; i < 5; i++) {
       print('DEBUG: Unwrapping level $i - type: ${current.runtimeType}');
@@ -295,7 +511,7 @@ class FirebaseService {
             : 'Firebase error: $code — $msg';
       }
 
-      // Try to access JS properties using dynamic
+      // Try to access JS properties using dynamic - with safe guards
       dynamic errorObj;
       dynamic messageObj;
       dynamic codeObj;
@@ -320,8 +536,7 @@ class FirebaseService {
         // If the wrapper error is the generic converted-future message,
         // try unwrapping the nested error directly.
         final wrapperStr = current.toString();
-        if (wrapperStr
-            .contains('Dart exception thrown from converted Future')) {
+        if (wrapperStr.contains('Dart exception thrown from Future')) {
           try {
             final nested = _extractErrorDetails(errorObj);
             if (nested.isNotEmpty &&
@@ -440,10 +655,9 @@ class FirebaseService {
   static Future<List<Map<String, dynamic>>> getMenuItems() async {
     try {
       final eateryId = await _requireCurrentEateryId();
-      final querySnapshot = await _withRetry(() => _firestore
-          .collection(menuCollection)
-          .where('eateryId', isEqualTo: eateryId)
-          .get());
+      final querySnapshot = await _withRetry(
+        () => _eaterySubcollection(eateryId, menuCollection).get(),
+      );
 
       final items = querySnapshot.docs.map((doc) {
         final Map<String, dynamic> result = {'id': doc.id};
@@ -481,7 +695,7 @@ class FirebaseService {
   ) async {
     try {
       final eateryId = await _requireCurrentEateryId();
-      final docRef = await _firestore.collection(menuCollection).add({
+      final docRef = await _eaterySubcollection(eateryId, menuCollection).add({
         ...menuData,
         'eateryId': eateryId,
         'createdAt': FieldValue.serverTimestamp(),
@@ -505,7 +719,7 @@ class FirebaseService {
     try {
       final eateryId = await _requireCurrentEateryId();
       final existing =
-          await _firestore.collection(menuCollection).doc(id).get();
+          await _eaterySubcollection(eateryId, menuCollection).doc(id).get();
       if (!existing.exists) {
         throw Exception('Menu item not found');
       }
@@ -515,13 +729,13 @@ class FirebaseService {
         throw Exception('Access denied');
       }
 
-      await _firestore.collection(menuCollection).doc(id).update({
+      await _eaterySubcollection(eateryId, menuCollection).doc(id).update({
         ...updates,
         'updatedAt': FieldValue.serverTimestamp(),
       });
 
       final docSnapshot =
-          await _firestore.collection(menuCollection).doc(id).get();
+          await _eaterySubcollection(eateryId, menuCollection).doc(id).get();
       return {
         'id': docSnapshot.id,
         ...docSnapshot.data()!,
@@ -535,7 +749,7 @@ class FirebaseService {
     try {
       final eateryId = await _requireCurrentEateryId();
       final existing =
-          await _firestore.collection(menuCollection).doc(id).get();
+          await _eaterySubcollection(eateryId, menuCollection).doc(id).get();
       if (!existing.exists) {
         return;
       }
@@ -544,7 +758,7 @@ class FirebaseService {
       if (existingEateryId.isNotEmpty && existingEateryId != eateryId) {
         throw Exception('Access denied');
       }
-      await _firestore.collection(menuCollection).doc(id).delete();
+      await _eaterySubcollection(eateryId, menuCollection).doc(id).delete();
     } catch (e) {
       throw Exception('Failed to delete menu item: $e');
     }
@@ -552,16 +766,32 @@ class FirebaseService {
 
   // Order methods
   static Future<Map<String, dynamic>> createOrder(
-    Map<String, dynamic> orderData,
-  ) async {
+    Map<String, dynamic> orderData, {
+    String? orderId,
+  }) async {
     try {
       final eateryId = await _requireCurrentEateryId();
-      final docRef = await _firestore.collection(ordersCollection).add({
-        ...orderData,
-        'eateryId': eateryId,
-        'createdAt': FieldValue.serverTimestamp(),
-        'status': 'pending',
-      });
+      final ordersRef = _eaterySubcollection(eateryId, ordersCollection);
+
+      final DocumentReference<Map<String, dynamic>> docRef;
+      if (orderId != null && orderId.trim().isNotEmpty) {
+        // Use the provided order ID
+        docRef = ordersRef.doc(orderId.trim());
+        await docRef.set({
+          ...orderData,
+          'eateryId': eateryId,
+          'createdAt': FieldValue.serverTimestamp(),
+          'status': 'pending',
+        });
+      } else {
+        // Auto-generate ID
+        docRef = await ordersRef.add({
+          ...orderData,
+          'eateryId': eateryId,
+          'createdAt': FieldValue.serverTimestamp(),
+          'status': 'pending',
+        });
+      }
 
       final docSnapshot = await docRef.get();
       return {
@@ -577,11 +807,10 @@ class FirebaseService {
       {int limit = 20}) async {
     try {
       final eateryId = await _requireCurrentEateryId();
-      final querySnapshot = await _firestore
-          .collection(ordersCollection)
-          .where('eateryId', isEqualTo: eateryId)
-          .where('status', isEqualTo: 'pending')
-          .get();
+      final querySnapshot =
+          await _eaterySubcollection(eateryId, ordersCollection)
+              .where('status', isEqualTo: 'pending')
+              .get();
 
       final orders = querySnapshot.docs.map((doc) {
         final Map<String, dynamic> result = {'id': doc.id};
@@ -626,7 +855,8 @@ class FirebaseService {
 
     try {
       final eateryId = await _requireCurrentEateryId();
-      final orderRef = _firestore.collection(ordersCollection).doc(orderId);
+      final orderRef =
+          _eaterySubcollection(eateryId, ordersCollection).doc(orderId);
 
       final sanitizedAddedItems = itemsToAdd.map((it) {
         final menuItemId = (it['menuItemId'] ?? '').toString().trim();
@@ -785,13 +1015,15 @@ class FirebaseService {
   }
 
   static Future<Map<String, dynamic>> completeOrder(String orderId) async {
+    String eateryId = '';
     try {
       await _requireAdmin();
-      final eateryId = await _requireCurrentEateryId();
+      eateryId = await _requireCurrentEateryId();
 
       final invQuery = _firestore
-          .collection(inventoryCollection)
-          .where('eateryId', isEqualTo: eateryId);
+          .collection(eateriesCollection)
+          .doc(eateryId)
+          .collection(inventoryCollection);
       final invQuerySnap = await _withRetry(() => invQuery.get());
       final Map<String, DocumentReference> inventoryRefByName = {};
       for (final doc in invQuerySnap.docs) {
@@ -801,7 +1033,8 @@ class FirebaseService {
         inventoryRefByName.putIfAbsent(key, () => doc.reference);
       }
 
-      final orderRef = _firestore.collection(ordersCollection).doc(orderId);
+      final orderRef =
+          _eaterySubcollection(eateryId, ordersCollection).doc(orderId);
 
       final Map<String, dynamic> result = await _withRetry(
         () => _firestore.runTransaction((tx) async {
@@ -841,7 +1074,7 @@ class FirebaseService {
               throw Exception('Invalid order item');
             }
             final menuRef =
-                _firestore.collection(menuCollection).doc(menuItemId);
+                _eaterySubcollection(eateryId, menuCollection).doc(menuItemId);
             menuReads.add({'ref': menuRef, 'quantity': quantity});
           }
 
@@ -886,6 +1119,8 @@ class FirebaseService {
                 (menu['inventoryItemId'] ?? '').toString().trim();
             if (inventoryItemId.isNotEmpty) {
               final invRef = _firestore
+                  .collection(eateriesCollection)
+                  .doc(eateryId)
                   .collection(inventoryCollection)
                   .doc(inventoryItemId);
               invLinkReads.add(
@@ -901,7 +1136,8 @@ class FirebaseService {
             final recipeId = (menu['recipeId'] ?? '').toString().trim();
             if (recipeId.isNotEmpty) {
               final recipeRef =
-                  _firestore.collection(recipesCollection).doc(recipeId);
+                  _eaterySubcollection(eateryId, recipesCollection)
+                      .doc(recipeId);
               recipeReads.add({'recipeRef': recipeRef, 'quantity': quantity});
             }
           }
@@ -1134,7 +1370,11 @@ class FirebaseService {
       final msg = _extractErrorDetails(e);
       try {
         await _requireAdmin();
-        final orderRef = _firestore.collection(ordersCollection).doc(orderId);
+        if (eateryId.trim().isEmpty) {
+          eateryId = await _requireCurrentEateryId();
+        }
+        final orderRef =
+            _eaterySubcollection(eateryId, ordersCollection).doc(orderId);
         await orderRef.set({
           'rejectReason': msg,
           'updatedAt': FieldValue.serverTimestamp(),
@@ -1145,7 +1385,11 @@ class FirebaseService {
       final msg = _extractErrorDetails(e);
       try {
         await _requireAdmin();
-        final orderRef = _firestore.collection(ordersCollection).doc(orderId);
+        if (eateryId.trim().isEmpty) {
+          eateryId = await _requireCurrentEateryId();
+        }
+        final orderRef =
+            _eaterySubcollection(eateryId, ordersCollection).doc(orderId);
         await orderRef.set({
           'rejectReason': msg,
           'updatedAt': FieldValue.serverTimestamp(),
@@ -1160,15 +1404,11 @@ class FirebaseService {
     try {
       await _requireAdmin();
       final eateryId = await _requireCurrentEateryId();
-      final orderRef = _firestore.collection(ordersCollection).doc(orderId);
+      final orderRef =
+          _eaterySubcollection(eateryId, ordersCollection).doc(orderId);
       final snap = await orderRef.get();
       if (!snap.exists) {
         throw Exception('Order not found');
-      }
-      final data = snap.data() ?? <String, dynamic>{};
-      final orderEateryId = (data['eateryId'] ?? '').toString().trim();
-      if (orderEateryId.isEmpty || orderEateryId != eateryId) {
-        throw Exception('Access denied');
       }
       await orderRef.set({
         'status': 'pending',
@@ -1187,16 +1427,13 @@ class FirebaseService {
     try {
       await _requireAdmin();
       final eateryId = await _requireCurrentEateryId();
-      final orderRef = _firestore.collection(ordersCollection).doc(orderId);
+      final orderRef =
+          _eaterySubcollection(eateryId, ordersCollection).doc(orderId);
       final snap = await orderRef.get();
       if (!snap.exists) {
         throw Exception('Order not found');
       }
       final data = snap.data() ?? <String, dynamic>{};
-      final orderEateryId = (data['eateryId'] ?? '').toString().trim();
-      if (orderEateryId.isEmpty || orderEateryId != eateryId) {
-        throw Exception('Access denied');
-      }
 
       final status = (data['status'] ?? '').toString().trim().toLowerCase();
       if (status != 'pending') {
@@ -1222,10 +1459,9 @@ class FirebaseService {
   }) async {
     try {
       final eateryId = await _requireCurrentEateryId();
-      final querySnapshot = await _withRetry(() => _firestore
-          .collection(ordersCollection)
-          .where('eateryId', isEqualTo: eateryId)
-          .get());
+      final querySnapshot = await _withRetry(
+        () => _eaterySubcollection(eateryId, ordersCollection).get(),
+      );
 
       final orders = querySnapshot.docs.map((doc) {
         final Map<String, dynamic> result = {'id': doc.id};
@@ -1270,16 +1506,35 @@ class FirebaseService {
     return getOrders(startDate: startOfDay, endDate: endOfDay);
   }
 
+  static Stream<List<Map<String, dynamic>>> getTodayOrdersStream() async* {
+    final now = DateTime.now();
+    final startOfDay = DateTime(now.year, now.month, now.day);
+
+    final eateryId = await _requireCurrentEateryId();
+
+    yield* _eaterySubcollection(eateryId, ordersCollection)
+        .where('createdAt',
+            isGreaterThanOrEqualTo: Timestamp.fromDate(startOfDay))
+        .orderBy('createdAt', descending: true)
+        .snapshots()
+        .map((snapshot) {
+      return snapshot.docs.map((doc) {
+        final Map<String, dynamic> result = {'id': doc.id};
+        result.addAll(doc.data());
+        return result;
+      }).toList();
+    });
+  }
+
   // Inventory methods
   static Future<List<Map<String, dynamic>>> getInventoryItems({
     String? category,
   }) async {
     try {
       final eateryId = await _requireCurrentEateryId();
-      final querySnapshot = await _withRetry(() => _firestore
-          .collection(inventoryCollection)
-          .where('eateryId', isEqualTo: eateryId)
-          .get());
+      final querySnapshot = await _withRetry(
+        () => _eaterySubcollection(eateryId, inventoryCollection).get(),
+      );
 
       final items = querySnapshot.docs.map((doc) {
         final Map<String, dynamic> result = {'id': doc.id};
@@ -1323,7 +1578,8 @@ class FirebaseService {
   ) async {
     try {
       final eateryId = await _requireCurrentEateryId();
-      final docRef = await _firestore.collection(inventoryCollection).add({
+      final docRef =
+          await _eaterySubcollection(eateryId, inventoryCollection).add({
         ...inventoryData,
         'eateryId': eateryId,
         'createdAt': FieldValue.serverTimestamp(),
@@ -1346,8 +1602,9 @@ class FirebaseService {
   ) async {
     try {
       final eateryId = await _requireCurrentEateryId();
-      final existing =
-          await _firestore.collection(inventoryCollection).doc(id).get();
+      final existing = await _eaterySubcollection(eateryId, inventoryCollection)
+          .doc(id)
+          .get();
       if (!existing.exists) {
         throw Exception('Inventory item not found');
       }
@@ -1357,13 +1614,15 @@ class FirebaseService {
         throw Exception('Access denied');
       }
 
-      await _firestore.collection(inventoryCollection).doc(id).update({
+      await _eaterySubcollection(eateryId, inventoryCollection).doc(id).update({
         ...updates,
         'updatedAt': FieldValue.serverTimestamp(),
       });
 
       final docSnapshot =
-          await _firestore.collection(inventoryCollection).doc(id).get();
+          await _eaterySubcollection(eateryId, inventoryCollection)
+              .doc(id)
+              .get();
       return {
         'id': docSnapshot.id,
         ...docSnapshot.data()!,
@@ -1376,8 +1635,9 @@ class FirebaseService {
   static Future<void> deleteInventoryItem(String id) async {
     try {
       final eateryId = await _requireCurrentEateryId();
-      final existing =
-          await _firestore.collection(inventoryCollection).doc(id).get();
+      final existing = await _eaterySubcollection(eateryId, inventoryCollection)
+          .doc(id)
+          .get();
       if (!existing.exists) {
         return;
       }
@@ -1386,7 +1646,9 @@ class FirebaseService {
       if (existingEateryId.isNotEmpty && existingEateryId != eateryId) {
         throw Exception('Access denied');
       }
-      await _firestore.collection(inventoryCollection).doc(id).delete();
+      await _eaterySubcollection(eateryId, inventoryCollection)
+          .doc(id)
+          .delete();
     } catch (e) {
       throw Exception('Failed to delete inventory item: $e');
     }
@@ -1399,7 +1661,8 @@ class FirebaseService {
   ) async {
     try {
       final eateryId = await _requireCurrentEateryId();
-      final docRef = _firestore.collection(inventoryCollection).doc(id);
+      final docRef =
+          _eaterySubcollection(eateryId, inventoryCollection).doc(id);
       final docSnapshot = await docRef.get();
 
       if (!docSnapshot.exists) {
@@ -1553,12 +1816,12 @@ class FirebaseService {
 
   static Future<Map<String, dynamic>> getSummaryStats() async {
     try {
+      final eateryId = await _requireCurrentEateryId();
+      final orders = await getOrders();
       final now = DateTime.now();
       final todayStart = DateTime(now.year, now.month, now.day);
       final weekStart = todayStart.subtract(const Duration(days: 7));
       final monthStart = DateTime(now.year, now.month, 1);
-
-      final orders = await getOrders();
 
       DateTime? parseCompletedAt(dynamic completedAt) {
         if (completedAt is Timestamp) return completedAt.toDate();
@@ -1596,12 +1859,9 @@ class FirebaseService {
         return {'orders': orders, 'revenue': revenue};
       };
 
-      final eateryId = await _requireCurrentEateryId();
-      final menuCount = await _withRetry(() => _firestore
-          .collection(menuCollection)
-          .where('eateryId', isEqualTo: eateryId)
-          .count()
-          .get());
+      final menuCount = await _withRetry(
+        () => _eaterySubcollection(eateryId, menuCollection).count().get(),
+      );
 
       return {
         'today': calculateStats(todayOrders),
@@ -1719,5 +1979,79 @@ class FirebaseService {
       },
       'note': 'Mock data'
     };
+  }
+
+  // Staff meal methods
+  static Future<Map<String, dynamic>> createStaffMealOrder(
+    Map<String, dynamic> data,
+  ) async {
+    final user = FirebaseAuth.instance.currentUser;
+    final eateryId = data['eateryId']?.toString();
+    if (eateryId == null || eateryId.isEmpty) {
+      throw Exception('Eatery ID is required');
+    }
+
+    final orderData = {
+      ...data,
+      'createdAt': data['createdAt'] ?? DateTime.now().toIso8601String(),
+      'updatedAt': DateTime.now().toIso8601String(),
+    };
+
+    // Store in eatery subcollection for proper data organization
+    final docRef = await _eaterySubcollection(eateryId, staffMealsCollection)
+        .add(orderData);
+
+    return {
+      'id': docRef.id,
+      ...orderData,
+    };
+  }
+
+  static Future<List<Map<String, dynamic>>> getStaffMealOrders({
+    String? eateryId,
+    String? staffId,
+    DateTime? startDate,
+    DateTime? endDate,
+  }) async {
+    if (eateryId == null || eateryId.isEmpty) {
+      return [];
+    }
+
+    Query<Map<String, dynamic>> query =
+        _eaterySubcollection(eateryId, staffMealsCollection);
+
+    if (staffId != null && staffId.isNotEmpty) {
+      query = query.where('staffId', isEqualTo: staffId);
+    }
+
+    if (startDate != null) {
+      query = query.where('createdAt',
+          isGreaterThanOrEqualTo: startDate.toIso8601String());
+    }
+
+    if (endDate != null) {
+      query = query.where('createdAt',
+          isLessThanOrEqualTo: endDate.toIso8601String());
+    }
+
+    query = query.orderBy('createdAt', descending: true);
+
+    final snapshot = await query.get();
+    return snapshot.docs.map((doc) => {'id': doc.id, ...doc.data()}).toList();
+  }
+
+  static Future<void> updateStaffMealOrderStatus(
+    String id, {
+    required String status,
+    String? eateryId,
+  }) async {
+    if (eateryId == null || eateryId.isEmpty) {
+      throw Exception('Eatery ID is required');
+    }
+
+    await _eaterySubcollection(eateryId, staffMealsCollection).doc(id).update({
+      'status': status,
+      'updatedAt': DateTime.now().toIso8601String(),
+    });
   }
 }

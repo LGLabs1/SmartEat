@@ -6,6 +6,8 @@ class AuthProvider extends ChangeNotifier {
   User? _user;
   bool _isLoading = false;
   String? _error;
+  bool _isNavigating =
+      false; // Flag to prevent duplicate notifications during login
 
   User? get user => _user;
   bool get isLoading => _isLoading;
@@ -13,12 +15,24 @@ class AuthProvider extends ChangeNotifier {
   bool get isAuthenticated => _user != null;
 
   AuthProvider() {
-    _user = FirebaseAuth.instance.currentUser;
     _initAuthListener();
+    // Defer initial user check to ensure Firebase is fully initialized
+    Future.delayed(const Duration(milliseconds: 100), () {
+      _user = FirebaseAuth.instance.currentUser;
+      debugPrint('AuthProvider initialized - user: ${_user?.email ?? "null"}');
+      notifyListeners();
+    });
   }
 
   void _initAuthListener() {
     FirebaseAuth.instance.authStateChanges().listen((User? user) {
+      // Skip if we're in the middle of a login/logout operation
+      if (_isNavigating) {
+        debugPrint(
+            'Auth state changed (ignored - navigating) - user: ${user?.email ?? "null"}');
+        return;
+      }
+      debugPrint('Auth state changed - user: ${user?.email ?? "null"}');
       _user = user;
       notifyListeners();
     });
@@ -31,28 +45,52 @@ class AuthProvider extends ChangeNotifier {
 
   Future<void> login(String email, String password) async {
     try {
+      debugPrint('AUTH_PROVIDER: login method started for $email');
+      _isNavigating = true; // Prevent auth listener from notifying
       _isLoading = true;
       _error = null;
       notifyListeners();
 
+      debugPrint(
+          'AUTH_PROVIDER: Calling FirebaseService.signInWithEmailAndPassword');
       final userCredential = await FirebaseService.signInWithEmailAndPassword(
         email,
         password,
       );
 
+      debugPrint(
+          'AUTH_PROVIDER: Firebase signIn successful. User UID: ${userCredential.user?.uid}');
       _user = userCredential.user;
       _error = null;
+      _isLoading = false;
+
+      debugPrint(
+          'AUTH_PROVIDER: Login successful - user: ${_user?.email}, isAuthenticated: $isAuthenticated');
+      debugPrint(
+          'AUTH_PROVIDER: Waiting 100ms before clearing _isNavigating and notifying');
+
+      // Small delay to allow navigation to complete before notifying listeners
+      await Future.delayed(const Duration(milliseconds: 100));
+      _isNavigating = false;
+      debugPrint('AUTH_PROVIDER: Notifying listeners of success');
+      notifyListeners();
     } on FirebaseAuthException catch (e) {
+      debugPrint(
+          'AUTH_PROVIDER: FirebaseAuthException caught - code: ${e.code}, message: ${e.message}');
+      _isNavigating = false;
       _user = null;
       _error = _getFirebaseAuthErrorMessage(e);
-      throw Exception(_error);
-    } catch (e) {
-      _user = null;
-      _error = 'An unexpected error occurred: $e';
-      throw Exception(_error);
-    } finally {
       _isLoading = false;
       notifyListeners();
+      throw Exception(_error);
+    } catch (e) {
+      debugPrint('AUTH_PROVIDER: Unexpected error caught - $e');
+      _isNavigating = false;
+      _user = null;
+      _error = 'An unexpected error occurred: $e';
+      _isLoading = false;
+      notifyListeners();
+      throw Exception(_error);
     }
   }
 
@@ -97,11 +135,14 @@ class AuthProvider extends ChangeNotifier {
 
   Future<void> logout() async {
     try {
+      debugPrint('Logging out user: ${_user?.email}');
       await FirebaseService.signOut();
       _user = null;
       _error = null;
+      debugPrint('Logout complete');
     } catch (e) {
       _error = 'Failed to logout: $e';
+      debugPrint('Logout error: $_error');
     } finally {
       notifyListeners();
     }
@@ -131,6 +172,10 @@ class AuthProvider extends ChangeNotifier {
 
   String _getFirebaseAuthErrorMessage(FirebaseAuthException e) {
     switch (e.code) {
+      case 'network-request-failed':
+        return 'Network error. Please check your internet connection (Wi‑Fi/mobile data), disable VPN/proxy, and ensure device date/time is set automatically.';
+      case 'app-not-authorized':
+        return 'This app is not authorized to use Firebase Authentication. Re-check Android package name, SHA-1/SHA-256 in Firebase Console, and google-services.json.';
       case 'user-not-found':
         return 'No user found with this email address.';
       case 'wrong-password':
@@ -146,7 +191,7 @@ class AuthProvider extends ChangeNotifier {
       case 'too-many-requests':
         return 'Too many unsuccessful login attempts. Please try again later.';
       default:
-        return 'Authentication failed: ${e.message}';
+        return 'Authentication failed (${e.code}): ${e.message}';
     }
   }
 }

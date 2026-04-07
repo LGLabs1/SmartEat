@@ -1,13 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-
 import '../services/api_service.dart';
 import '../services/auth_provider.dart';
 
 class RecipeScreen extends StatefulWidget {
-  const RecipeScreen({Key? key, this.globalSearchQuery}) : super(key: key);
+  const RecipeScreen({
+    Key? key,
+    this.globalSearchQuery,
+    this.showAppBar = true,
+  }) : super(key: key);
 
   final ValueNotifier<String>? globalSearchQuery;
+  final bool showAppBar;
 
   @override
   State<RecipeScreen> createState() => _RecipeScreenState();
@@ -370,15 +374,23 @@ class _RecipeScreenState extends State<RecipeScreen> {
     }).toList();
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Recipes'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: _loadRecipes,
-          ),
-        ],
-      ),
+      appBar: widget.showAppBar
+          ? AppBar(
+              leading: Navigator.of(context).canPop()
+                  ? IconButton(
+                      icon: const Icon(Icons.arrow_back),
+                      onPressed: () => Navigator.of(context).maybePop(),
+                    )
+                  : null,
+              title: const Text('Recipes'),
+              actions: [
+                IconButton(
+                  icon: const Icon(Icons.refresh),
+                  onPressed: _loadRecipes,
+                ),
+              ],
+            )
+          : null,
       floatingActionButton: !_isAdmin
           ? null
           : FloatingActionButton.extended(
