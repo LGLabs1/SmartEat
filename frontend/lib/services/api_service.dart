@@ -1,10 +1,25 @@
+import 'dart:convert';
+import 'package:http/http.dart' as http;
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'firebase_service.dart';
 
 class ApiService {
+  static const String _baseUrl = 'http://localhost:3000/api';
+
+  static Future<String?> _getAuthToken() async {
+    final user = FirebaseAuth.instance.currentUser;
+    return user?.getIdToken();
+  }
+
   // Menu endpoints - using Firebase
   static Future<Map<String, dynamic>> getMenuItems() async {
     final items = await FirebaseService.getMenuItems();
     return {'data': items};
+  }
+
+  static Stream<List<Map<String, dynamic>>> getMenuItemsStream() {
+    return FirebaseService.getMenuItemsStream();
   }
 
   static Future<Map<String, dynamic>> getRecipes() async {
@@ -36,6 +51,9 @@ class ApiService {
     String? description,
     String? imageUrl,
   }) async {
+    final invLinked =
+        inventoryItemId != null && inventoryItemId.trim().isNotEmpty;
+    final bool initialAvailability = invLinked ? (availableServings > 0) : true;
     final item = await FirebaseService.createMenuItem({
       'name': name,
       'category': category,
@@ -48,7 +66,7 @@ class ApiService {
       'availableServings': availableServings,
       'description': description ?? '',
       'imageUrl': imageUrl ?? '',
-      'isAvailable': availableServings > 0,
+      'isAvailable': initialAvailability,
     });
     return {'data': item};
   }
@@ -90,7 +108,9 @@ class ApiService {
     if (availableServings != null) {
       updates['availableServings'] = availableServings;
       if (isAvailable == null) {
-        updates['isAvailable'] = availableServings > 0;
+        // For unlimited items (availableServings == -1), keep available unless explicitly toggled off.
+        updates['isAvailable'] =
+            availableServings == -1 ? true : availableServings > 0;
       }
     }
     if (description != null) updates['description'] = description;
@@ -182,6 +202,15 @@ class ApiService {
     return {'ok': true};
   }
 
+  static Future<Map<String, dynamic>> voidOrderItems(
+    String orderId,
+    List<Map<String, dynamic>> itemsToVoid, {
+    String reason = '',
+  }) async {
+    await FirebaseService.voidOrderItems(orderId, itemsToVoid, reason: reason);
+    return {'ok': true};
+  }
+
   static Future<Map<String, dynamic>> restoreOrderToPending(
       String orderId) async {
     await FirebaseService.restoreOrderToPending(orderId);
@@ -249,6 +278,20 @@ class ApiService {
     return {'data': item};
   }
 
+  static Future<Map<String, dynamic>> markInventoryDamaged(
+    String id, {
+    required double quantity,
+    String reason = 'Damaged',
+  }) async {
+    final item = await FirebaseService.createDamagedItem(id, quantity, reason);
+    return {'data': item};
+  }
+
+  static Future<Map<String, dynamic>> getDamagedItems() async {
+    final items = await FirebaseService.getDamagedItems();
+    return {'data': items};
+  }
+
   static Future<Map<String, dynamic>> getLowStockItems() async {
     final items = await FirebaseService.getLowStockItems();
     return {'data': items};
@@ -276,91 +319,132 @@ class ApiService {
     return {'data': data};
   }
 
-  // Generate forecasts based on actual historical data
-  static Future<Map<String, dynamic>> getDemandForecast({int days = 7}) async {
+  // Get order count forecast based on historical day-of-week averages
+  static Future<Map<String, dynamic>> getOrdersForecast({int days = 7}) async {
     try {
-      // Get last 30 days of orders for trend analysis
+      // Get last 60 days of orders for historical analysis
       final endDate = DateTime.now();
-      final startDate = endDate.subtract(const Duration(days: 30));
+      final startDate = endDate.subtract(const Duration(days: 60));
       final ordersResult =
           await getOrdersByDateRange(startDate: startDate, endDate: endDate);
       final orders = ordersResult['data'] as List<dynamic>? ?? [];
 
-      // Calculate daily order counts
-      final dailyCounts = <String, int>{};
-      for (var i = 0; i < 30; i++) {
-        final date = endDate.subtract(Duration(days: i));
-        final dateStr = date.toIso8601String().split('T')[0];
-        dailyCounts[dateStr] = 0;
+      // Group orders by day of week (1=Monday, 7=Sunday)
+      final dayOfWeekOrderCounts = <int, List<int>>{};
+      for (int i = 1; i <= 7; i++) {
+        dayOfWeekOrderCounts[i] = [];
       }
 
+      // Count orders per day
+      final ordersPerDay = <String, int>{};
       for (final order in orders) {
         if (order is Map) {
           final createdAt = order['createdAt'];
-          if (createdAt != null) {
-            final dateStr = createdAt.toString().split('T')[0];
-            dailyCounts[dateStr] = (dailyCounts[dateStr] ?? 0) + 1;
+          final status = (order['status'] ?? '').toString().toLowerCase();
+
+          if (createdAt != null && status == 'completed') {
+            // Handle both Timestamp and String formats
+            DateTime? orderDate;
+            if (createdAt is Timestamp) {
+              orderDate = createdAt.toDate();
+            } else if (createdAt is String) {
+              orderDate = DateTime.tryParse(createdAt);
+            }
+            if (orderDate != null) {
+              final dateStr = orderDate.toIso8601String().split('T')[0];
+              ordersPerDay[dateStr] = (ordersPerDay[dateStr] ?? 0) + 1;
+            }
           }
         }
       }
 
-      // Calculate average daily orders
-      final avgDailyOrders = dailyCounts.values.isEmpty
-          ? 5.0
-          : dailyCounts.values.reduce((a, b) => a + b) /
-              dailyCounts.values.length;
+      // Group by day of week
+      for (var i = 0; i < 60; i++) {
+        final date = endDate.subtract(Duration(days: i));
+        final dateStr = date.toIso8601String().split('T')[0];
+        final dayOfWeek = date.weekday;
+        final count = ordersPerDay[dateStr] ?? 0;
+        dayOfWeekOrderCounts[dayOfWeek]!.add(count);
+      }
 
-      // Generate forecast with slight trend based on recent performance
+      // Calculate average orders per day of week
+      final dayOfWeekAverages = <int, double>{};
+      for (int i = 1; i <= 7; i++) {
+        final counts = dayOfWeekOrderCounts[i]!;
+        if (counts.isNotEmpty) {
+          final sum = counts.reduce((a, b) => a + b);
+          dayOfWeekAverages[i] = sum / counts.length;
+        } else {
+          dayOfWeekAverages[i] = 0.0;
+        }
+      }
+
+      // Generate forecast
       final forecast = <Map<String, dynamic>>[];
       for (var i = 1; i <= days; i++) {
         final date = endDate.add(Duration(days: i));
         final dayOfWeek = date.weekday;
-
-        // Adjust for weekend patterns (higher on weekends)
-        var multiplier = 1.0;
-        if (dayOfWeek == 6 || dayOfWeek == 7) {
-          // Saturday or Sunday
-          multiplier = 1.2;
-        } else if (dayOfWeek == 1) {
-          // Monday
-          multiplier = 0.9;
-        }
-
-        final predictedDemand = (avgDailyOrders * multiplier).round();
+        final predictedOrders = dayOfWeekAverages[dayOfWeek]!.round();
 
         forecast.add({
           'day': i,
           'date': date.toIso8601String().split('T')[0],
-          'predictedDemand': predictedDemand,
-          'confidence':
-              0.75 + (i * 0.01), // Confidence decreases slightly further out
+          'predictedOrders': predictedOrders,
+          'confidence': 0.8,
+          'dayName': _getDayName(date.weekday),
+          'isWeekend': date.weekday == 6 || date.weekday == 7,
         });
       }
 
-      return {'data': forecast};
+      return {
+        'data': forecast,
+        'model': 'historical_day_of_week',
+        'note': 'Based on average orders per day of week from last 60 days',
+      };
     } catch (e) {
-      // Fallback to simple forecast if data fetch fails
-      return _generateSimpleForecast(days);
+      // Fallback: return zeros if no data available
+      return _generateEmptyForecast(days);
     }
+  }
+
+  static Map<String, dynamic> _generateEmptyForecast(int days) {
+    final forecast = <Map<String, dynamic>>[];
+    final now = DateTime.now();
+    for (var i = 1; i <= days; i++) {
+      final date = now.add(Duration(days: i));
+      forecast.add({
+        'day': i,
+        'date': date.toIso8601String().split('T')[0],
+        'predictedOrders': 0,
+        'confidence': 0.0,
+        'dayName': _getDayName(date.weekday),
+        'isWeekend': date.weekday == 6 || date.weekday == 7,
+      });
+    }
+    return {
+      'data': forecast,
+      'model': 'empty',
+      'note': 'No historical data available'
+    };
   }
 
   static Future<Map<String, dynamic>> getSalesForecast({int days = 7}) async {
     try {
-      // Get last 30 days of orders for revenue trend analysis
+      // Get last 60 days of orders for historical revenue analysis
       final endDate = DateTime.now();
-      final startDate = endDate.subtract(const Duration(days: 30));
+      final startDate = endDate.subtract(const Duration(days: 60));
       final ordersResult =
           await getOrdersByDateRange(startDate: startDate, endDate: endDate);
       final orders = ordersResult['data'] as List<dynamic>? ?? [];
 
-      // Calculate daily revenue
-      final dailyRevenue = <String, double>{};
-      for (var i = 0; i < 30; i++) {
-        final date = endDate.subtract(Duration(days: i));
-        final dateStr = date.toIso8601String().split('T')[0];
-        dailyRevenue[dateStr] = 0.0;
+      // Group revenue by day of week (1=Monday, 7=Sunday)
+      final dayOfWeekRevenues = <int, List<double>>{};
+      for (int i = 1; i <= 7; i++) {
+        dayOfWeekRevenues[i] = [];
       }
 
+      // Calculate daily revenue
+      final dailyRevenue = <String, double>{};
       for (final order in orders) {
         if (order is Map) {
           final createdAt = order['createdAt'];
@@ -368,46 +452,89 @@ class ApiService {
           final status = (order['status'] ?? '').toString().toLowerCase();
 
           if (createdAt != null && status == 'completed') {
-            final dateStr = createdAt.toString().split('T')[0];
-            dailyRevenue[dateStr] = (dailyRevenue[dateStr] ?? 0.0) + total;
+            // Handle both Timestamp and String formats
+            DateTime? orderDate;
+            if (createdAt is Timestamp) {
+              orderDate = createdAt.toDate();
+            } else if (createdAt is String) {
+              orderDate = DateTime.tryParse(createdAt);
+            }
+            if (orderDate != null) {
+              final dateStr = orderDate.toIso8601String().split('T')[0];
+              dailyRevenue[dateStr] = (dailyRevenue[dateStr] ?? 0.0) + total;
+            }
           }
         }
       }
 
-      // Calculate average daily revenue
-      final avgDailyRevenue = dailyRevenue.values.isEmpty
-          ? 5000.0
-          : dailyRevenue.values.reduce((a, b) => a + b) /
-              dailyRevenue.values.length;
+      // Group revenue by day of week
+      for (var i = 0; i < 60; i++) {
+        final date = endDate.subtract(Duration(days: i));
+        final dateStr = date.toIso8601String().split('T')[0];
+        final dayOfWeek = date.weekday;
+        final revenue = dailyRevenue[dateStr] ?? 0.0;
+        dayOfWeekRevenues[dayOfWeek]!.add(revenue);
+      }
 
-      // Generate forecast with trend
+      // Calculate average revenue per day of week
+      final dayOfWeekAverages = <int, double>{};
+      for (int i = 1; i <= 7; i++) {
+        final revenues = dayOfWeekRevenues[i]!;
+        if (revenues.isNotEmpty) {
+          final sum = revenues.reduce((a, b) => a + b);
+          dayOfWeekAverages[i] = sum / revenues.length;
+        } else {
+          dayOfWeekAverages[i] = 0.0;
+        }
+      }
+
+      // Generate forecast
       final forecast = <Map<String, dynamic>>[];
       for (var i = 1; i <= days; i++) {
         final date = endDate.add(Duration(days: i));
         final dayOfWeek = date.weekday;
-
-        // Adjust for weekend patterns
-        var multiplier = 1.0;
-        if (dayOfWeek == 6 || dayOfWeek == 7) {
-          multiplier = 1.3;
-        } else if (dayOfWeek == 1) {
-          multiplier = 0.85;
-        }
-
-        final predictedSales = avgDailyRevenue * multiplier;
+        final predictedRevenue = dayOfWeekAverages[dayOfWeek]!.round();
 
         forecast.add({
           'day': i,
           'date': date.toIso8601String().split('T')[0],
-          'predictedSales': predictedSales.round(),
-          'confidence': 0.75 + (i * 0.01),
+          'predictedRevenue': predictedRevenue,
+          'confidence': 0.8,
+          'dayName': _getDayName(date.weekday),
+          'isWeekend': date.weekday == 6 || date.weekday == 7,
         });
       }
 
-      return {'data': forecast};
+      return {
+        'data': forecast,
+        'model': 'historical_day_of_week',
+        'note': 'Based on average revenue per day of week from last 60 days',
+      };
     } catch (e) {
-      return _generateSimpleSalesForecast(days);
+      // Fallback: return zeros if no data available
+      return _generateEmptySalesForecast(days);
     }
+  }
+
+  static Map<String, dynamic> _generateEmptySalesForecast(int days) {
+    final forecast = <Map<String, dynamic>>[];
+    final now = DateTime.now();
+    for (var i = 1; i <= days; i++) {
+      final date = now.add(Duration(days: i));
+      forecast.add({
+        'day': i,
+        'date': date.toIso8601String().split('T')[0],
+        'predictedRevenue': 0,
+        'confidence': 0.0,
+        'dayName': _getDayName(date.weekday),
+        'isWeekend': date.weekday == 6 || date.weekday == 7,
+      });
+    }
+    return {
+      'data': forecast,
+      'model': 'empty',
+      'note': 'No historical data available'
+    };
   }
 
   static Future<Map<String, dynamic>> getRecommendations() async {
@@ -544,29 +671,9 @@ class ApiService {
     }
   }
 
-  // Fallback forecast generators
-  static Map<String, dynamic> _generateSimpleForecast(int days) {
-    final forecast = <Map<String, dynamic>>[];
-    for (var i = 1; i <= days; i++) {
-      forecast.add({
-        'day': i,
-        'predictedDemand': 5 + (i % 3),
-        'confidence': 0.7,
-      });
-    }
-    return {'data': forecast};
-  }
-
-  static Map<String, dynamic> _generateSimpleSalesForecast(int days) {
-    final forecast = <Map<String, dynamic>>[];
-    for (var i = 1; i <= days; i++) {
-      forecast.add({
-        'day': i,
-        'predictedSales': 5000 + (i * 100),
-        'confidence': 0.7,
-      });
-    }
-    return {'data': forecast};
+  static String _getDayName(int weekday) {
+    const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    return days[weekday - 1];
   }
 
   // Finance endpoints
@@ -576,17 +683,17 @@ class ApiService {
   }
 
   static Future<Map<String, dynamic>> createExpense({
+    required String name,
     required String category,
     required double amount,
     DateTime? date,
-    String? vendor,
     String? notes,
   }) async {
     final item = await FirebaseService.createExpense({
+      'name': name,
       'category': category,
       'amount': amount,
       if (date != null) 'date': date.toIso8601String(),
-      if (vendor != null && vendor.trim().isNotEmpty) 'vendor': vendor.trim(),
       if (notes != null && notes.trim().isNotEmpty) 'notes': notes.trim(),
     });
     return {'data': item};
@@ -707,5 +814,86 @@ class ApiService {
   ) async {
     final result = await FirebaseService.addItemsToPendingOrder(orderId, items);
     return {'success': true, 'data': result};
+  }
+
+  // Chatbot API Methods
+
+  static Future<Map<String, dynamic>> sendChatMessage({
+    required String message,
+    List<Map<String, dynamic>>? history,
+  }) async {
+    final token = await _getAuthToken();
+    final eateryId = await FirebaseService.getCurrentEateryId();
+    final Map<String, String> headers = {
+      'Content-Type': 'application/json',
+    };
+    if (token != null) {
+      headers['Authorization'] = 'Bearer $token';
+    }
+    if (eateryId != null) {
+      headers['x-eatery-id'] = eateryId;
+    }
+
+    final response = await http.post(
+      Uri.parse('$_baseUrl/chatbot/chat'),
+      headers: headers,
+      body: jsonEncode({
+        'message': message,
+        'history': history ?? [],
+        if (eateryId != null) 'eateryId': eateryId,
+      }),
+    );
+
+    if (response.statusCode == 200) {
+      return jsonDecode(response.body);
+    } else {
+      throw Exception('Failed to send message: ${response.body}');
+    }
+  }
+
+  static Future<Map<String, dynamic>> getChatbotStatus() async {
+    final token = await _getAuthToken();
+    final eateryId = await FirebaseService.getCurrentEateryId();
+    final Map<String, String> headers = {};
+    if (token != null) {
+      headers['Authorization'] = 'Bearer $token';
+    }
+    if (eateryId != null) {
+      headers['x-eatery-id'] = eateryId;
+    }
+
+    final response = await http.get(
+      Uri.parse('$_baseUrl/chatbot/status'),
+      headers: headers,
+    );
+
+    if (response.statusCode == 200) {
+      return jsonDecode(response.body);
+    } else {
+      throw Exception('Failed to get chatbot status: ${response.body}');
+    }
+  }
+
+  static Future<Map<String, dynamic>> getAIInsights() async {
+    final token = await _getAuthToken();
+    final eateryId = await FirebaseService.getCurrentEateryId();
+    final Map<String, String> headers = {};
+    if (token != null) {
+      headers['Authorization'] = 'Bearer $token';
+    }
+    if (eateryId != null) {
+      headers['x-eatery-id'] = eateryId;
+    }
+
+    final response = await http.get(
+      Uri.parse('$_baseUrl/chatbot/insights'),
+      headers: headers,
+    );
+
+    if (response.statusCode == 200) {
+      return jsonDecode(response.body);
+    } else {
+      throw Exception('Failed to get AI insights: ${response.body}');
+    }
   }
 }

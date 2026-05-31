@@ -4,6 +4,9 @@ import 'package:provider/provider.dart';
 import '../services/api_service.dart';
 import '../models/inventory_item.dart';
 import '../services/auth_provider.dart';
+import '../widgets/skeleton_loaders.dart';
+import '../utils/error_messages.dart';
+import 'damaged_items_screen.dart';
 
 class InventoryScreen extends StatefulWidget {
   final ValueNotifier<String>? globalSearchQuery;
@@ -589,6 +592,8 @@ class InventoryScreenState extends State<InventoryScreen> {
   List<InventoryItem> _inventoryItems = [];
   List<InventoryItem> _lowStockItems = [];
   List<InventoryItem> _outOfStockItems = [];
+  int _damagedItemCount = 0;
+  double _damagedTotalCost = 0.0;
   bool _isLoading = false;
   bool _isAdmin = false;
   String? _lastRoleUid;
@@ -726,7 +731,8 @@ class InventoryScreenState extends State<InventoryScreen> {
       await ApiService.deleteInventoryItem(item.id);
       if (!mounted) return;
       Navigator.of(context).pop();
-      await _loadInventory();
+      // Optimistic update - remove from local list without full refresh
+      _removeInventoryItemFromLocal(item.id);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Inventory item deleted')),
@@ -740,33 +746,79 @@ class InventoryScreenState extends State<InventoryScreen> {
   }
 
   Future<void> _loadInventory() async {
+    if (!mounted) return;
     setState(() => _isLoading = true);
 
     try {
       final response = await ApiService.getInventoryItems();
-      if (response['data'] != null) {
-        final items = (response['data'] as List)
-            .map((item) => InventoryItem.fromJson(item))
-            .toList();
+      final damagedResponse = await ApiService.getDamagedItems();
 
-        setState(() {
-          _inventoryItems = items;
-          _lowStockItems = items
-              .where((item) => item.isLowStock && item.currentStock > 0)
-              .toList();
-          _outOfStockItems =
-              items.where((item) => item.currentStock <= 0).toList();
-          _isLoading = false;
+      final items = (response['data'] as List?)
+              ?.map((item) => InventoryItem.fromJson(item))
+              .toList() ??
+          [];
+      final damagedItems = (damagedResponse['data'] as List?)
+              ?.cast<Map<String, dynamic>>()
+              .toList() ??
+          [];
+
+      if (!mounted) return;
+      setState(() {
+        _inventoryItems = items;
+        _lowStockItems = items
+            .where((item) => item.isLowStock && item.currentStock > 0)
+            .toList();
+        _outOfStockItems = items.where((item) => item.currentStock <= 0).toList();
+        _damagedItemCount = damagedItems.length;
+        _damagedTotalCost = damagedItems.fold(0.0, (sum, item) {
+          final total = (item['totalCost'] ?? 0).toDouble();
+          return sum + total;
         });
-      }
+        _isLoading = false;
+      });
     } catch (e) {
+      if (!mounted) return;
       setState(() => _isLoading = false);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error loading inventory: $e')),
-        );
-      }
+      ErrorMessageHelper.showSnackBar(
+        context,
+        e,
+        operationContext: 'inventory',
+        onAction: _loadInventory,
+        actionLabel: 'Retry',
+      );
     }
+  }
+
+  // Optimistic update helpers
+  void _removeInventoryItemFromLocal(String id) {
+    setState(() {
+      _inventoryItems = _inventoryItems.where((i) => i.id != id).toList();
+      _lowStockItems = _lowStockItems.where((i) => i.id != id).toList();
+      _outOfStockItems = _outOfStockItems.where((i) => i.id != id).toList();
+    });
+  }
+
+  void _addInventoryItemToLocal(InventoryItem item) {
+    setState(() {
+      _inventoryItems = [item, ..._inventoryItems];
+      if (item.isLowStock && item.currentStock > 0) {
+        _lowStockItems = [item, ..._lowStockItems];
+      } else if (item.currentStock <= 0) {
+        _outOfStockItems = [item, ..._outOfStockItems];
+      }
+    });
+  }
+
+  void _updateInventoryItemInLocal(String id, InventoryItem updatedItem) {
+    setState(() {
+      _inventoryItems =
+          _inventoryItems.map((i) => i.id == id ? updatedItem : i).toList();
+      _lowStockItems = _inventoryItems
+          .where((item) => item.isLowStock && item.currentStock > 0)
+          .toList();
+      _outOfStockItems =
+          _inventoryItems.where((item) => item.currentStock <= 0).toList();
+    });
   }
 
   List<InventoryItem> get _filteredItems {
@@ -916,7 +968,7 @@ class InventoryScreenState extends State<InventoryScreen> {
             )
           : null,
       body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
+          ? const SkeletonInventory()
           : _showCategoryGrid
               ? _buildCategoryGrid(context)
               : _buildCategoryItemsList(context),
@@ -966,7 +1018,7 @@ class InventoryScreenState extends State<InventoryScreen> {
     return RefreshIndicator(
       onRefresh: _loadInventory,
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.fromLTRB(0, 16, 16, 16),
         child: LayoutBuilder(
           builder: (context, constraints) {
             final width = constraints.maxWidth;
@@ -1023,31 +1075,49 @@ class InventoryScreenState extends State<InventoryScreen> {
               },
             );
 
+            final damagedCard = _StockStatusCard(
+              title: 'Damaged Items',
+              itemCount: _damagedItemCount,
+              icon: Icons.report_problem_outlined,
+              accent: Colors.deepOrange.shade700,
+              onTap: _openDamagedItemsScreen,
+            );
+
             return CustomScrollView(
               physics: const AlwaysScrollableScrollPhysics(),
               slivers: [
                 SliverToBoxAdapter(
                   child: Padding(
                     padding: const EdgeInsets.only(bottom: 12),
-                    child: crossAxisCount == 1
-                        ? Column(
-                            children: [
-                              allInventoryCard,
-                              const SizedBox(height: 12),
-                              lowStockCard,
-                              const SizedBox(height: 12),
-                              outCard,
-                            ],
-                          )
-                        : Row(
-                            children: [
-                              Expanded(child: allInventoryCard),
-                              const SizedBox(width: 12),
-                              Expanded(child: lowStockCard),
-                              const SizedBox(width: 12),
-                              Expanded(child: outCard),
-                            ],
-                          ),
+                    child: Column(
+                      children: [
+                        crossAxisCount == 1
+                            ? Column(
+                                children: [
+                                  allInventoryCard,
+                                  const SizedBox(height: 12),
+                                  lowStockCard,
+                                  const SizedBox(height: 12),
+                                  outCard,
+                                  const SizedBox(height: 12),
+                                  damagedCard,
+                                ],
+                              )
+                            : Row(
+                                children: [
+                                  Expanded(child: allInventoryCard),
+                                  const SizedBox(width: 12),
+                                  Expanded(child: lowStockCard),
+                                  const SizedBox(width: 12),
+                                  Expanded(child: outCard),
+                                  const SizedBox(width: 12),
+                                  Expanded(child: damagedCard),
+                                ],
+                              ),
+                        const SizedBox(height: 16),
+                        Divider(color: Colors.grey.shade300),
+                      ],
+                    ),
                   ),
                 ),
                 if (crossAxisCount == 1)
@@ -1181,6 +1251,19 @@ class InventoryScreenState extends State<InventoryScreen> {
             ],
           ),
         ),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              'Showing ${_filteredItems.length} ${_filteredItems.length == 1 ? 'item' : 'items'}',
+              style: TextStyle(
+                color: Colors.grey.shade700,
+                fontSize: 14,
+              ),
+            ),
+          ),
+        ),
         Expanded(
           child: _filteredItems.isEmpty
               ? _buildCategoryEmptyState(context)
@@ -1263,35 +1346,48 @@ class InventoryScreenState extends State<InventoryScreen> {
     );
   }
 
-  void _showAddItemDialog() {
-    showDialog(
+  Future<void> _showAddItemDialog() async {
+    final result = await showDialog<InventoryItem?>(
       context: context,
       builder: (context) => _AddItemDialog(
         initialCategory: _showCategoryGrid ? null : _selectedCategory,
-        onItemAdded: _loadInventory,
       ),
     );
+
+    // Optimistic update - add to local list without full refresh
+    if (result != null) {
+      _addInventoryItemToLocal(result);
+    }
   }
 
-  void _showEditItemDialog(InventoryItem item) {
-    showDialog(
+  Future<void> _showEditItemDialog(InventoryItem item) async {
+    final result = await showDialog<InventoryItem?>(
       context: context,
       builder: (context) => _EditItemDialog(
         item: item,
-        onItemUpdated: _loadInventory,
       ),
     );
+
+    // Optimistic update - update local list without full refresh
+    if (result != null) {
+      _updateInventoryItemInLocal(result.id, result);
+    }
   }
 
-  void _showUpdateStockDialog(InventoryItem item) {
-    showDialog(
+  Future<void> _showUpdateStockDialog(InventoryItem item) async {
+    final result = await showDialog<InventoryItem?>(
       context: context,
       builder: (context) => _UpdateStockDialog(
         item: item,
-        onStockUpdated: _loadInventory,
       ),
     );
+
+    // Optimistic update - update local list without full refresh
+    if (result != null) {
+      _updateInventoryItemInLocal(result.id, result);
+    }
   }
+
 
   void _showLowStockDialog() {
     showDialog(
@@ -1327,6 +1423,14 @@ class InventoryScreenState extends State<InventoryScreen> {
             child: const Text('Close'),
           ),
         ],
+      ),
+    );
+  }
+
+  void _openDamagedItemsScreen() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) => const DamagedItemsScreen(),
       ),
     );
   }
@@ -1655,12 +1759,10 @@ class _HoverableStockInfoCardState extends State<_HoverableStockInfoCard> {
 }
 
 class _AddItemDialog extends StatefulWidget {
-  final VoidCallback onItemAdded;
   final String? initialCategory;
 
   const _AddItemDialog({
     Key? key,
-    required this.onItemAdded,
     this.initialCategory,
   }) : super(key: key);
 
@@ -1929,7 +2031,7 @@ class _AddItemDialogState extends State<_AddItemDialog> {
     setState(() => _isLoading = true);
 
     try {
-      await ApiService.createInventoryItem(
+      final result = await ApiService.createInventoryItem(
         name: _nameController.text.trim(),
         category: _categoryController.text.trim(),
         currentStock: double.tryParse(_currentStockController.text.trim()) ?? 0,
@@ -1941,8 +2043,9 @@ class _AddItemDialogState extends State<_AddItemDialog> {
       );
 
       if (mounted) {
-        Navigator.of(context).pop();
-        widget.onItemAdded();
+        final newItem =
+            InventoryItem.fromJson(result['data'] as Map<String, dynamic>);
+        Navigator.of(context).pop(newItem);
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Inventory item added successfully')),
         );
@@ -1973,12 +2076,10 @@ class _AddItemDialogState extends State<_AddItemDialog> {
 
 class _EditItemDialog extends StatefulWidget {
   final InventoryItem item;
-  final VoidCallback onItemUpdated;
 
   const _EditItemDialog({
     Key? key,
     required this.item,
-    required this.onItemUpdated,
   }) : super(key: key);
 
   @override
@@ -2137,8 +2238,18 @@ class _EditItemDialogState extends State<_EditItemDialog> {
       );
 
       if (mounted) {
-        Navigator.of(context).pop();
-        widget.onItemUpdated();
+        // Optimistic update - return updated item
+        final updatedItem = widget.item.copyWith(
+          name: _nameController.text,
+          category: _categoryController.text,
+          minStock: double.parse(_minStockController.text),
+          unitCost: double.parse(_unitCostController.text),
+          sellingPrice: _sellingPriceController.text.trim().isEmpty
+              ? 0
+              : (double.tryParse(_sellingPriceController.text.trim()) ?? 0),
+          supplier: _supplierController.text,
+        );
+        Navigator.of(context).pop(updatedItem);
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Inventory item updated successfully')),
         );
@@ -2168,12 +2279,10 @@ class _EditItemDialogState extends State<_EditItemDialog> {
 
 class _UpdateStockDialog extends StatefulWidget {
   final InventoryItem item;
-  final VoidCallback onStockUpdated;
 
   const _UpdateStockDialog({
     Key? key,
     required this.item,
-    required this.onStockUpdated,
   }) : super(key: key);
 
   @override
@@ -2218,16 +2327,52 @@ class _UpdateStockDialogState extends State<_UpdateStockDialog> {
               groupValue: _operation,
               onChanged: (value) => setState(() => _operation = value!),
             ),
+            RadioListTile<String>(
+              title: const Text('Mark Damaged'),
+              value: 'damage',
+              groupValue: _operation,
+              onChanged: (value) => setState(() => _operation = value!),
+            ),
             const SizedBox(height: 16),
             TextFormField(
               controller: _quantityController,
               decoration: InputDecoration(
-                labelText: _operation == 'set' ? 'New Stock' : 'Quantity',
+                labelText: _operation == 'set'
+                    ? 'New Stock (${widget.item.unit})'
+                    : _operation == 'damage'
+                        ? 'Damaged Quantity (${widget.item.unit})'
+                        : 'Quantity (${widget.item.unit})',
                 border: const OutlineInputBorder(),
               ),
-              keyboardType: TextInputType.number,
-              validator: (value) => value?.isEmpty ?? true ? 'Required' : null,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              inputFormatters: [
+                FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d*$')),
+              ],
+              validator: (value) {
+                final text = value?.trim() ?? '';
+                if (text.isEmpty) {
+                  return 'Required';
+                }
+                final quantity = double.tryParse(text);
+                if (quantity == null || quantity <= 0) {
+                  return 'Enter a valid quantity';
+                }
+                if ((_operation == 'subtract' || _operation == 'damage') && quantity > widget.item.currentStock) {
+                  return 'Cannot exceed current stock';
+                }
+                return null;
+              },
             ),
+            if (_operation == 'subtract' || _operation == 'damage') ...[
+              const SizedBox(height: 8),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  'Maximum: ${widget.item.currentStock}${widget.item.unit}',
+                  style: TextStyle(color: Colors.grey.shade600, fontSize: 13),
+                ),
+              ),
+            ],
           ],
         ),
       ),
@@ -2240,7 +2385,7 @@ class _UpdateStockDialogState extends State<_UpdateStockDialog> {
           onPressed: _isLoading ? null : _updateStock,
           child: _isLoading
               ? const CircularProgressIndicator()
-              : const Text('Update Stock'),
+              : Text(_operation == 'damage' ? 'Mark Damaged' : 'Update Stock'),
         ),
       ],
     );
@@ -2252,17 +2397,55 @@ class _UpdateStockDialogState extends State<_UpdateStockDialog> {
     setState(() => _isLoading = true);
 
     try {
-      await ApiService.updateInventoryStock(
-        widget.item.id,
-        quantity: double.parse(_quantityController.text),
-        operation: _operation,
-      );
+      final quantity = double.parse(_quantityController.text);
+      final currentStock = widget.item.currentStock;
+      double newStock;
+
+      if (_operation == 'damage') {
+        await ApiService.markInventoryDamaged(
+          widget.item.id,
+          quantity: quantity,
+          reason: 'Marked damaged from stock dialog',
+        );
+        newStock = currentStock - quantity;
+      } else {
+        switch (_operation) {
+          case 'add':
+            newStock = currentStock + quantity;
+            break;
+          case 'subtract':
+            newStock = currentStock - quantity;
+            break;
+          case 'set':
+          default:
+            newStock = quantity;
+        }
+
+        await ApiService.updateInventoryStock(
+          widget.item.id,
+          quantity: quantity,
+          operation: _operation,
+        );
+      }
 
       if (mounted) {
-        Navigator.of(context).pop();
-        widget.onStockUpdated();
+        // Optimistic update - return item with updated stock
+        final updatedItem = widget.item.copyWith(
+          currentStock: newStock,
+          badStockQuantity: _operation == 'damage'
+              ? widget.item.badStockQuantity + quantity
+              : widget.item.badStockQuantity,
+          isBadStock: _operation == 'damage' || widget.item.isBadStock,
+        );
+        Navigator.of(context).pop(updatedItem);
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Stock updated successfully')),
+          SnackBar(
+            content: Text(
+              _operation == 'damage'
+                  ? 'Marked $quantity${widget.item.unit} as damaged'
+                  : 'Stock updated successfully',
+            ),
+          ),
         );
       }
     } catch (e) {

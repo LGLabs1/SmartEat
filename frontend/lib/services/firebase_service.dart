@@ -4,6 +4,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/foundation.dart';
 import 'dart:async';
 import 'dart:math';
+import 'notification_service.dart';
 
 class FirebaseService {
   static final FirebaseFirestore _firestore = FirebaseFirestore.instance;
@@ -61,6 +62,7 @@ class FirebaseService {
   static const String ordersCollection = 'orders';
   static const String inventoryCollection = 'inventory';
   static const String inventoryUsageCollection = 'inventory_usage';
+  static const String damagedItemsCollection = 'damaged_items';
   static const String analyticsCollection = 'analytics';
   static const String recipesCollection = 'recipes';
   static const String expensesCollection = 'expenses';
@@ -126,6 +128,71 @@ class FirebaseService {
       };
     } catch (e) {
       throw Exception('Failed to create expense: $e');
+    }
+  }
+
+  // Damaged items
+  static Future<Map<String, dynamic>> createDamagedItem(
+    String inventoryItemId,
+    double quantity,
+    String reason,
+  ) async {
+    try {
+      final eateryId = await _requireCurrentEateryId();
+
+      final inventoryRef = _eaterySubcollection(eateryId, inventoryCollection).doc(inventoryItemId);
+      final inventorySnap = await inventoryRef.get();
+      if (!inventorySnap.exists) throw Exception('Inventory item not found');
+      final data = inventorySnap.data() as Map<String, dynamic>;
+      final currentStock = (data['currentStock'] ?? 0).toDouble();
+      final unitCost = (data['unitCost'] ?? 0).toDouble();
+      final unit = (data['unit'] ?? '').toString();
+      final name = (data['name'] ?? '').toString();
+
+      if (quantity <= 0) throw Exception('Quantity must be greater than zero');
+      if (currentStock < quantity) throw Exception('Not enough stock');
+
+      // Batch: decrement inventory and add damaged record
+      final batch = _firestore.batch();
+      batch.update(inventoryRef, {
+        'currentStock': currentStock - quantity,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+
+      final damagedRef = _eaterySubcollection(eateryId, damagedItemsCollection).doc();
+      final totalCost = double.parse((unitCost * quantity).toStringAsFixed(2));
+      batch.set(damagedRef, {
+        'inventoryItemId': inventoryItemId,
+        'name': name,
+        'quantity': quantity,
+        'unit': unit,
+        'unitCost': unitCost,
+        'totalCost': totalCost,
+        'reason': reason,
+        'eateryId': eateryId,
+        'recordedBy': _auth.currentUser?.uid ?? '',
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+
+      await _withRetry(() => batch.commit());
+
+      final damagedSnap = await damagedRef.get();
+      return {'id': damagedRef.id, ...?damagedSnap.data()};
+    } catch (e) {
+      throw Exception('Failed to create damaged item: $e');
+    }
+  }
+
+  static Future<List<Map<String, dynamic>>> getDamagedItems() async {
+    try {
+      final eateryId = await _requireCurrentEateryId();
+      final snapshot = await _withRetry(() =>
+          _eaterySubcollection(eateryId, damagedItemsCollection)
+              .orderBy('createdAt', descending: true)
+              .get());
+      return snapshot.docs.map((d) => {'id': d.id, ...d.data()!}).toList();
+    } catch (e) {
+      throw Exception('Failed to fetch damaged items: $e');
     }
   }
 
@@ -368,21 +435,31 @@ class FirebaseService {
   // Get current user
   static User? getCurrentUser() => _auth.currentUser;
 
-  static Future<String> _requireCurrentEateryId() async {
+  static Future<String?> getCurrentEateryId() => _getCurrentEateryId();
+
+  static Future<String?> _getCurrentEateryId() async {
     final uid = _auth.currentUser?.uid;
     if (uid == null || uid.isEmpty) {
-      throw Exception('Not authenticated');
+      return null;
     }
 
     final docSnapshot =
         await _firestore.collection(usersCollection).doc(uid).get();
     if (!docSnapshot.exists) {
-      throw Exception('User profile not found');
+      return null;
     }
 
     final data = docSnapshot.data();
     final eateryId = (data?['eateryId'] ?? '').toString().trim();
     if (eateryId.isEmpty) {
+      return null;
+    }
+    return eateryId;
+  }
+
+  static Future<String> _requireCurrentEateryId() async {
+    final eateryId = await _getCurrentEateryId();
+    if (eateryId == null || eateryId.isEmpty) {
       throw Exception('Eatery is not set for this account');
     }
     return eateryId;
@@ -417,6 +494,22 @@ class FirebaseService {
     }
   }
 
+  static Future<void> _requireStaffOrAdmin() async {
+    final profile = await _requireCurrentUserProfile();
+    final role = (profile['role'] ?? '').toString().trim().toLowerCase();
+    final dynamic isAdminRaw = profile['isAdmin'];
+    final bool isAdminFlag = isAdminRaw == true ||
+        isAdminRaw == 1 ||
+        (isAdminRaw is String && isAdminRaw.toLowerCase().trim() == 'true');
+    final isAdmin = isAdminFlag || role == 'admin';
+    final isStaff = role == 'staff';
+    final bool approved = profile['approved'] != false;
+
+    if (!isAdmin && !(isStaff && approved)) {
+      throw Exception('Access denied');
+    }
+  }
+
   static String _norm(String input) {
     return input
         .toLowerCase()
@@ -427,14 +520,9 @@ class FirebaseService {
 
   // Aggressive error extraction for Flutter web boxed errors
   static String _extractErrorDetails(dynamic e) {
-    // Debug: log what we received
-    print('DEBUG: Error type: ${e.runtimeType}');
-    print('DEBUG: Error toString: $e');
-
     if (e is FirebaseException) {
       final code = (e.code).toString().trim();
       final msg = (e.message ?? '').toString().trim();
-      print('DEBUG: Is FirebaseException - code: $code, message: $msg');
       return msg.isEmpty
           ? 'Firebase error: $code'
           : 'Firebase error: $code — $msg';
@@ -443,8 +531,6 @@ class FirebaseService {
     // Handle the specific Flutter web boxed error case
     final errorString = e.toString();
     if (errorString.contains('Dart exception thrown from converted Future')) {
-      print('DEBUG: Detected converted Future error, attempting safe unwrap');
-
       // Try to extract nested error using safe property access
       dynamic nestedError;
       try {
@@ -460,7 +546,6 @@ class FirebaseService {
       }
 
       if (nestedError != null) {
-        print('DEBUG: Found nested error: ${nestedError.runtimeType}');
         // Recursively extract from nested error
         final nestedStr = _extractErrorDetails(nestedError);
         if (nestedStr.isNotEmpty &&
@@ -499,13 +584,9 @@ class FirebaseService {
 
     dynamic current = e;
     for (int i = 0; i < 5; i++) {
-      print('DEBUG: Unwrapping level $i - type: ${current.runtimeType}');
-
       if (current is FirebaseException) {
         final code = (current.code).toString().trim();
         final msg = (current.message ?? '').toString().trim();
-        print(
-            'DEBUG: Found FirebaseException at level $i - code: $code, message: $msg');
         return msg.isEmpty
             ? 'Firebase error: $code'
             : 'Firebase error: $code — $msg';
@@ -528,9 +609,6 @@ class FirebaseService {
         codeObj = (current as dynamic).code;
       } catch (_) {}
 
-      print(
-          'DEBUG: Raw props - error: $errorObj (${errorObj?.runtimeType}), message: $messageObj, code: $codeObj');
-
       // If we have a nested error object, try to extract from it
       if (errorObj != null) {
         // If the wrapper error is the generic converted-future message,
@@ -551,7 +629,6 @@ class FirebaseService {
         String errorStr;
         try {
           errorStr = errorObj.toString();
-          print('DEBUG: error.toString(): $errorStr');
         } catch (_) {
           errorStr = '';
         }
@@ -560,16 +637,14 @@ class FirebaseService {
         if (errorStr.isNotEmpty &&
             !errorStr.contains('Dart exception thrown from converted Future') &&
             !errorStr.contains('[object Object]')) {
-          print('DEBUG: Using error.toString(): $errorStr');
           return errorStr;
         }
 
         // Try to get nested error properties
-        dynamic nestedError;
         dynamic nestedMessage;
         dynamic nestedCode;
         try {
-          nestedError = (errorObj as dynamic).error;
+          (errorObj as dynamic).error;
         } catch (_) {}
 
         try {
@@ -579,9 +654,6 @@ class FirebaseService {
         try {
           nestedCode = (errorObj as dynamic).code;
         } catch (_) {}
-
-        print(
-            'DEBUG: Nested props - error: $nestedError, message: $nestedMessage, code: $nestedCode');
 
         if (nestedMessage != null) {
           final msg = nestedMessage.toString();
@@ -614,8 +686,6 @@ class FirebaseService {
 
       break;
     }
-
-    print('DEBUG: Returning fallback: ${current.toString()}');
     return current.toString();
   }
 
@@ -688,6 +758,44 @@ class FirebaseService {
     } catch (e) {
       throw Exception('Failed to fetch menu items: $e');
     }
+  }
+
+  static Stream<List<Map<String, dynamic>>> getMenuItemsStream() async* {
+    final eateryId = await _getCurrentEateryId();
+    if (eateryId == null || eateryId.isEmpty) {
+      throw Exception('No eatery selected');
+    }
+
+    yield* _eaterySubcollection(eateryId, menuCollection)
+        .snapshots()
+        .map((snapshot) {
+      final items = snapshot.docs.map((doc) {
+        final Map<String, dynamic> result = {'id': doc.id};
+        result.addAll(doc.data());
+        return result;
+      }).toList();
+
+      items.sort((a, b) {
+        final aCreated = a['createdAt'];
+        final bCreated = b['createdAt'];
+        final aDate = aCreated is Timestamp
+            ? aCreated.toDate()
+            : aCreated is DateTime
+                ? aCreated
+                : DateTime.tryParse(aCreated?.toString() ?? '');
+        final bDate = bCreated is Timestamp
+            ? bCreated.toDate()
+            : bCreated is DateTime
+                ? bCreated
+                : DateTime.tryParse(bCreated?.toString() ?? '');
+        if (aDate == null && bDate == null) return 0;
+        if (aDate == null) return 1;
+        if (bDate == null) return -1;
+        return bDate.compareTo(aDate);
+      });
+
+      return items;
+    });
   }
 
   static Future<Map<String, dynamic>> createMenuItem(
@@ -773,31 +881,229 @@ class FirebaseService {
       final eateryId = await _requireCurrentEateryId();
       final ordersRef = _eaterySubcollection(eateryId, ordersCollection);
 
-      final DocumentReference<Map<String, dynamic>> docRef;
-      if (orderId != null && orderId.trim().isNotEmpty) {
-        // Use the provided order ID
-        docRef = ordersRef.doc(orderId.trim());
-        await docRef.set({
-          ...orderData,
-          'eateryId': eateryId,
-          'createdAt': FieldValue.serverTimestamp(),
-          'status': 'pending',
-        });
-      } else {
-        // Auto-generate ID
-        docRef = await ordersRef.add({
-          ...orderData,
-          'eateryId': eateryId,
-          'createdAt': FieldValue.serverTimestamp(),
-          'status': 'pending',
-        });
+      // Get items from orderData
+      final items = (orderData['items'] as List?)?.cast<dynamic>() ?? const [];
+      final totalAmount = (orderData['totalAmount'] as num?)?.toDouble() ?? 0.0;
+
+      // Get current user info for createdBy (before transaction)
+      final currentUser = _auth.currentUser;
+      final createdByUid = currentUser?.uid ?? '';
+      final userProfile = await _requireCurrentUserProfile();
+      final createdByName = (userProfile['name'] ??
+              userProfile['displayName'] ??
+              currentUser?.displayName ??
+              'Unknown')
+          .toString();
+
+      // Use transaction to create order and deduct stock atomically
+      // Collect low stock items during transaction and return them
+      final transactionResult = await _firestore.runTransaction((tx) async {
+        final lowStockItemsTx = <Map<String, dynamic>>[];
+
+        // Aggregate quantities per menu item (prevents double-updates and fixes multi-item transactions)
+        final qtyByMenuId = <String, int>{};
+        for (final raw in items) {
+          final it = raw as Map?;
+          final menuItemId = (it?['menuItemId'] ?? '').toString().trim();
+          final qtyNum = it?['quantity'];
+          final quantity = qtyNum is num
+              ? qtyNum.toInt()
+              : int.tryParse(qtyNum?.toString() ?? '') ?? 0;
+          if (menuItemId.isEmpty || quantity <= 0) continue;
+          qtyByMenuId[menuItemId] = (qtyByMenuId[menuItemId] ?? 0) + quantity;
+        }
+
+        // Aggregate quantities per inventory item (some menu items may share the same inventory)
+        final qtyByInvId = <String, int>{};
+
+        for (final entry in qtyByMenuId.entries) {
+          final menuItemId = entry.key;
+          final quantity = entry.value;
+
+          final menuRef =
+              _eaterySubcollection(eateryId, menuCollection).doc(menuItemId);
+          final menuSnap = await tx.get(menuRef);
+
+          if (!menuSnap.exists) {
+            throw FirebaseException(
+              plugin: 'cloud_firestore',
+              code: 'not-found',
+              message: 'Menu item not found (id: $menuItemId).',
+            );
+          }
+
+          final menu = menuSnap.data() ?? {};
+          final inventoryItemId =
+              (menu['inventoryItemId'] ?? '').toString().trim();
+          final isInventoryLinked = inventoryItemId.isNotEmpty;
+
+          // Non-inventory items are unlimited - no stock deduction needed
+          // For inventory-linked items, accumulate for inventory deduction only
+          // (skip menu item availableServings - it's no longer used for stock tracking)
+          if (isInventoryLinked) {
+            qtyByInvId[inventoryItemId] =
+                (qtyByInvId[inventoryItemId] ?? 0) + quantity;
+          }
+        }
+
+        // IMPORTANT: Firestore transactions require that all reads happen before any writes.
+        // So we pre-read all inventory docs, compute next stock, then apply updates.
+        final invRefById = <String, DocumentReference<Map<String, dynamic>>>{};
+        for (final inventoryItemId in qtyByInvId.keys) {
+          invRefById[inventoryItemId] =
+              _eaterySubcollection(eateryId, inventoryCollection)
+                  .doc(inventoryItemId);
+        }
+
+        final invSnaps = invRefById.isNotEmpty
+            ? await Future.wait(invRefById.values.map((ref) => tx.get(ref)))
+            : const <DocumentSnapshot<Map<String, dynamic>>>[];
+        final invSnapByPath =
+            <String, DocumentSnapshot<Map<String, dynamic>>>{};
+        for (final snap in invSnaps) {
+          invSnapByPath[snap.reference.path] = snap;
+        }
+
+        final nextStockById = <String, double>{};
+        final invDataById = <String, Map<String, dynamic>>{};
+
+        // Read phase
+        for (final entry in qtyByInvId.entries) {
+          final inventoryItemId = entry.key;
+          final quantity = entry.value;
+
+          final invRef = invRefById[inventoryItemId]!;
+          final invSnap = invSnapByPath[invRef.path];
+          if (invSnap == null || !invSnap.exists) {
+            continue;
+          }
+
+          final inv = invSnap.data() ?? <String, dynamic>{};
+          invDataById[inventoryItemId] = inv;
+
+          final curStock = inv['currentStock'];
+          if (curStock == null) {
+            throw FirebaseException(
+              plugin: 'cloud_firestore',
+              code: 'failed-precondition',
+              message:
+                  'Inventory item ${(inv['name'] ?? 'Unknown').toString()} has no currentStock set (id: $inventoryItemId).',
+            );
+          }
+
+          final currentStock = curStock is num
+              ? curStock.toDouble()
+              : double.tryParse(curStock.toString()) ?? 0.0;
+          final nextStock = currentStock - quantity;
+          if (nextStock < 0) {
+            throw FirebaseException(
+              plugin: 'cloud_firestore',
+              code: 'failed-precondition',
+              message:
+                  'Insufficient inventory stock for ${(inv['name'] ?? 'item').toString()} (need $quantity, available $currentStock).',
+            );
+          }
+          nextStockById[inventoryItemId] = nextStock;
+        }
+
+        // Write phase
+        for (final entry in nextStockById.entries) {
+          final inventoryItemId = entry.key;
+          final nextStock = entry.value;
+
+          final invRef = invRefById[inventoryItemId]!;
+          tx.update(invRef, {
+            'currentStock': nextStock,
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
+
+          final inv = invDataById[inventoryItemId] ?? <String, dynamic>{};
+          final minInvStock = inv['minStock'];
+          final minInventoryStock = minInvStock is num
+              ? minInvStock.toDouble()
+              : double.tryParse(minInvStock?.toString() ?? '') ?? 5.0;
+          if (nextStock <= minInventoryStock) {
+            lowStockItemsTx.add({
+              'name': inv['name'] ?? 'Unknown',
+              'currentStock': nextStock,
+              'minStock': minInventoryStock,
+              'isInventory': true,
+            });
+          }
+        }
+
+        // Create the order inside the same transaction
+        final DocumentReference<Map<String, dynamic>> docRef;
+        if (orderId != null && orderId.trim().isNotEmpty) {
+          docRef = ordersRef.doc(orderId.trim());
+          tx.set(docRef, {
+            ...orderData,
+            'eateryId': eateryId,
+            'createdAt': FieldValue.serverTimestamp(),
+            'status': 'pending',
+            'createdBy': createdByUid,
+            'createdByName': createdByName,
+          });
+        } else {
+          docRef = ordersRef.doc();
+          tx.set(docRef, {
+            ...orderData,
+            'eateryId': eateryId,
+            'createdAt': FieldValue.serverTimestamp(),
+            'status': 'pending',
+            'createdBy': createdByUid,
+            'createdByName': createdByName,
+          });
+        }
+
+        // Return both the docRef and low stock items
+        return {'docRef': docRef, 'lowStockItems': lowStockItemsTx};
+      });
+
+      final result = transactionResult['docRef'] as DocumentReference;
+      final lowStockItems =
+          (transactionResult['lowStockItems'] as List?)?.map((e) {
+                return Map<String, dynamic>.from(e as Map);
+              }).toList() ??
+              <Map<String, dynamic>>[];
+
+      final docSnapshot = await result.get();
+      final docData = Map<String, dynamic>.from(
+          (docSnapshot.data() as Map?) ?? <String, dynamic>{});
+      final orderResult = {
+        'id': result.id,
+        ...docData,
+      };
+
+      // Show low stock notifications after successful transaction (don't fail order if notifications fail)
+      try {
+        for (final lowStock in lowStockItems) {
+          await NotificationService().showLowStockNotification(
+            itemName: lowStock['name'] as String,
+            currentStock: lowStock['currentStock'] as double,
+            minStock: lowStock['minStock'] as double,
+          );
+        }
+      } catch (_) {
+        // Notifications are not critical
       }
 
-      final docSnapshot = await docRef.get();
-      return {
-        'id': docRef.id,
-        ...docSnapshot.data()!,
-      };
+      // Show order created notification (don't fail order if notification fails)
+      try {
+        await NotificationService().showOrderCreatedNotification(
+          orderId: result.id,
+          creatorName: createdByName,
+          total: totalAmount,
+          itemCount: items.length,
+        );
+      } catch (_) {
+        // Notifications are not critical
+      }
+
+      return orderResult;
+    } on FirebaseException catch (e) {
+      final msg = _extractErrorDetails(e);
+      throw Exception(msg.isEmpty ? 'Failed to create order: ${e.code}' : msg);
     } catch (e) {
       throw Exception('Failed to create order: $e');
     }
@@ -1017,7 +1323,7 @@ class FirebaseService {
   static Future<Map<String, dynamic>> completeOrder(String orderId) async {
     String eateryId = '';
     try {
-      await _requireAdmin();
+      await _requireStaffOrAdmin();
       eateryId = await _requireCurrentEateryId();
 
       final invQuery = _firestore
@@ -1055,6 +1361,40 @@ class FirebaseService {
           }
           if (status == 'rejected') {
             return {'ok': true, 'status': 'rejected'};
+          }
+
+          // Check if this is an incomplete order (created before today)
+          // For incomplete orders, skip inventory deduction as stock was already accounted for
+          final createdAt = order['createdAt'];
+          final now = DateTime.now();
+          final today = DateTime(now.year, now.month, now.day);
+          bool isIncompleteOrder = false;
+          if (createdAt != null) {
+            DateTime createdDate;
+            if (createdAt is Timestamp) {
+              createdDate = createdAt.toDate();
+            } else if (createdAt is String) {
+              createdDate = DateTime.tryParse(createdAt) ?? now;
+            } else {
+              createdDate = now;
+            }
+            final createdDay =
+                DateTime(createdDate.year, createdDate.month, createdDate.day);
+            isIncompleteOrder = createdDay.isBefore(today);
+          }
+
+          // For incomplete orders (created before today), skip inventory deduction
+          // and just mark the order as completed
+          if (isIncompleteOrder) {
+            tx.set(
+                orderRef,
+                {
+                  'status': 'completed',
+                  'completedAt': FieldValue.serverTimestamp(),
+                  'updatedAt': FieldValue.serverTimestamp(),
+                },
+                SetOptions(merge: true));
+            return {'ok': true, 'status': 'completed'};
           }
 
           final items = (order['items'] as List?)?.cast<dynamic>() ?? const [];
@@ -1242,10 +1582,8 @@ class FirebaseService {
             }
             final invData = (invSnap.data() as Map<String, dynamic>?) ??
                 <String, dynamic>{};
-            final invEateryId = (invData['eateryId'] ?? '').toString().trim();
-            if (invEateryId.isEmpty || invEateryId != eateryId) {
-              throw Exception('Access denied');
-            }
+            // Note: Security is handled by Firestore rules (path-based eatery access)
+            // We no longer require eateryId field on inventory documents
             final currentStockRaw = invData['currentStock'];
             final currentStock = currentStockRaw is num
                 ? currentStockRaw.toDouble()
@@ -1293,21 +1631,12 @@ class FirebaseService {
             nextStockByInvRef[invRef] = next;
           }
 
+          // Non-inventory items are unlimited - skip servings check and don't deduct
           for (final r in menuNoInvAdjustments) {
-            final menu = r['menu'] as Map<String, dynamic>;
-            final quantity = r['quantity'] as int;
             final menuRef = r['menuRef'] as DocumentReference;
-            final curRaw = menu['availableServings'];
-            final currentServings = curRaw is num
-                ? curRaw.toInt()
-                : int.tryParse(curRaw?.toString() ?? '') ?? 0;
-            if (currentServings < quantity) {
-              throw Exception('Insufficient available servings');
-            }
-            final next = currentServings - quantity;
+            // Mark menu item as still available (unlimited servings)
             tx.update(menuRef, {
-              'availableServings': next,
-              'isAvailable': next > 0,
+              'isAvailable': true,
               'updatedAt': FieldValue.serverTimestamp(),
             });
           }
@@ -1369,7 +1698,7 @@ class FirebaseService {
     } on FirebaseException catch (e) {
       final msg = _extractErrorDetails(e);
       try {
-        await _requireAdmin();
+        await _requireStaffOrAdmin();
         if (eateryId.trim().isEmpty) {
           eateryId = await _requireCurrentEateryId();
         }
@@ -1384,7 +1713,7 @@ class FirebaseService {
     } catch (e) {
       final msg = _extractErrorDetails(e);
       try {
-        await _requireAdmin();
+        await _requireStaffOrAdmin();
         if (eateryId.trim().isEmpty) {
           eateryId = await _requireCurrentEateryId();
         }
@@ -1425,7 +1754,7 @@ class FirebaseService {
     String reason = '',
   }) async {
     try {
-      await _requireAdmin();
+      await _requireStaffOrAdmin();
       final eateryId = await _requireCurrentEateryId();
       final orderRef =
           _eaterySubcollection(eateryId, ordersCollection).doc(orderId);
@@ -1440,16 +1769,224 @@ class FirebaseService {
         throw Exception('Only pending orders can be voided');
       }
 
+      final items = (data['items'] as List?)?.cast<dynamic>() ?? const [];
       final uid = _auth.currentUser?.uid ?? '';
-      await orderRef.set({
-        'status': 'voided',
-        'voidReason': reason.trim(),
-        'voidedAt': FieldValue.serverTimestamp(),
-        'voidedBy': uid,
-        'updatedAt': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
+
+      // Use transaction to void order and restore stock atomically
+      await _firestore.runTransaction((tx) async {
+        // Restore stock for all items
+        for (final raw in items) {
+          final it = raw as Map?;
+          final menuItemId = (it?['menuItemId'] ?? '').toString().trim();
+          final qtyNum = it?['quantity'];
+          final quantity = qtyNum is num
+              ? qtyNum.toInt()
+              : int.tryParse(qtyNum?.toString() ?? '') ?? 0;
+
+          if (menuItemId.isEmpty || quantity <= 0) continue;
+
+          final menuRef =
+              _eaterySubcollection(eateryId, menuCollection).doc(menuItemId);
+          final menuSnap = await tx.get(menuRef);
+
+          if (menuSnap.exists) {
+            final menu = menuSnap.data() ?? {};
+            final curServings = menu['availableServings'];
+            final currentServings = curServings is num
+                ? curServings.toInt()
+                : int.tryParse(curServings?.toString() ?? '') ?? 0;
+
+            // Restore available servings
+            final nextServings = currentServings + quantity;
+
+            tx.update(menuRef, {
+              'availableServings': nextServings,
+              'isAvailable': nextServings > 0,
+              'updatedAt': FieldValue.serverTimestamp(),
+            });
+
+            // Also restore linked inventory if exists
+            final inventoryItemId =
+                (menu['inventoryItemId'] ?? '').toString().trim();
+            if (inventoryItemId.isNotEmpty) {
+              final invRef = _eaterySubcollection(eateryId, inventoryCollection)
+                  .doc(inventoryItemId);
+              final invSnap = await tx.get(invRef);
+              if (invSnap.exists) {
+                final inv = invSnap.data() ?? {};
+                final curStock = inv['currentStock'];
+                final currentStock = curStock is num
+                    ? curStock.toDouble()
+                    : double.tryParse(curStock?.toString() ?? '') ?? 0.0;
+                final nextStock = currentStock + quantity;
+                tx.update(invRef, {
+                  'currentStock': nextStock,
+                  'updatedAt': FieldValue.serverTimestamp(),
+                });
+              }
+            }
+          }
+        }
+
+        // Update order status to voided
+        tx.set(
+            orderRef,
+            {
+              'status': 'voided',
+              'voidReason': reason.trim(),
+              'voidedAt': FieldValue.serverTimestamp(),
+              'voidedBy': uid,
+              'updatedAt': FieldValue.serverTimestamp(),
+            },
+            SetOptions(merge: true));
+      });
     } catch (e) {
       throw Exception('Failed to void order: $e');
+    }
+  }
+
+  /// Void specific items from an order (partial void)
+  static Future<void> voidOrderItems(
+    String orderId,
+    List<Map<String, dynamic>> itemsToVoid, {
+    String reason = '',
+  }) async {
+    try {
+      await _requireStaffOrAdmin();
+      final eateryId = await _requireCurrentEateryId();
+      final orderRef =
+          _eaterySubcollection(eateryId, ordersCollection).doc(orderId);
+      final snap = await orderRef.get();
+      if (!snap.exists) {
+        throw Exception('Order not found');
+      }
+      final data = snap.data() ?? <String, dynamic>{};
+
+      final status = (data['status'] ?? '').toString().trim().toLowerCase();
+      if (status != 'pending') {
+        throw Exception('Only pending orders can be modified');
+      }
+
+      final currentItems =
+          (data['items'] as List?)?.cast<dynamic>() ?? const [];
+      final uid = _auth.currentUser?.uid ?? '';
+
+      // Use transaction to void items and restore stock atomically
+      await _firestore.runTransaction((tx) async {
+        // Restore stock for voided items
+        for (final voidItem in itemsToVoid) {
+          final menuItemId = (voidItem['menuItemId'] ?? '').toString().trim();
+          final qtyNum = voidItem['quantity'];
+          final quantity = qtyNum is num
+              ? qtyNum.toInt()
+              : int.tryParse(qtyNum?.toString() ?? '') ?? 0;
+
+          if (menuItemId.isEmpty || quantity <= 0) continue;
+
+          final menuRef =
+              _eaterySubcollection(eateryId, menuCollection).doc(menuItemId);
+          final menuSnap = await tx.get(menuRef);
+
+          if (menuSnap.exists) {
+            final menu = menuSnap.data() ?? {};
+            final curServings = menu['availableServings'];
+            final currentServings = curServings is num
+                ? curServings.toInt()
+                : int.tryParse(curServings?.toString() ?? '') ?? 0;
+
+            // Restore available servings
+            final nextServings = currentServings + quantity;
+
+            tx.update(menuRef, {
+              'availableServings': nextServings,
+              'isAvailable': nextServings > 0,
+              'updatedAt': FieldValue.serverTimestamp(),
+            });
+
+            // Also restore linked inventory if exists
+            final inventoryItemId =
+                (menu['inventoryItemId'] ?? '').toString().trim();
+            if (inventoryItemId.isNotEmpty) {
+              final invRef = _eaterySubcollection(eateryId, inventoryCollection)
+                  .doc(inventoryItemId);
+              final invSnap = await tx.get(invRef);
+              if (invSnap.exists) {
+                final inv = invSnap.data() ?? {};
+                final curStock = inv['currentStock'];
+                final currentStock = curStock is num
+                    ? curStock.toDouble()
+                    : double.tryParse(curStock?.toString() ?? '') ?? 0.0;
+                final nextStock = currentStock + quantity;
+                tx.update(invRef, {
+                  'currentStock': nextStock,
+                  'updatedAt': FieldValue.serverTimestamp(),
+                });
+              }
+            }
+          }
+        }
+
+        // Update order items - remove voided items or reduce quantities
+        final updatedItems = <Map<String, dynamic>>[];
+        double newTotal = 0.0;
+
+        for (final raw in currentItems) {
+          final it = raw as Map?;
+          final menuItemId = (it?['menuItemId'] ?? '').toString().trim();
+          final qtyNum = it?['quantity'];
+          final quantity = qtyNum is num
+              ? qtyNum.toInt()
+              : int.tryParse(qtyNum?.toString() ?? '') ?? 0;
+          final price = (it?['price'] as num?)?.toDouble() ?? 0.0;
+
+          // Find if this item should be voided
+          final voidItem = itemsToVoid.firstWhere(
+            (v) => (v['menuItemId'] ?? '').toString().trim() == menuItemId,
+            orElse: () => {},
+          );
+
+          if (voidItem.isNotEmpty) {
+            final voidQtyNum = voidItem['quantity'];
+            final voidQty = voidQtyNum is num
+                ? voidQtyNum.toInt()
+                : int.tryParse(voidQtyNum?.toString() ?? '') ?? 0;
+
+            if (quantity > voidQty) {
+              // Partial void - keep remaining quantity
+              final remainingQty = quantity - voidQty;
+              final subtotal = price * remainingQty;
+              updatedItems.add({
+                'menuItemId': menuItemId,
+                'name': it?['name'] ?? 'Unknown',
+                'quantity': remainingQty,
+                'price': price,
+                'subtotal': subtotal,
+              });
+              newTotal += subtotal;
+            }
+            // If quantity == voidQty, item is fully voided and not added
+          } else {
+            // Item not voided - keep it
+            updatedItems.add(Map<String, dynamic>.from(it!));
+            newTotal += price * quantity;
+          }
+        }
+
+        // Update the order
+        tx.set(
+            orderRef,
+            {
+              'items': updatedItems,
+              'totalAmount': newTotal,
+              'voidReason': reason.trim(),
+              'voidedAt': FieldValue.serverTimestamp(),
+              'voidedBy': uid,
+              'updatedAt': FieldValue.serverTimestamp(),
+            },
+            SetOptions(merge: true));
+      });
+    } catch (e) {
+      throw Exception('Failed to void items: $e');
     }
   }
 
@@ -1985,7 +2522,6 @@ class FirebaseService {
   static Future<Map<String, dynamic>> createStaffMealOrder(
     Map<String, dynamic> data,
   ) async {
-    final user = FirebaseAuth.instance.currentUser;
     final eateryId = data['eateryId']?.toString();
     if (eateryId == null || eateryId.isEmpty) {
       throw Exception('Eatery ID is required');
@@ -2053,5 +2589,169 @@ class FirebaseService {
       'status': status,
       'updatedAt': DateTime.now().toIso8601String(),
     });
+  }
+
+  // User profile update methods
+  static Future<void> updateUser(String uid, Map<String, dynamic> data) async {
+    try {
+      await _firestore.collection(usersCollection).doc(uid).update({
+        ...data,
+        'updatedAt': DateTime.now().toIso8601String(),
+      });
+    } catch (e) {
+      throw Exception('Failed to update user: $e');
+    }
+  }
+
+  static Future<void> updateAdminProfileInEatery(
+    String eateryId,
+    String uid,
+    Map<String, dynamic> data,
+  ) async {
+    try {
+      await _eaterySubcollection(eateryId, 'admin_profiles').doc(uid).update({
+        ...data,
+        'updatedAt': DateTime.now().toIso8601String(),
+      });
+    } catch (e) {
+      // If doc doesn't exist, create it
+      await _eaterySubcollection(eateryId, 'admin_profiles').doc(uid).set({
+        ...data,
+        'uid': uid,
+        'createdAt': DateTime.now().toIso8601String(),
+        'updatedAt': DateTime.now().toIso8601String(),
+      });
+    }
+  }
+
+  static Future<void> updateStaffProfileInEatery(
+    String eateryId,
+    String uid,
+    Map<String, dynamic> data,
+  ) async {
+    try {
+      await _eaterySubcollection(eateryId, 'staff_profiles').doc(uid).update({
+        ...data,
+        'updatedAt': DateTime.now().toIso8601String(),
+      });
+    } catch (e) {
+      // If doc doesn't exist, create it
+      await _eaterySubcollection(eateryId, 'staff_profiles').doc(uid).set({
+        ...data,
+        'uid': uid,
+        'createdAt': DateTime.now().toIso8601String(),
+        'updatedAt': DateTime.now().toIso8601String(),
+      });
+    }
+  }
+
+  static Future<void> sendPasswordResetEmail(String email) async {
+    try {
+      await _auth.sendPasswordResetEmail(email: email);
+    } on FirebaseAuthException catch (e) {
+      throw Exception('Failed to send password reset email: ${e.message}');
+    }
+  }
+
+  // Attendance tracking methods
+  static Future<List<Map<String, dynamic>>> getStaffAttendanceForMonth({
+    required String eateryId,
+    required String uid,
+    required int year,
+    required int month,
+  }) async {
+    final startDate = DateTime(year, month, 1);
+    final endDate = DateTime(year, month + 1, 0);
+
+    final startKey =
+        '${startDate.year.toString().padLeft(4, '0')}-${startDate.month.toString().padLeft(2, '0')}-01';
+    final endKey =
+        '${endDate.year.toString().padLeft(4, '0')}-${endDate.month.toString().padLeft(2, '0')}-${endDate.day.toString().padLeft(2, '0')}';
+
+    final snapshot = await _eaterySubcollection(eateryId, 'staff_attendance')
+        .where('uid', isEqualTo: uid)
+        .where('date', isGreaterThanOrEqualTo: startKey)
+        .where('date', isLessThanOrEqualTo: endKey)
+        .get();
+
+    return snapshot.docs.map((doc) => {'id': doc.id, ...doc.data()}).toList();
+  }
+
+  static Future<Map<String, dynamic>?> getTodayAttendance({
+    required String eateryId,
+    required String uid,
+  }) async {
+    final now = DateTime.now();
+    final todayKey =
+        '${now.year.toString().padLeft(4, '0')}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+
+    final docId = '${eateryId}_${uid}_$todayKey';
+    final doc = await _eaterySubcollection(eateryId, 'staff_attendance')
+        .doc(docId)
+        .get();
+
+    if (!doc.exists) return null;
+    return {'id': doc.id, ...doc.data()!};
+  }
+
+  static Future<Map<String, dynamic>> recordAttendanceCheckIn({
+    required String eateryId,
+    required String uid,
+    required String checkInType, // 'morning' or 'afternoon'
+  }) async {
+    final now = DateTime.now();
+    final todayKey =
+        '${now.year.toString().padLeft(4, '0')}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+
+    final docId = '${eateryId}_${uid}_$todayKey';
+    final docRef =
+        _eaterySubcollection(eateryId, 'staff_attendance').doc(docId);
+
+    final existing = await docRef.get();
+    final data = existing.data();
+
+    final updates = <String, dynamic>{
+      'eateryId': eateryId,
+      'uid': uid,
+      'date': todayKey,
+      'updatedAt': DateTime.now().toIso8601String(),
+    };
+
+    if (checkInType == 'morning') {
+      updates['morningCheckIn'] = DateTime.now().toIso8601String();
+      if (data?['afternoonCheckIn'] != null) {
+        // Both check-ins present = full day
+        updates['present'] = true;
+        updates['workUnit'] = 1.0;
+        updates['status'] = 'present';
+      } else {
+        // Only morning = half day for now
+        updates['present'] = true;
+        updates['workUnit'] = 0.5;
+        updates['status'] = 'halfday';
+      }
+    } else if (checkInType == 'afternoon') {
+      updates['afternoonCheckIn'] = DateTime.now().toIso8601String();
+      if (data?['morningCheckIn'] != null) {
+        // Both check-ins present = full day
+        updates['present'] = true;
+        updates['workUnit'] = 1.0;
+        updates['status'] = 'present';
+      } else {
+        // Only afternoon = half day
+        updates['present'] = true;
+        updates['workUnit'] = 0.5;
+        updates['status'] = 'halfday';
+      }
+    }
+
+    if (!existing.exists) {
+      updates['createdAt'] = DateTime.now().toIso8601String();
+    }
+
+    await docRef.set(updates, SetOptions(merge: true));
+
+    final updated = await docRef.get();
+    return {'id': updated.id, ...updated.data()!};
   }
 }

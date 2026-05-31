@@ -1,19 +1,23 @@
+import 'dart:async';
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../services/auth_provider.dart';
 import '../services/api_service.dart';
 import '../services/firebase_service.dart';
 import '../services/notification_trigger_manager.dart';
+import '../services/sound_service.dart';
+import '../widgets/skeleton_loaders.dart';
 import 'pos_screen.dart';
 import 'analytics_screen.dart';
 import 'menu_screen.dart';
 import 'inventory_screen.dart';
 import 'staff_management_screen.dart';
 import 'finance_screen.dart';
-import 'settings_screen.dart';
-import 'notifications_screen.dart';
+import 'chatbot_screen.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({Key? key}) : super(key: key);
@@ -376,7 +380,11 @@ class _StaffHomeTabState extends State<StaffHomeTab> {
                 return Padding(
                   padding: const EdgeInsets.only(bottom: 8),
                   child: InkWell(
-                    onTap: id.isEmpty ? null : () => _showOrderDetails(order),
+                    onTap: id.isEmpty
+                        ? null
+                        : () {
+                            _showOrderDetails(order);
+                          },
                     borderRadius: BorderRadius.circular(12),
                     child: Container(
                       padding: const EdgeInsets.all(12),
@@ -850,9 +858,13 @@ class _StaffHomeTabState extends State<StaffHomeTab> {
       }
     }
 
+    if (!mounted) {
+      return;
+    }
+
     showDialog<void>(
       context: context,
-      builder: (context) {
+      builder: (dialogContext) {
         return AlertDialog(
           title: Text(id.isEmpty
               ? 'Order Details'
@@ -898,17 +910,92 @@ class _StaffHomeTabState extends State<StaffHomeTab> {
             ),
           ),
           actions: [
-            if (isPending)
+            if (isPending) ...[
+              // Complete button
+              FilledButton.icon(
+                onPressed: () async {
+                  try {
+                    await ApiService.completeOrder(id);
+                    Navigator.of(dialogContext).pop();
+                    ScaffoldMessenger.of(dialogContext).showSnackBar(
+                      const SnackBar(
+                          content: Text('Order completed successfully.')),
+                    );
+                  } catch (e) {
+                    ScaffoldMessenger.of(dialogContext).showSnackBar(
+                      SnackBar(content: Text('Failed to complete order: $e')),
+                    );
+                  }
+                },
+                icon: const Icon(Icons.check_circle),
+                label: const Text('Complete'),
+                style: FilledButton.styleFrom(backgroundColor: Colors.green),
+              ),
+              // Edit button
               FilledButton.icon(
                 onPressed: () {
-                  Navigator.of(context).pop();
+                  Navigator.of(dialogContext).pop();
                   _showEditOrderDialog(order);
                 },
                 icon: const Icon(Icons.edit),
-                label: const Text('Edit Order'),
+                label: const Text('Edit'),
+                style: FilledButton.styleFrom(backgroundColor: Colors.blue),
               ),
+              // Void button
+              FilledButton.icon(
+                onPressed: () async {
+                  final controller = TextEditingController();
+                  final confirmed = await showDialog<bool>(
+                    context: dialogContext,
+                    builder: (ctx) => AlertDialog(
+                      title: const Text('Void Order'),
+                      content: TextField(
+                        controller: controller,
+                        decoration: const InputDecoration(
+                          labelText: 'Reason (optional)',
+                          hintText: 'Enter reason for voiding',
+                        ),
+                        maxLines: 2,
+                      ),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.of(ctx).pop(false),
+                          child: const Text('Cancel'),
+                        ),
+                        FilledButton(
+                          onPressed: () => Navigator.of(ctx).pop(true),
+                          style: FilledButton.styleFrom(
+                            backgroundColor: Colors.red,
+                          ),
+                          child: const Text('Void'),
+                        ),
+                      ],
+                    ),
+                  );
+                  if (confirmed != true) return;
+                  try {
+                    await ApiService.voidOrder(id, reason: controller.text);
+                    if (!mounted) return;
+                    Navigator.of(dialogContext).pop();
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                          content: Text('Order voided successfully.')),
+                    );
+                  } catch (e) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('Failed to void order: $e')),
+                    );
+                  } finally {
+                    controller.dispose();
+                  }
+                },
+                icon: const Icon(Icons.cancel),
+                label: const Text('Void'),
+                style: FilledButton.styleFrom(backgroundColor: Colors.red),
+              ),
+            ],
             TextButton(
-              onPressed: () => Navigator.of(context).pop(),
+              onPressed: () => Navigator.of(dialogContext).pop(),
               child: const Text('Close'),
             ),
           ],
@@ -1196,6 +1283,8 @@ class _StaffHomeTabState extends State<StaffHomeTab> {
 }
 
 class _DashboardScreenState extends State<DashboardScreen> {
+  static const String _selectedIndexKey = 'dashboard_selected_index';
+  final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
   int _selectedIndex = 0;
   bool _isRoleLoading = true;
   String? _roleError;
@@ -1215,6 +1304,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
   final NotificationTriggerManager _notificationTriggers =
       NotificationTriggerManager();
 
+  StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _userDocSub;
+  bool _sidebarVisible = true;
+  bool _removalDialogShown = false;
+
   bool get _isAdminRole {
     return _isAdmin && _adminViewEnabled;
   }
@@ -1226,8 +1319,112 @@ class _DashboardScreenState extends State<DashboardScreen> {
   @override
   void initState() {
     super.initState();
-    _loadRole();
+    _initializeDashboard();
+    _startUserDocListener();
     _notificationTriggers.startPeriodicChecks();
+  }
+
+  bool _sidebarInitialized = false;
+
+  void _startUserDocListener() {
+    try {
+      final uid = context.read<AuthProvider>().user?.uid;
+      if (uid == null || uid.trim().isEmpty) return;
+
+      _userDocSub?.cancel();
+      _userDocSub = FirebaseFirestore.instance
+          .collection('users')
+          .doc(uid)
+          .snapshots()
+          .listen((snap) async {
+        if (!mounted) return;
+        if (!snap.exists) return;
+
+        final data = snap.data() ?? <String, dynamic>{};
+        final removalMessage = (data['removalMessage'] ?? '').toString().trim();
+        final removedAt = data['removedAt'];
+        final removedFromEateryId =
+            (data['removedFromEateryId'] ?? '').toString().trim();
+
+        if (removalMessage.isEmpty) return;
+        if (_removalDialogShown) return;
+
+        _removalDialogShown = true;
+
+        try {
+          await showDialog<void>(
+            context: context,
+            barrierDismissible: false,
+            builder: (context) {
+              return AlertDialog(
+                title: const Text('Access Removed'),
+                content: Text(removalMessage),
+                actions: [
+                  FilledButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    child: const Text('OK'),
+                  ),
+                ],
+              );
+            },
+          );
+        } finally {
+          if (!mounted) return;
+
+          // Clear local role state to avoid any UI loops while logout happens.
+          setState(() {
+            _isRoleLoading = false;
+            _roleError = null;
+            _eateryId = '';
+            _eateryName = '';
+          });
+
+          try {
+            await context.read<AuthProvider>().logout();
+          } catch (_) {}
+        }
+
+        // Best-effort cleanup of the message so the dialog doesn't keep re-appearing
+        // when the user logs in again or when snapshot replays.
+        try {
+          if (removedFromEateryId.isNotEmpty || removedAt != null) {
+            await FirebaseFirestore.instance.collection('users').doc(uid).set({
+              'removalMessage': '',
+              'updatedAt': FieldValue.serverTimestamp(),
+            }, SetOptions(merge: true));
+          }
+        } catch (_) {}
+      });
+    } catch (e) {}
+  }
+
+  Future<void> _initializeDashboard() async {
+    await _loadRole();
+    if (mounted) {
+      await _loadSavedTabIndex();
+    }
+  }
+
+  Future<void> _loadSavedTabIndex() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final savedIndex = prefs.getInt(_selectedIndexKey);
+      if (savedIndex != null && mounted) {
+        // Wait for role to be loaded first, then validate the saved index
+        // _isAdmin is set by _loadRole() which runs in initState
+        final maxTabs = _isAdmin ? 6 : 3;
+        if (savedIndex >= 0 && savedIndex < maxTabs) {
+          setState(() => _selectedIndex = savedIndex);
+        }
+      }
+    } catch (e) {}
+  }
+
+  Future<void> _saveTabIndex(int index) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setInt(_selectedIndexKey, index);
+    } catch (e) {}
   }
 
   @override
@@ -1235,14 +1432,29 @@ class _DashboardScreenState extends State<DashboardScreen> {
     _notificationTriggers.dispose();
     _globalSearchController.dispose();
     _globalSearchQuery.dispose();
+    _userDocSub?.cancel();
     super.dispose();
   }
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    // Initialize sidebar visibility based on screen width (only once)
+    if (!_sidebarInitialized) {
+      final screenWidth = MediaQuery.of(context).size.width;
+      _sidebarVisible = screenWidth >= 768;
+      _sidebarInitialized = true;
+    }
+    // Handle user auth changes
     final uid = context.watch<AuthProvider>().user?.uid;
-    if (uid != null && uid.isNotEmpty && uid != _lastLoadedUid) {
+    if (uid == null || uid.isEmpty) {
+      // User logged out, stop loading
+      if (_isRoleLoading) {
+        setState(() => _isRoleLoading = false);
+      }
+      return;
+    }
+    if (uid != _lastLoadedUid) {
       _lastLoadedUid = uid;
       _loadRole();
     }
@@ -1252,11 +1464,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final uid = context.read<AuthProvider>().user?.uid;
     if (uid == null || uid.isEmpty) {
       if (!mounted) return;
+      // Turn off loading; AuthGate handles routing to login.
       if (setLoadingState) {
-        setState(() {
-          _isRoleLoading = false;
-          _roleError = 'Not signed in.';
-        });
+        setState(() => _isRoleLoading = false);
       }
       return;
     }
@@ -1329,14 +1539,36 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   void _goToTab(int index) {
-    setState(() => _selectedIndex = index);
+    if (!mounted) return;
+    // Prevent navigation while role is loading
+    if (_isRoleLoading) {
+      return;
+    }
+    try {
+      // Validate index against available tabs
+      final isAdmin = _isAdminRole;
+      final maxTabs = isAdmin ? 6 : 3;
+      if (index < 0 || index >= maxTabs) {
+        return;
+      }
+      setState(() => _selectedIndex = index);
+      _saveTabIndex(index);
+    } catch (e) {}
   }
 
   void _setAdminViewEnabled(bool enabled) {
-    setState(() {
-      _adminViewEnabled = enabled;
-      _selectedIndex = 0;
-    });
+    if (!mounted) return;
+    // Prevent view switch while role is loading
+    if (_isRoleLoading) {
+      return;
+    }
+    try {
+      setState(() {
+        _adminViewEnabled = enabled;
+        _selectedIndex = 0;
+      });
+      _saveTabIndex(0);
+    } catch (e) {}
   }
 
   Future<void> _showGlobalSearchResults(String query) async {
@@ -1399,10 +1631,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   @override
   Widget build(BuildContext context) {
     if (_isRoleLoading) {
-      return const Scaffold(
-        backgroundColor: Colors.white,
-        body: Center(child: CircularProgressIndicator()),
-      );
+      return const SkeletonDashboard();
     }
 
     if (_roleError != null) {
@@ -1485,9 +1714,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
     final tabs = _isAdminRole
         ? <Widget>[
-            DashboardHomeTab(onNavigate: _goToTab),
+            DashboardHomeTab(
+                key: const ValueKey('dashboard_home'), onNavigate: _goToTab),
             MenuScreen(
-                globalSearchQuery: _globalSearchQuery, showAppBar: false),
+                key: const ValueKey('menu'),
+                globalSearchQuery: _globalSearchQuery,
+                showAppBar: false),
             InventoryScreen(
               key: _inventoryKey,
               globalSearchQuery: _globalSearchQuery,
@@ -1496,299 +1728,63 @@ class _DashboardScreenState extends State<DashboardScreen> {
               onOpenDrawer: () =>
                   setState(() => _inventoryInDetailView = false),
             ),
-            const AnalyticsScreen(showAppBar: false),
+            const AnalyticsScreen(
+                key: ValueKey('analytics'), showAppBar: false),
             FinanceScreen(
+              key: const ValueKey('finance'),
               globalSearchQuery: _globalSearchQuery,
               showAppBar: false,
               onNavigate: _goToTab,
             ),
             StaffManagementScreen(
+              key: const ValueKey('staff'),
               globalSearchQuery: _globalSearchQuery,
               showAppBar: false,
             ),
           ]
         : <Widget>[
-            const POSScreen(showAppBar: false),
-            StaffHomeTab(onNavigate: _goToTab),
+            const POSScreen(key: ValueKey('pos'), showAppBar: false),
+            StaffHomeTab(
+                key: const ValueKey('staff_home'), onNavigate: _goToTab),
             MenuScreen(
-                globalSearchQuery: _globalSearchQuery, showAppBar: false),
-          ];
-
-    final items = _isAdminRole
-        ? const [
-            BottomNavigationBarItem(
-              icon: Icon(Icons.dashboard_outlined),
-              label: 'Home',
-            ),
-            BottomNavigationBarItem(
-              icon: Icon(Icons.restaurant_menu),
-              label: 'Menu',
-            ),
-            BottomNavigationBarItem(
-              icon: Icon(Icons.inventory),
-              label: 'Inventory',
-            ),
-            BottomNavigationBarItem(
-              icon: Icon(Icons.analytics),
-              label: 'Analytics',
-            ),
-            BottomNavigationBarItem(
-              icon: Icon(Icons.account_balance_wallet_outlined),
-              label: 'Finance',
-            ),
-            BottomNavigationBarItem(
-              icon: Icon(Icons.group_outlined),
-              label: 'Staff',
-            ),
-          ]
-        : const [
-            BottomNavigationBarItem(
-              icon: Icon(Icons.shopping_cart),
-              label: 'POS',
-            ),
-            BottomNavigationBarItem(
-              icon: Icon(Icons.home_outlined),
-              label: 'Home',
-            ),
-            BottomNavigationBarItem(
-              icon: Icon(Icons.restaurant_menu),
-              label: 'Menu',
-            ),
+                key: const ValueKey('menu'),
+                globalSearchQuery: _globalSearchQuery,
+                showAppBar: false),
           ];
 
     if (_selectedIndex >= tabs.length) {
       _selectedIndex = 0;
     }
 
-    final email = context.read<AuthProvider>().user?.email ?? '';
-    final roleLabel = _isAdmin ? 'Admin' : 'Staff';
-
     final isNarrowSearch = MediaQuery.of(context).size.width < 520;
     final searchHint = isNarrowSearch ? '' : 'Search';
     final pageTitle = _pageTitleForIndex(_selectedIndex);
 
     return Scaffold(
+      key: _scaffoldKey,
       backgroundColor: Colors.white,
-      drawer: Drawer(
-        child: SafeArea(
-          child: Column(
-            children: [
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
-                color: Theme.of(context).colorScheme.primary.withOpacity(0.08),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    CircleAvatar(
-                      radius: 22,
-                      backgroundColor: Theme.of(context)
-                          .colorScheme
-                          .primary
-                          .withOpacity(0.2),
-                      child: Icon(
-                        Icons.person_outline,
-                        color: Theme.of(context).colorScheme.primary,
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            _displayName.isNotEmpty
-                                ? _displayName
-                                : (email.isNotEmpty ? email : 'Account'),
-                            style: const TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w700,
-                            ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          const SizedBox(height: 4),
-                          if (_eateryName.isNotEmpty)
-                            Text(
-                              _eateryName,
-                              style: TextStyle(color: Colors.grey.shade700),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          if (_isAdmin && _eateryId.isNotEmpty) ...[
-                            const SizedBox(height: 4),
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: Text(
-                                    'Eatery ID: $_eateryId',
-                                    style:
-                                        TextStyle(color: Colors.grey.shade700),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ),
-                                IconButton(
-                                  icon: const Icon(Icons.copy, size: 18),
-                                  onPressed: () {
-                                    Clipboard.setData(
-                                      ClipboardData(text: _eateryId),
-                                    );
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(
-                                        content: Text('Eatery ID copied'),
-                                      ),
-                                    );
-                                  },
-                                ),
-                              ],
-                            ),
-                          ],
-                          if (_eateryName.isEmpty && email.isNotEmpty)
-                            Text(
-                              email,
-                              style: TextStyle(color: Colors.grey.shade700),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          const SizedBox(height: 6),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 10, vertical: 4),
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              borderRadius: BorderRadius.circular(999),
-                              border: Border.all(color: Colors.grey.shade200),
-                            ),
-                            child: Text(
-                              roleLabel,
-                              style: TextStyle(
-                                fontWeight: FontWeight.w600,
-                                color: Theme.of(context).colorScheme.primary,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              Expanded(
-                child: ListView(
-                  padding: const EdgeInsets.symmetric(vertical: 8),
-                  children: [
-                    ListTile(
-                      leading: const Icon(Icons.dashboard_outlined),
-                      title: const Text('Home'),
-                      selected: _selectedIndex == 0,
-                      onTap: () {
-                        Navigator.of(context).pop();
-                        _goToTab(0);
-                      },
-                    ),
-                    if (_canSwitchDashboard)
-                      ListTile(
-                        leading: Icon(
-                          _adminViewEnabled
-                              ? Icons.swap_horiz
-                              : Icons.admin_panel_settings_outlined,
-                        ),
-                        title: Text(
-                          _adminViewEnabled
-                              ? 'Switch to Main Dashboard'
-                              : 'Switch to Admin Dashboard',
-                        ),
-                        onTap: () {
-                          Navigator.of(context).pop();
-                          _setAdminViewEnabled(!_adminViewEnabled);
-                        },
-                      ),
-                    const Divider(height: 24),
-                    ListTile(
-                      leading: const Icon(Icons.settings_outlined),
-                      title: const Text('Settings'),
-                      onTap: () {
-                        Navigator.of(context).pop();
-                        Navigator.of(context).push(
-                          MaterialPageRoute(
-                            builder: (context) => const SettingsScreen(),
-                          ),
-                        );
-                      },
-                    ),
-                    ListTile(
-                      leading: const Icon(Icons.notifications_outlined),
-                      title: const Text('Notifications'),
-                      onTap: () {
-                        Navigator.of(context).pop();
-                        Navigator.of(context).push(
-                          MaterialPageRoute(
-                            builder: (context) => const NotificationsScreen(),
-                          ),
-                        );
-                      },
-                    ),
-                    ListTile(
-                      leading: const Icon(Icons.person_outline),
-                      title: const Text('Profile'),
-                      onTap: () {
-                        Navigator.of(context).pop();
-                        Navigator.of(context).push(
-                          MaterialPageRoute(
-                            builder: (context) =>
-                                const _SimplePlaceholderScreen(
-                                    title: 'Profile'),
-                          ),
-                        );
-                      },
-                    ),
-                    ListTile(
-                      leading: const Icon(Icons.info_outline),
-                      title: const Text('About'),
-                      onTap: () {
-                        Navigator.of(context).pop();
-                        Navigator.of(context).push(
-                          MaterialPageRoute(
-                            builder: (context) =>
-                                const _SimplePlaceholderScreen(title: 'About'),
-                          ),
-                        );
-                      },
-                    ),
-                    const Divider(height: 24),
-                    ListTile(
-                      leading: const Icon(Icons.logout),
-                      title: const Text('Logout'),
-                      onTap: () {
-                        Navigator.of(context).pop();
-                        context.read<AuthProvider>().logout();
-                        // AuthGate automatically handles navigation to LoginScreen
-                      },
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
       appBar: AppBar(
         leading: Builder(
           builder: (context) {
             final showBackButton =
                 _selectedIndex == 2 && _inventoryInDetailView;
             return IconButton(
-              tooltip: showBackButton ? 'Back' : 'Menu',
-              icon: Icon(showBackButton ? Icons.arrow_back : Icons.menu),
-              onPressed: () {
-                if (showBackButton) {
-                  setState(() => _inventoryInDetailView = false);
-                  _inventoryKey.currentState?.resetToGrid();
-                } else {
-                  Scaffold.of(context).openDrawer();
-                }
-              },
+              tooltip: showBackButton
+                  ? 'Back'
+                  : (_sidebarVisible ? 'Hide Menu' : 'Show Menu'),
+              icon: Icon(showBackButton
+                  ? Icons.arrow_back
+                  : (_sidebarVisible ? Icons.menu_open : Icons.menu)),
+              onPressed: _isRoleLoading
+                  ? null
+                  : () {
+                      if (showBackButton) {
+                        setState(() => _inventoryInDetailView = false);
+                        _inventoryKey.currentState?.resetToGrid();
+                      } else {
+                        setState(() => _sidebarVisible = !_sidebarVisible);
+                      }
+                    },
             );
           },
         ),
@@ -1838,27 +1834,27 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         },
                       ),
                       filled: true,
-                      fillColor: Colors.white.withOpacity(0.18),
+                      fillColor: Colors.white.withValues(alpha: 0.18),
                       hintStyle: TextStyle(
-                        color: Colors.white.withOpacity(0.9),
+                        color: Colors.white.withValues(alpha: 0.9),
                         fontWeight: FontWeight.w500,
                       ),
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(14),
                         borderSide: BorderSide(
-                          color: Colors.white.withOpacity(0.25),
+                          color: Colors.white.withValues(alpha: 0.25),
                         ),
                       ),
                       enabledBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(14),
                         borderSide: BorderSide(
-                          color: Colors.white.withOpacity(0.18),
+                          color: Colors.white.withValues(alpha: 0.18),
                         ),
                       ),
                       focusedBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(14),
                         borderSide: BorderSide(
-                          color: Colors.white.withOpacity(0.5),
+                          color: Colors.white.withValues(alpha: 0.5),
                         ),
                       ),
                       contentPadding: const EdgeInsets.symmetric(
@@ -1909,7 +1905,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       style: TextStyle(
                         fontSize: 11,
                         fontWeight: FontWeight.w600,
-                        color: Colors.white.withOpacity(0.88),
+                        color: Colors.white.withValues(alpha: 0.88),
                       ),
                     ),
                 ],
@@ -1961,7 +1957,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
               colors: [
                 Theme.of(context).colorScheme.primary,
                 Theme.of(context).colorScheme.primary.withBlue(
-                      (Theme.of(context).colorScheme.primary.blue + 40)
+                      ((Theme.of(context).colorScheme.primary.b * 255.0)
+                                  .round() +
+                              40)
                           .clamp(0, 255),
                     ),
               ],
@@ -1969,26 +1967,288 @@ class _DashboardScreenState extends State<DashboardScreen> {
           ),
         ),
         elevation: 2,
-        shadowColor: Theme.of(context).colorScheme.primary.withOpacity(0.4),
+        shadowColor:
+            Theme.of(context).colorScheme.primary.withValues(alpha: 0.4),
         shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(
             bottom: Radius.circular(16),
           ),
         ),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.chat_bubble_outline),
+            tooltip: 'AI Assistant',
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (context) => const ChatbotScreen(),
+                ),
+              );
+            },
+          ),
           const SizedBox(width: 4),
         ],
       ),
-      body: IndexedStack(
-        index: _selectedIndex,
-        children: tabs,
+      body: LayoutBuilder(
+        builder: (context, constraints) {
+          final isWideScreen = constraints.maxWidth >= 768;
+
+          // Wide screen: persistent sidebar that compresses content
+          if (isWideScreen) {
+            return Row(
+              children: [
+                if (_sidebarVisible) _buildSidebar(),
+                Expanded(
+                  child: Stack(
+                    children: [
+                      IndexedStack(
+                        index: _selectedIndex,
+                        children: tabs,
+                      ),
+                      if (_isRoleLoading)
+                        Container(
+                          color: Colors.white.withValues(alpha: 0.8),
+                          child: const Center(
+                            child: CircularProgressIndicator(),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ],
+            );
+          }
+
+          // Narrow screen: overlay sidebar
+          return Stack(
+            children: [
+              IndexedStack(
+                index: _selectedIndex,
+                children: tabs,
+              ),
+              if (_sidebarVisible)
+                GestureDetector(
+                  onTap: () => setState(() => _sidebarVisible = false),
+                  child: Container(
+                    color: Colors.black.withValues(alpha: 0.3),
+                  ),
+                ),
+              if (_sidebarVisible) _buildSidebar(),
+              if (_isRoleLoading)
+                Container(
+                  color: Colors.white.withValues(alpha: 0.8),
+                  child: const Center(
+                    child: CircularProgressIndicator(),
+                  ),
+                ),
+            ],
+          );
+        },
       ),
-      bottomNavigationBar: BottomNavigationBar(
-        currentIndex: _selectedIndex,
-        onTap: (index) => setState(() => _selectedIndex = index),
-        items: items,
-        type: BottomNavigationBarType.fixed,
+    );
+  }
+
+  Widget _buildSidebar() {
+    final email = context.read<AuthProvider>().user?.email ?? '';
+    final roleLabel = _isAdmin ? 'Admin' : 'Staff';
+    final sidebarWidth = 260.0;
+
+    return Container(
+      width: sidebarWidth,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border(
+          right: BorderSide(color: Colors.grey.shade200),
+        ),
       ),
+      child: Column(
+        children: [
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+            color:
+                Theme.of(context).colorScheme.primary.withValues(alpha: 0.08),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                CircleAvatar(
+                  radius: 22,
+                  backgroundColor: Theme.of(context)
+                      .colorScheme
+                      .primary
+                      .withValues(alpha: 0.2),
+                  child: Icon(
+                    Icons.person_outline,
+                    color: Theme.of(context).colorScheme.primary,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _displayName.isNotEmpty
+                            ? _displayName
+                            : (email.isNotEmpty ? email : 'Account'),
+                        style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 2),
+                      if (_eateryName.isNotEmpty)
+                        Text(
+                          _eateryName,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey.shade700,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      const SizedBox(height: 4),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(999),
+                          border: Border.all(color: Colors.grey.shade200),
+                        ),
+                        child: Text(
+                          roleLabel,
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: Theme.of(context).colorScheme.primary,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Expanded(
+            child: ListView(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              children: [
+                if (_canSwitchDashboard)
+                  ListTile(
+                    leading: Icon(
+                      _adminViewEnabled
+                          ? Icons.swap_horiz
+                          : Icons.admin_panel_settings_outlined,
+                    ),
+                    title: Text(
+                      _adminViewEnabled
+                          ? 'Switch to Main Dashboard'
+                          : 'Switch to Admin Dashboard',
+                    ),
+                    onTap: () => _setAdminViewEnabled(!_adminViewEnabled),
+                  ),
+                if (_isAdminRole) ...[
+                  _buildNavItem(
+                    icon: Icons.dashboard_outlined,
+                    label: 'Home',
+                    index: 0,
+                  ),
+                  _buildNavItem(
+                    icon: Icons.restaurant_menu,
+                    label: 'Menu',
+                    index: 1,
+                  ),
+                  _buildNavItem(
+                    icon: Icons.inventory,
+                    label: 'Inventory',
+                    index: 2,
+                  ),
+                  _buildNavItem(
+                    icon: Icons.analytics,
+                    label: 'Analytics',
+                    index: 3,
+                  ),
+                  _buildNavItem(
+                    icon: Icons.account_balance_wallet_outlined,
+                    label: 'Finance',
+                    index: 4,
+                  ),
+                  _buildNavItem(
+                    icon: Icons.group_outlined,
+                    label: 'Staff',
+                    index: 5,
+                  ),
+                ] else ...[
+                  _buildNavItem(
+                    icon: Icons.shopping_cart,
+                    label: 'POS',
+                    index: 0,
+                  ),
+                  _buildNavItem(
+                    icon: Icons.home_outlined,
+                    label: 'Home',
+                    index: 1,
+                  ),
+                  _buildNavItem(
+                    icon: Icons.restaurant_menu,
+                    label: 'Menu',
+                    index: 2,
+                  ),
+                ],
+                const Divider(height: 24),
+                ListTile(
+                  leading: const Icon(Icons.settings_outlined),
+                  title: const Text('Settings'),
+                  onTap: () => Navigator.of(context).pushNamed('/settings'),
+                ),
+                ListTile(
+                  leading: const Icon(Icons.person_outline),
+                  title: const Text('Profile'),
+                  onTap: () => Navigator.of(context).pushNamed('/profile'),
+                ),
+                const Divider(height: 24),
+                ListTile(
+                  leading: const Icon(Icons.logout, color: Colors.red),
+                  title:
+                      const Text('Logout', style: TextStyle(color: Colors.red)),
+                  onTap: () => context.read<AuthProvider>().logout(),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildNavItem({
+    required IconData icon,
+    required String label,
+    required int index,
+  }) {
+    final isSelected = _selectedIndex == index;
+    return ListTile(
+      leading: Icon(
+        icon,
+        color: isSelected
+            ? Theme.of(context).colorScheme.primary
+            : Colors.grey.shade600,
+      ),
+      title: Text(
+        label,
+        style: TextStyle(
+          fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+          color: isSelected
+              ? Theme.of(context).colorScheme.primary
+              : Colors.grey.shade800,
+        ),
+      ),
+      selected: isSelected,
+      onTap: () => _goToTab(index),
     );
   }
 }
@@ -2003,26 +2263,6 @@ class DashboardHomeTab extends StatefulWidget {
   State<DashboardHomeTab> createState() => _DashboardHomeTabState();
 }
 
-class _SimplePlaceholderScreen extends StatelessWidget {
-  const _SimplePlaceholderScreen({Key? key, required this.title})
-      : super(key: key);
-
-  final String title;
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: Text(title)),
-      body: Center(
-        child: Text(
-          title,
-          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
-        ),
-      ),
-    );
-  }
-}
-
 class _DashboardHomeTabState extends State<DashboardHomeTab> {
   bool _isLoading = true;
   String? _error;
@@ -2035,10 +2275,68 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
   String _eateryName = '';
   String _completingOrderId = '';
   bool _isAdmin = false;
+  bool _isApprovedStaff = true;
+
+  // Notes state
+  List<Map<String, dynamic>> _notes = [];
+  static const String _notesKey = 'admin_notes';
 
   void initState() {
     super.initState();
     _loadDashboard();
+    _loadNotes();
+  }
+
+  Future<void> _loadNotes() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final notesJson = prefs.getString(_notesKey);
+      if (notesJson != null && notesJson.isNotEmpty) {
+        final List<dynamic> decoded = jsonDecode(notesJson);
+        setState(() {
+          _notes = List<Map<String, dynamic>>.from(decoded);
+        });
+      }
+    } catch (e) {}
+  }
+
+  Future<void> _saveNotes() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final notesJson = jsonEncode(_notes);
+      await prefs.setString(_notesKey, notesJson);
+    } catch (e) {}
+  }
+
+  Future<void> _addNote(String header, String body) async {
+    final newNote = {
+      'id': DateTime.now().millisecondsSinceEpoch.toString(),
+      'header': header,
+      'body': body,
+      'createdAt': DateTime.now().toIso8601String(),
+    };
+    setState(() {
+      _notes.add(newNote);
+    });
+    await _saveNotes();
+  }
+
+  Future<void> _updateNote(String id, String header, String body) async {
+    setState(() {
+      final index = _notes.indexWhere((note) => note['id'] == id);
+      if (index != -1) {
+        _notes[index]['header'] = header;
+        _notes[index]['body'] = body;
+      }
+    });
+    await _saveNotes();
+  }
+
+  Future<void> _deleteNote(String id) async {
+    setState(() {
+      _notes.removeWhere((note) => note['id'] == id);
+    });
+    await _saveNotes();
   }
 
   Future<void> _loadDashboard() async {
@@ -2057,6 +2355,7 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
           isAdminRaw == 1 ||
           (isAdminRaw is String && isAdminRaw.toLowerCase().trim() == 'true');
       final isAdmin = isAdminFlag || role == 'admin';
+      final bool approved = profile?['approved'] != false;
 
       final results = await Future.wait([
         ApiService.getSummaryStats(),
@@ -2098,6 +2397,7 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
         _expenses = expenses;
         _eateryName = eateryName;
         _isAdmin = isAdmin;
+        _isApprovedStaff = approved;
         _isLoading = false;
       });
     } catch (e) {
@@ -2321,8 +2621,14 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
       itemsRaw.where((item) => item is Map).cast<Map<String, dynamic>>(),
     );
 
+    // Track items to void (for partial void)
+    final List<Map<String, dynamic>> itemsToVoid = [];
+
     // Load available menu items
     List<Map<String, dynamic>> menuItems = [];
+    Map<String, List<Map<String, dynamic>>> categorizedMenuItems = {};
+    String selectedCategory = 'All';
+
     try {
       final response = await ApiService.getMenuItems();
       if (response['data'] != null) {
@@ -2331,6 +2637,16 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
             .where((item) => item is Map)
             .cast<Map<String, dynamic>>()
             .toList();
+
+        // Categorize menu items
+        categorizedMenuItems['All'] = menuItems;
+        for (final item in menuItems) {
+          final category = (item['category'] ?? 'Other').toString();
+          if (!categorizedMenuItems.containsKey(category)) {
+            categorizedMenuItems[category] = [];
+          }
+          categorizedMenuItems[category]!.add(item);
+        }
       }
     } catch (e) {
       if (mounted) {
@@ -2345,11 +2661,16 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
     final List<Map<String, dynamic>> itemsToAdd = [];
     double additionalTotal = 0.0;
 
-    final result = await showDialog<bool>(
+    final result = await showDialog<Map<String, dynamic>>(
       context: context,
       builder: (context) {
         return StatefulBuilder(
           builder: (context, setLocalState) {
+            final categories = categorizedMenuItems.keys.toList();
+            final displayItems = selectedCategory == 'All'
+                ? menuItems
+                : categorizedMenuItems[selectedCategory] ?? [];
+
             return AlertDialog(
               title: Row(
                 children: [
@@ -2365,16 +2686,58 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
                 ],
               ),
               content: SizedBox(
-                width: 400,
-                height: 500,
+                width: 450,
+                height: 550,
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // Current items section
-                    const Text(
-                      'Current Items',
-                      style:
-                          TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                    // Current items section with void buttons
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text(
+                          'Current Items',
+                          style: TextStyle(
+                              fontWeight: FontWeight.bold, fontSize: 14),
+                        ),
+                        // Void All button
+                        TextButton.icon(
+                          onPressed: () async {
+                            final confirmed = await showDialog<bool>(
+                              context: context,
+                              builder: (context) => AlertDialog(
+                                title: const Text('Void Entire Order'),
+                                content: const Text(
+                                  'Are you sure you want to void this entire order? This will restore all stock.',
+                                ),
+                                actions: [
+                                  TextButton(
+                                    onPressed: () =>
+                                        Navigator.of(context).pop(false),
+                                    child: const Text('Cancel'),
+                                  ),
+                                  ElevatedButton(
+                                    onPressed: () =>
+                                        Navigator.of(context).pop(true),
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: Colors.red,
+                                      foregroundColor: Colors.white,
+                                    ),
+                                    child: const Text('Void Order'),
+                                  ),
+                                ],
+                              ),
+                            );
+                            if (confirmed == true) {
+                              Navigator.of(context).pop({'action': 'void_all'});
+                            }
+                          },
+                          icon: const Icon(Icons.delete_forever,
+                              size: 18, color: Colors.red),
+                          label: const Text('Void All',
+                              style: TextStyle(color: Colors.red)),
+                        ),
+                      ],
                     ),
                     const SizedBox(height: 8),
                     Container(
@@ -2389,10 +2752,138 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
                           final qty = (item['quantity'] as num?)?.toInt() ?? 1;
                           final price =
                               (item['price'] as num?)?.toDouble() ?? 0.0;
+                          final menuItemId =
+                              (item['menuItemId'] ?? '').toString();
+
+                          // Check if already marked for voiding
+                          final voidIndex = itemsToVoid.indexWhere(
+                            (v) =>
+                                (v['menuItemId'] ?? '').toString() ==
+                                menuItemId,
+                          );
+                          final voidQty = voidIndex >= 0
+                              ? (itemsToVoid[voidIndex]['quantity'] as num?)
+                                      ?.toInt() ??
+                                  0
+                              : 0;
+                          final remainingQty = qty - voidQty;
+
+                          if (remainingQty <= 0) {
+                            return const SizedBox.shrink();
+                          }
+
                           return Row(
                             children: [
-                              Expanded(child: Text('$qty x $name')),
-                              Text('₱${(price * qty).toStringAsFixed(2)}'),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text('$remainingQty x $name'),
+                                    if (voidQty > 0)
+                                      Text(
+                                        '${voidQty} voided',
+                                        style: TextStyle(
+                                          color: Colors.red.shade400,
+                                          fontSize: 12,
+                                          fontStyle: FontStyle.italic,
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                              ),
+                              Text(
+                                  '₱${(price * remainingQty).toStringAsFixed(2)}'),
+                              const SizedBox(width: 8),
+                              // Void item button
+                              IconButton(
+                                icon: Icon(Icons.remove_circle,
+                                    size: 20, color: Colors.red.shade400),
+                                onPressed: () async {
+                                  final voidQuantity = await showDialog<int>(
+                                    context: context,
+                                    builder: (context) {
+                                      int qtyToVoid = remainingQty;
+                                      return AlertDialog(
+                                        title: Text('Void $name'),
+                                        content: StatefulBuilder(
+                                          builder: (context, setQtyState) {
+                                            return Column(
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: [
+                                                const Text('Quantity to void:'),
+                                                const SizedBox(height: 16),
+                                                Row(
+                                                  mainAxisAlignment:
+                                                      MainAxisAlignment.center,
+                                                  children: [
+                                                    IconButton(
+                                                      icon: const Icon(
+                                                          Icons.remove_circle),
+                                                      onPressed: qtyToVoid > 1
+                                                          ? () => setQtyState(
+                                                              () => qtyToVoid--)
+                                                          : null,
+                                                    ),
+                                                    Text('$qtyToVoid',
+                                                        style: const TextStyle(
+                                                            fontSize: 20)),
+                                                    IconButton(
+                                                      icon: const Icon(
+                                                          Icons.add_circle),
+                                                      onPressed: qtyToVoid <
+                                                              remainingQty
+                                                          ? () => setQtyState(
+                                                              () => qtyToVoid++)
+                                                          : null,
+                                                    ),
+                                                  ],
+                                                ),
+                                              ],
+                                            );
+                                          },
+                                        ),
+                                        actions: [
+                                          TextButton(
+                                            onPressed: () =>
+                                                Navigator.of(context).pop(0),
+                                            child: const Text('Cancel'),
+                                          ),
+                                          ElevatedButton(
+                                            onPressed: () =>
+                                                Navigator.of(context)
+                                                    .pop(qtyToVoid),
+                                            style: ElevatedButton.styleFrom(
+                                              backgroundColor: Colors.red,
+                                              foregroundColor: Colors.white,
+                                            ),
+                                            child: const Text('Void'),
+                                          ),
+                                        ],
+                                      );
+                                    },
+                                  );
+                                  if (voidQuantity != null &&
+                                      voidQuantity > 0) {
+                                    setLocalState(() {
+                                      if (voidIndex >= 0) {
+                                        itemsToVoid[voidIndex]['quantity'] =
+                                            (itemsToVoid[voidIndex]['quantity']
+                                                        as num)
+                                                    .toInt() +
+                                                voidQuantity;
+                                      } else {
+                                        itemsToVoid.add({
+                                          'menuItemId': menuItemId,
+                                          'name': name,
+                                          'quantity': voidQuantity,
+                                          'price': price,
+                                        });
+                                      }
+                                    });
+                                  }
+                                },
+                                tooltip: 'Void item',
+                              ),
                             ],
                           );
                         }).toList(),
@@ -2400,18 +2891,46 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
                     ),
                     const Divider(height: 24),
 
-                    // Add items section
-                    const Text(
-                      'Add Items',
-                      style:
-                          TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                    // Add items section with category filter
+                    Row(
+                      children: [
+                        const Text(
+                          'Add Items',
+                          style: TextStyle(
+                              fontWeight: FontWeight.bold, fontSize: 14),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: DropdownButtonHideUnderline(
+                            child: DropdownButton<String>(
+                              value: selectedCategory,
+                              isDense: true,
+                              isExpanded: true,
+                              hint: const Text('Category'),
+                              onChanged: (value) {
+                                if (value != null) {
+                                  setLocalState(() {
+                                    selectedCategory = value;
+                                  });
+                                }
+                              },
+                              items: categories.map((cat) {
+                                return DropdownMenuItem<String>(
+                                  value: cat,
+                                  child: Text(cat),
+                                );
+                              }).toList(),
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                     const SizedBox(height: 8),
                     Expanded(
                       child: ListView.builder(
-                        itemCount: menuItems.length,
+                        itemCount: displayItems.length,
                         itemBuilder: (context, index) {
-                          final item = menuItems[index];
+                          final item = displayItems[index];
                           final name = (item['name'] ?? 'Unknown').toString();
                           final price =
                               (item['price'] as num?)?.toDouble() ?? 0.0;
@@ -2504,6 +3023,51 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
                       ),
                     ),
 
+                    // Show void summary if items are marked for voiding
+                    if (itemsToVoid.isNotEmpty) ...[
+                      const Divider(),
+                      Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: Colors.red.shade50,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.red.shade200),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Icon(Icons.delete_forever,
+                                    size: 16, color: Colors.red.shade600),
+                                const SizedBox(width: 4),
+                                Text(
+                                  'Items to Void:',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.red.shade600,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 4),
+                            ...itemsToVoid.map((v) {
+                              final name = (v['name'] ?? 'Unknown').toString();
+                              final qty = (v['quantity'] as num?)?.toInt() ?? 0;
+                              final price =
+                                  (v['price'] as num?)?.toDouble() ?? 0.0;
+                              return Text(
+                                '$qty x $name (₱${(price * qty).toStringAsFixed(2)})',
+                                style: TextStyle(
+                                    fontSize: 12, color: Colors.red.shade700),
+                              );
+                            }).toList(),
+                          ],
+                        ),
+                      ),
+                    ],
+
                     // Additional total
                     if (itemsToAdd.isNotEmpty) ...[
                       const Divider(),
@@ -2529,12 +3093,22 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
               ),
               actions: [
                 TextButton(
-                  onPressed: () => Navigator.of(context).pop(false),
+                  onPressed: () =>
+                      Navigator.of(context).pop({'action': 'cancel'}),
                   child: const Text('Cancel'),
                 ),
+                if (itemsToVoid.isNotEmpty)
+                  FilledButton.icon(
+                    onPressed: () => Navigator.of(context)
+                        .pop({'action': 'void_items', 'items': itemsToVoid}),
+                    style: FilledButton.styleFrom(backgroundColor: Colors.red),
+                    icon: const Icon(Icons.delete_forever),
+                    label: const Text('Void Selected'),
+                  ),
                 if (itemsToAdd.isNotEmpty)
                   FilledButton.icon(
-                    onPressed: () => Navigator.of(context).pop(true),
+                    onPressed: () => Navigator.of(context)
+                        .pop({'action': 'add_items', 'items': itemsToAdd}),
                     icon: const Icon(Icons.save),
                     label: const Text('Add Items'),
                   ),
@@ -2545,9 +3119,53 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
       },
     );
 
-    if (result == true && itemsToAdd.isNotEmpty && mounted) {
+    if (result == null || result['action'] == 'cancel') return;
+
+    // Handle void all order
+    if (result['action'] == 'void_all') {
       try {
-        await ApiService.addItemsToOrder(orderId, itemsToAdd);
+        await ApiService.voidOrder(orderId, reason: 'Voided from edit dialog');
+        await _loadDashboard();
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text('Order voided successfully. Stock restored.')),
+        );
+      } catch (e) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to void order: $e')),
+        );
+      }
+      return;
+    }
+
+    // Handle void items
+    if (result['action'] == 'void_items') {
+      final itemsToVoidList = result['items'] as List<Map<String, dynamic>>;
+      try {
+        await ApiService.voidOrderItems(orderId, itemsToVoidList,
+            reason: 'Partial void from edit dialog');
+        await _loadDashboard();
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text('Items voided successfully. Stock restored.')),
+        );
+      } catch (e) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to void items: $e')),
+        );
+      }
+      return;
+    }
+
+    // Handle add items
+    if (result['action'] == 'add_items') {
+      final items = result['items'] as List<Map<String, dynamic>>;
+      try {
+        await ApiService.addItemsToOrder(orderId, items);
         await _loadDashboard();
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
@@ -2621,7 +3239,7 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
                           '₱${total.toStringAsFixed(2)}',
                           style: const TextStyle(fontWeight: FontWeight.w700),
                         ),
-                        onTap: _isAdmin
+                        onTap: (_isAdmin || _isApprovedStaff)
                             ? () {
                                 Navigator.of(context).pop();
                                 _showOrderDetails(order);
@@ -2643,7 +3261,8 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
   }
 
   void _showOrderDetails(Map<String, dynamic> order) {
-    if (!_isAdmin) return;
+    // Allow both admin and approved staff to view order details
+    if (!_isAdmin && !_isApprovedStaff) return;
 
     String formatTimestamp(dynamic value) {
       if (value == null) return '';
@@ -2682,6 +3301,7 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
     final createdAt = formatTimestamp(order['createdAt']);
     final completedAt = formatTimestamp(order['completedAt']);
     final voidedAt = formatTimestamp(order['voidedAt']);
+    final createdByName = (order['createdByName'] ?? '').toString();
 
     final itemsRaw = order['items'];
     final items = itemsRaw is List ? itemsRaw : const [];
@@ -2714,6 +3334,8 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
                   if (paymentMethod.trim().isNotEmpty)
                     Text('Payment: $paymentMethod'),
                   if (createdAt.isNotEmpty) Text('Created: $createdAt'),
+                  if (createdByName.isNotEmpty)
+                    Text('Created by: $createdByName'),
                   if (completedAt.isNotEmpty) Text('Completed: $completedAt'),
                   if (notes.trim().isNotEmpty) ...[
                     const SizedBox(height: 8),
@@ -2829,84 +3451,118 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
           ),
           actions: [
             if (status.trim().toLowerCase() == 'pending') ...[
+              // Complete Order button - available for both admin and staff
               FilledButton.icon(
-                onPressed: () {
-                  Navigator.of(context).pop();
-                  _showEditOrderDialog(order);
-                },
-                icon: const Icon(Icons.edit),
-                label: const Text('Edit Order'),
-              ),
-              TextButton(
                 onPressed: () async {
-                  final controller = TextEditingController();
                   try {
-                    final confirmed = await showDialog<bool>(
-                      context: context,
-                      builder: (context) {
-                        return AlertDialog(
-                          title: const Text('Void Order'),
-                          content: SizedBox(
-                            width: 520,
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const Text(
-                                  'This will mark the order as voided. Stocks will not be updated.',
-                                ),
-                                const SizedBox(height: 12),
-                                TextField(
-                                  controller: controller,
-                                  decoration: const InputDecoration(
-                                    labelText: 'Reason (optional)',
-                                    border: OutlineInputBorder(),
-                                  ),
-                                  maxLines: 2,
-                                ),
-                              ],
-                            ),
-                          ),
-                          actions: [
-                            TextButton(
-                              onPressed: () => Navigator.of(context).pop(false),
-                              child: const Text('Cancel'),
-                            ),
-                            ElevatedButton(
-                              onPressed: () => Navigator.of(context).pop(true),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.red,
-                                foregroundColor: Colors.white,
-                              ),
-                              child: const Text('Void'),
-                            ),
-                          ],
-                        );
-                      },
-                    );
-                    if (confirmed != true) return;
-                    await ApiService.voidOrder(id, reason: controller.text);
+                    await ApiService.completeOrder(id);
+                    // Play success sound
+                    await SoundService.playOrderCompleted();
                     if (!mounted) return;
                     await _loadDashboard();
                     if (!mounted) return;
                     Navigator.of(context).pop();
                     ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Order voided.')),
+                      const SnackBar(
+                          content: Text('Order completed successfully.')),
                     );
                   } catch (e) {
                     if (!mounted) return;
                     ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('Failed to void order: $e')),
+                      SnackBar(content: Text('Failed to complete order: $e')),
                     );
-                  } finally {
-                    controller.dispose();
                   }
                 },
-                child: const Text(
-                  'Void',
-                  style: TextStyle(color: Colors.red),
+                icon: const Icon(Icons.check_circle),
+                label: const Text('Complete Order'),
+                style: FilledButton.styleFrom(
+                  backgroundColor: Colors.green,
                 ),
               ),
+              // Edit Order button - only for admin
+              if (_isAdmin)
+                FilledButton.icon(
+                  onPressed: () {
+                    Navigator.of(context).pop();
+                    _showEditOrderDialog(order);
+                  },
+                  icon: const Icon(Icons.edit),
+                  label: const Text('Edit Order'),
+                ),
+              // Void button - available for both admin and staff
+              if (_isAdmin || _isApprovedStaff)
+                TextButton(
+                  onPressed: () async {
+                    final controller = TextEditingController();
+                    try {
+                      final confirmed = await showDialog<bool>(
+                        context: context,
+                        builder: (context) {
+                          return AlertDialog(
+                            title: const Text('Void Order'),
+                            content: SizedBox(
+                              width: 520,
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Text(
+                                    'This will mark the order as voided. Stocks will not be updated.',
+                                  ),
+                                  const SizedBox(height: 12),
+                                  TextField(
+                                    controller: controller,
+                                    decoration: const InputDecoration(
+                                      labelText: 'Reason (optional)',
+                                      border: OutlineInputBorder(),
+                                    ),
+                                    maxLines: 2,
+                                  ),
+                                ],
+                              ),
+                            ),
+                            actions: [
+                              TextButton(
+                                onPressed: () =>
+                                    Navigator.of(context).pop(false),
+                                child: const Text('Cancel'),
+                              ),
+                              ElevatedButton(
+                                onPressed: () =>
+                                    Navigator.of(context).pop(true),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: Colors.red,
+                                  foregroundColor: Colors.white,
+                                ),
+                                child: const Text('Void'),
+                              ),
+                            ],
+                          );
+                        },
+                      );
+                      if (confirmed != true) return;
+                      await ApiService.voidOrder(id, reason: controller.text);
+                      if (!mounted) return;
+                      await _loadDashboard();
+                      if (!mounted) return;
+                      Navigator.of(context).pop();
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Order voided.')),
+                      );
+                    } catch (e) {
+                      if (!mounted) return;
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('Failed to void order: $e')),
+                      );
+                    } finally {
+                      controller.dispose();
+                    }
+                  },
+                  child: const Text(
+                    'Void',
+                    style: TextStyle(color: Colors.red),
+                  ),
+                ),
             ],
             if (status.trim().toLowerCase() == 'rejected')
               TextButton(
@@ -2964,13 +3620,13 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
               : ListView(
                   padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
                   children: [
-                    _buildHeader(context),
-                    const SizedBox(height: 16),
                     _buildKpis(context),
                     const SizedBox(height: 16),
                     _buildQuickActions(context),
                     const SizedBox(height: 16),
                     _buildFinanceOverview(context),
+                    const SizedBox(height: 16),
+                    _buildNotesCard(context),
                     const SizedBox(height: 16),
                     LayoutBuilder(
                       builder: (context, constraints) {
@@ -3001,64 +3657,6 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
                     ],
                   ],
                 ),
-    );
-  }
-
-  Widget _buildHeader(BuildContext context) {
-    final userEmail = context.read<AuthProvider>().user?.email ?? '';
-    final subtitle = _eateryName.isNotEmpty
-        ? _eateryName
-        : (userEmail.isEmpty ? 'Welcome back' : 'Welcome back, $userEmail');
-    return Card(
-      elevation: 0,
-      color: Theme.of(context).colorScheme.primary.withOpacity(0.06),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Row(
-          children: [
-            Container(
-              width: 44,
-              height: 44,
-              decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.primary.withOpacity(0.12),
-                borderRadius: BorderRadius.circular(14),
-              ),
-              child: Icon(
-                Icons.dashboard_outlined,
-                color: Theme.of(context).colorScheme.primary,
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'Dashboard',
-                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    subtitle,
-                    style: TextStyle(
-                      color: Colors.grey.shade700,
-                      fontWeight: FontWeight.w500,
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ],
-              ),
-            ),
-            IconButton(
-              tooltip: 'Refresh',
-              onPressed: _loadDashboard,
-              icon: const Icon(Icons.refresh),
-            ),
-          ],
-        ),
-      ),
     );
   }
 
@@ -3298,7 +3896,7 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
                         padding: const EdgeInsets.symmetric(
                             horizontal: 8, vertical: 3),
                         decoration: BoxDecoration(
-                          color: Colors.green.withOpacity(0.12),
+                          color: Colors.green.withValues(alpha: 0.12),
                           borderRadius: BorderRadius.circular(999),
                         ),
                         child: Text(
@@ -3405,6 +4003,349 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
     );
   }
 
+  Widget _buildNotesCard(BuildContext context) {
+    return Card(
+      elevation: 0,
+      color: Colors.white,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: BorderSide(color: Colors.grey.shade200),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  Icons.sticky_note_2_outlined,
+                  color: Colors.amber.shade600,
+                  size: 20,
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  'Notes',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.grey.shade800,
+                  ),
+                ),
+                const Spacer(),
+                if (_notes.isNotEmpty)
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade100,
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Text(
+                      '${_notes.length} note${_notes.length != 1 ? 's' : ''}',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.grey.shade700,
+                      ),
+                    ),
+                  ),
+                const SizedBox(width: 8),
+                IconButton(
+                  onPressed: () => _showAddNoteDialog(context),
+                  icon: Icon(Icons.add_circle_outline,
+                      color: Colors.amber.shade600),
+                  iconSize: 24,
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(),
+                  tooltip: 'Add note',
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            if (_notes.isEmpty)
+              Container(
+                padding: const EdgeInsets.all(24),
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade50,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Center(
+                  child: Column(
+                    children: [
+                      Icon(
+                        Icons.sticky_note_2_outlined,
+                        size: 40,
+                        color: Colors.grey.shade400,
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'No notes yet',
+                        style: TextStyle(
+                          color: Colors.grey.shade600,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Tap + to add a note',
+                        style: TextStyle(
+                          color: Colors.grey.shade500,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              )
+            else
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  final isVeryNarrow = constraints.maxWidth < 400;
+                  final isNarrow = constraints.maxWidth < 600;
+                  final crossAxisCount = isVeryNarrow ? 1 : (isNarrow ? 2 : 4);
+
+                  return Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: _notes.reversed.map((note) {
+                      final header = note['header']?.toString() ?? 'Untitled';
+                      final body = note['body']?.toString() ?? '';
+                      final createdAt = DateTime.tryParse(
+                              note['createdAt']?.toString() ?? '') ??
+                          DateTime.now();
+                      final dateStr =
+                          '${createdAt.month.toString().padLeft(2, '0')}/${createdAt.day.toString().padLeft(2, '0')}/${createdAt.year}';
+                      final timeStr =
+                          '${createdAt.hour.toString().padLeft(2, '0')}:${createdAt.minute.toString().padLeft(2, '0')}';
+
+                      final bodyPreview = body.length > 50
+                          ? '${body.substring(0, 50)}...'
+                          : body;
+
+                      final itemWidth =
+                          (constraints.maxWidth - (crossAxisCount - 1) * 8) /
+                              crossAxisCount;
+
+                      return SizedBox(
+                        width: itemWidth,
+                        child: InkWell(
+                          onTap: () => _showEditNoteDialog(context, note),
+                          borderRadius: BorderRadius.circular(12),
+                          child: Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: Colors.amber.shade50,
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: Colors.amber.shade100),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    Icon(
+                                      Icons.sticky_note_2_outlined,
+                                      color: Colors.amber.shade600,
+                                      size: 16,
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: Text(
+                                        header,
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.w700,
+                                          fontSize: 14,
+                                        ),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                    Text(
+                                      '$dateStr $timeStr',
+                                      style: TextStyle(
+                                        fontSize: 10,
+                                        color: Colors.grey.shade600,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                if (body.isNotEmpty) ...[
+                                  const SizedBox(height: 6),
+                                  Text(
+                                    bodyPreview,
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: Colors.grey.shade700,
+                                    ),
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ),
+                        ),
+                      );
+                    }).toList(),
+                  );
+                },
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showAddNoteDialog(BuildContext context) async {
+    final headerController = TextEditingController();
+    final bodyController = TextEditingController();
+
+    await showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Add Note'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: headerController,
+              decoration: const InputDecoration(
+                labelText: 'Title',
+                hintText: 'Enter note title',
+                border: OutlineInputBorder(),
+              ),
+              maxLines: 1,
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: bodyController,
+              decoration: const InputDecoration(
+                labelText: 'Content',
+                hintText: 'Enter note content',
+                border: OutlineInputBorder(),
+              ),
+              maxLines: 5,
+              minLines: 3,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () {
+              if (headerController.text.trim().isNotEmpty) {
+                _addNote(
+                  headerController.text.trim(),
+                  bodyController.text.trim(),
+                );
+                Navigator.of(context).pop();
+              }
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _showEditNoteDialog(
+      BuildContext context, Map<String, dynamic> note) async {
+    final headerController =
+        TextEditingController(text: note['header']?.toString() ?? '');
+    final bodyController =
+        TextEditingController(text: note['body']?.toString() ?? '');
+    final noteId = note['id']?.toString() ?? '';
+
+    await showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Edit Note'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: headerController,
+              decoration: const InputDecoration(
+                labelText: 'Title',
+                hintText: 'Enter note title',
+                border: OutlineInputBorder(),
+              ),
+              maxLines: 1,
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: bodyController,
+              decoration: const InputDecoration(
+                labelText: 'Content',
+                hintText: 'Enter note content',
+                border: OutlineInputBorder(),
+              ),
+              maxLines: 5,
+              minLines: 3,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton.icon(
+            onPressed: () async {
+              final confirmed = await showDialog<bool>(
+                context: context,
+                builder: (context) => AlertDialog(
+                  title: const Text('Delete Note?'),
+                  content:
+                      const Text('Are you sure you want to delete this note?'),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.of(context).pop(false),
+                      child: const Text('Cancel'),
+                    ),
+                    FilledButton(
+                      style: FilledButton.styleFrom(
+                        backgroundColor: Colors.red,
+                      ),
+                      onPressed: () => Navigator.of(context).pop(true),
+                      child: const Text('Delete'),
+                    ),
+                  ],
+                ),
+              );
+              if (confirmed == true) {
+                _deleteNote(noteId);
+                Navigator.of(context).pop();
+              }
+            },
+            icon: const Icon(Icons.delete_forever, color: Colors.red),
+            label: const Text('Delete', style: TextStyle(color: Colors.red)),
+          ),
+          const Spacer(),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () {
+              if (headerController.text.trim().isNotEmpty) {
+                _updateNote(
+                  noteId,
+                  headerController.text.trim(),
+                  bodyController.text.trim(),
+                );
+                Navigator.of(context).pop();
+              }
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+  }
+
   DateTime? _asDate(dynamic value) {
     if (value == null) return null;
     if (value is DateTime) return value;
@@ -3449,7 +4390,7 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
                         padding: const EdgeInsets.symmetric(
                             horizontal: 8, vertical: 3),
                         decoration: BoxDecoration(
-                          color: Colors.red.withOpacity(0.12),
+                          color: Colors.red.withValues(alpha: 0.12),
                           borderRadius: BorderRadius.circular(999),
                         ),
                         child: Text(
@@ -3509,7 +4450,9 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
                   style: const TextStyle(fontWeight: FontWeight.w600),
                 ),
                 subtitle: Text('Created: $dateText'),
-                onTap: _isAdmin ? () => _showOrderDetails(order) : null,
+                onTap: (_isAdmin || _isApprovedStaff)
+                    ? () => _showOrderDetails(order)
+                    : null,
                 trailing: ConstrainedBox(
                   constraints: BoxConstraints(
                     maxWidth: isNarrow ? 88 : 140,
@@ -3646,7 +4589,7 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
                         padding: const EdgeInsets.symmetric(
                             horizontal: 8, vertical: 3),
                         decoration: BoxDecoration(
-                          color: Colors.orange.withOpacity(0.12),
+                          color: Colors.orange.withValues(alpha: 0.12),
                           borderRadius: BorderRadius.circular(999),
                         ),
                         child: Text(
@@ -3676,7 +4619,7 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
                   padding:
                       const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                   decoration: BoxDecoration(
-                    color: Colors.red.withOpacity(0.08),
+                    color: Colors.red.withValues(alpha: 0.08),
                     borderRadius: BorderRadius.circular(8),
                     border: Border.all(color: Colors.red.shade200),
                   ),
@@ -3717,7 +4660,7 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
                   padding:
                       const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                   decoration: BoxDecoration(
-                    color: Colors.orange.withOpacity(0.08),
+                    color: Colors.orange.withValues(alpha: 0.08),
                     borderRadius: BorderRadius.circular(8),
                     border: Border.all(color: Colors.orange.shade200),
                   ),
@@ -3844,8 +4787,8 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
                     color: isOutOfStock
-                        ? Colors.red.withOpacity(0.08)
-                        : Colors.orange.withOpacity(0.08),
+                        ? Colors.red.withValues(alpha: 0.08)
+                        : Colors.orange.withValues(alpha: 0.08),
                     borderRadius: BorderRadius.circular(12),
                     border: Border.all(
                       color: isOutOfStock
@@ -3986,7 +4929,7 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
                         padding: const EdgeInsets.symmetric(
                             horizontal: 8, vertical: 3),
                         decoration: BoxDecoration(
-                          color: Colors.indigo.withOpacity(0.10),
+                          color: Colors.indigo.withValues(alpha: 0.10),
                           borderRadius: BorderRadius.circular(999),
                         ),
                         child: Text(
@@ -4041,7 +4984,9 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
                     style: const TextStyle(fontWeight: FontWeight.w600),
                   ),
                   subtitle: Text(status),
-                  onTap: _isAdmin ? () => _showOrderDetails(order) : null,
+                  onTap: (_isAdmin || _isApprovedStaff)
+                      ? () => _showOrderDetails(order)
+                      : null,
                   trailing: canComplete
                       ? ConstrainedBox(
                           constraints: BoxConstraints(
@@ -4159,7 +5104,7 @@ class _FinanceKpiItem extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.08),
+        color: color.withValues(alpha: 0.08),
         borderRadius: BorderRadius.circular(12),
       ),
       child: Column(
@@ -4188,71 +5133,6 @@ class _FinanceKpiItem extends StatelessWidget {
             overflow: TextOverflow.ellipsis,
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _StatCard extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final String value;
-  final Color color;
-
-  const _StatCard({
-    required this.icon,
-    required this.label,
-    required this.value,
-    required this.color,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      elevation: 0,
-      color: color.withValues(alpha: 0.08),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(16),
-        side: BorderSide(color: color.withValues(alpha: 0.2)),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Container(
-              width: 36,
-              height: 36,
-              decoration: BoxDecoration(
-                color: color.withValues(alpha: 0.15),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Icon(
-                icon,
-                color: color,
-                size: 20,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              value,
-              style: TextStyle(
-                fontSize: 20,
-                fontWeight: FontWeight.bold,
-                color: color.withValues(alpha: 0.9),
-              ),
-            ),
-            const SizedBox(height: 2),
-            Text(
-              label,
-              style: TextStyle(
-                fontSize: 12,
-                color: color.withValues(alpha: 0.7),
-                fontWeight: FontWeight.w500,
-              ),
-            ),
-          ],
-        ),
       ),
     );
   }
@@ -4289,7 +5169,7 @@ class _KpiCard extends StatelessWidget {
               width: isPhoneNarrow ? 36 : 40,
               height: isPhoneNarrow ? 36 : 40,
               decoration: BoxDecoration(
-                color: color.withOpacity(0.12),
+                color: color.withValues(alpha: 0.12),
                 borderRadius: BorderRadius.circular(12),
               ),
               child: Icon(

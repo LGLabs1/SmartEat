@@ -215,76 +215,251 @@ exports.getSummaryStats = async (req, res) => {
 };
 
 /**
- * Get demand forecast from ML service
+ * Get order count forecast using statistical model (day-of-week moving averages)
  */
-exports.getDemandForecast = async (req, res) => {
+exports.getOrderCountForecast = async (req, res) => {
   try {
     const { days = 7 } = req.query;
-    
-    // Call ML service
-    const mlServiceUrl = process.env.ML_SERVICE_URL || 'http://localhost:8000';
-    const response = await axios.get(`${mlServiceUrl}/api/forecast/demand`, {
-      params: {
-        eateryId: req.user.eateryId,
-        days: parseInt(days)
+    const forecastDays = parseInt(days);
+    const eateryId = req.user.eateryId;
+
+    // Fetch last 12 weeks of order data for pattern analysis
+    const weeksToAnalyze = 12;
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - (weeksToAnalyze * 7));
+
+    // Use simpler query to avoid composite index requirements
+    const ordersSnapshot = await db
+      .collection('orders')
+      .where('eateryId', '==', eateryId)
+      .where('createdAt', '>=', startDate)
+      .orderBy('createdAt', 'asc')
+      .get();
+
+    // Aggregate orders by date and day of week
+    const dailyOrders = {};
+    const dayOfWeekCounts = { 0: [], 1: [], 2: [], 3: [], 4: [], 5: [], 6: [] }; // Sun=0 to Sat=6
+
+    ordersSnapshot.docs.forEach(doc => {
+      const order = doc.data();
+      
+      // Filter out cancelled/voided orders only (keep completed, pending, preparing, etc.)
+      const status = order.status?.toString().toLowerCase();
+      if (status === 'cancelled' || status === 'void' || status === 'voided') {
+        return;
+      }
+      
+      const date = order.createdAt?.toDate ? order.createdAt.toDate() : new Date(order.createdAt);
+      if (isNaN(date.getTime())) return; // Skip invalid dates
+      
+      const dateKey = date.toISOString().split('T')[0];
+      const dayOfWeek = date.getDay();
+
+      if (!dailyOrders[dateKey]) {
+        dailyOrders[dateKey] = { count: 0, dayOfWeek, totalRevenue: 0 };
+      }
+      dailyOrders[dateKey].count += 1;
+      dailyOrders[dateKey].totalRevenue += (order.totalAmount || 0);
+    });
+
+    // Calculate average orders for each day of the week (skip days with 0 orders)
+    Object.values(dailyOrders).forEach(day => {
+      if (day.count > 0) {
+        dayOfWeekCounts[day.dayOfWeek].push(day.count);
       }
     });
 
-    res.json(response.data);
-  } catch (error) {
-    console.error('Demand forecast error:', error);
-    
-    // Return mock data if ML service is unavailable
-    const mockData = [];
-    for (let i = 1; i <= parseInt(days || 7); i++) {
-      mockData.push({
+    const dayOfWeekAverages = {};
+    const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+    for (let dow = 0; dow <= 6; dow++) {
+      const counts = dayOfWeekCounts[dow];
+      if (counts.length > 0) {
+        // Calculate average and apply trend adjustment
+        const avg = counts.reduce((a, b) => a + b, 0) / counts.length;
+        // Calculate standard deviation for confidence
+        const variance = counts.reduce((sum, val) => sum + Math.pow(val - avg, 2), 0) / counts.length;
+        const stdDev = Math.sqrt(variance);
+        dayOfWeekAverages[dow] = {
+          average: Math.round(avg),
+          stdDev: Math.round(stdDev),
+          sampleSize: counts.length
+        };
+      } else {
+        // Fallback if no data for this day
+        dayOfWeekAverages[dow] = { average: 15, stdDev: 5, sampleSize: 0 };
+      }
+    }
+
+    // Calculate overall trend (are orders increasing or decreasing?)
+    const dates = Object.keys(dailyOrders).sort();
+    let trendFactor = 1.0;
+    if (dates.length >= 14) {
+      const firstWeekAvg = dates.slice(0, 7).reduce((sum, d) => sum + dailyOrders[d].count, 0) / 7;
+      const lastWeekAvg = dates.slice(-7).reduce((sum, d) => sum + dailyOrders[d].count, 0) / 7;
+      if (firstWeekAvg > 0) {
+        trendFactor = lastWeekAvg / firstWeekAvg;
+        trendFactor = Math.max(0.8, Math.min(1.2, trendFactor)); // Cap trend between -20% and +20%
+      }
+    }
+
+    // Generate forecast for requested days
+    const now = new Date();
+    const forecast = [];
+
+    for (let i = 1; i <= forecastDays; i++) {
+      const forecastDate = new Date(now);
+      forecastDate.setDate(forecastDate.getDate() + i);
+      const dayOfWeek = forecastDate.getDay();
+      const dayAvg = dayOfWeekAverages[dayOfWeek];
+
+      // Apply trend factor
+      const predictedOrders = Math.round(dayAvg.average * trendFactor);
+      const confidence = Math.min(0.95, Math.max(0.5, 1 - (dayAvg.stdDev / (dayAvg.average || 1))));
+
+      forecast.push({
         day: i,
-        predictedDemand: 20 + (i * 3),
-        confidence: 0.85
+        date: forecastDate.toISOString().split('T')[0],
+        dayName: dayNames[dayOfWeek],
+        predictedOrders: Math.max(0, predictedOrders),
+        confidence: Math.round(confidence * 100) / 100,
+        sampleSize: dayAvg.sampleSize,
+        isWeekend: dayOfWeek === 0 || dayOfWeek === 6
       });
     }
-    
+
     res.json({
-      data: mockData,
-      note: 'Mock forecast - ML service unavailable'
+      data: forecast,
+      model: 'statistical_day_of_week',
+      trendFactor: Math.round(trendFactor * 100) / 100,
+      historicalWeeksAnalyzed: weeksToAnalyze,
+      note: `Based on ${weeksToAnalyze} weeks of historical order data`
     });
+  } catch (error) {
+    console.error('Order count forecast error:', error);
+    res.status(500).json({ error: 'Failed to generate order count forecast' });
   }
 };
 
 /**
- * Get sales forecast from ML service
+ * Get sales forecast using statistical model (day-of-week moving averages)
  */
 exports.getSalesForecast = async (req, res) => {
   try {
     const { days = 7 } = req.query;
-    
-    // Call ML service
-    const mlServiceUrl = process.env.ML_SERVICE_URL || 'http://localhost:8000';
-    const response = await axios.get(`${mlServiceUrl}/api/forecast/sales`, {
-      params: {
-        eateryId: req.user.eateryId,
-        days: parseInt(days)
+    const forecastDays = parseInt(days);
+    const eateryId = req.user.eateryId;
+
+    // Fetch last 12 weeks of order data
+    const weeksToAnalyze = 12;
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - (weeksToAnalyze * 7));
+
+    const ordersSnapshot = await db
+      .collection('orders')
+      .where('eateryId', '==', eateryId)
+      .where('createdAt', '>=', startDate)
+      .orderBy('createdAt', 'asc')
+      .get();
+
+    // Aggregate daily revenue by day of week
+    const dailyRevenue = {};
+    const dayOfWeekRevenue = { 0: [], 1: [], 2: [], 3: [], 4: [], 5: [], 6: [] };
+
+    ordersSnapshot.docs.forEach(doc => {
+      const order = doc.data();
+      
+      // Filter out cancelled/voided orders only (keep completed, pending, preparing, etc.)
+      const status = order.status?.toString().toLowerCase();
+      if (status === 'cancelled' || status === 'void' || status === 'voided') {
+        return;
+      }
+      
+      const date = order.createdAt?.toDate ? order.createdAt.toDate() : new Date(order.createdAt);
+      if (isNaN(date.getTime())) return;
+      
+      const dateKey = date.toISOString().split('T')[0];
+      const dayOfWeek = date.getDay();
+      const amount = order.totalAmount || 0;
+
+      if (!dailyRevenue[dateKey]) {
+        dailyRevenue[dateKey] = { revenue: 0, dayOfWeek };
+      }
+      dailyRevenue[dateKey].revenue += amount;
+    });
+
+    // Calculate average revenue for each day of week (skip days with 0 revenue)
+    Object.values(dailyRevenue).forEach(day => {
+      if (day.revenue > 0) {
+        dayOfWeekRevenue[day.dayOfWeek].push(day.revenue);
       }
     });
 
-    res.json(response.data);
-  } catch (error) {
-    console.error('Sales forecast error:', error);
-    
-    // Return mock data if ML service is unavailable
-    const mockData = [];
-    for (let i = 1; i <= parseInt(days || 7); i++) {
-      mockData.push({
+    const dayOfWeekAverages = {};
+    const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+    for (let dow = 0; dow <= 6; dow++) {
+      const revenues = dayOfWeekRevenue[dow];
+      if (revenues.length > 0) {
+        const avg = revenues.reduce((a, b) => a + b, 0) / revenues.length;
+        const variance = revenues.reduce((sum, val) => sum + Math.pow(val - avg, 2), 0) / revenues.length;
+        const stdDev = Math.sqrt(variance);
+        dayOfWeekAverages[dow] = {
+          average: Math.round(avg),
+          stdDev: Math.round(stdDev),
+          sampleSize: revenues.length
+        };
+      } else {
+        dayOfWeekAverages[dow] = { average: 5000, stdDev: 1000, sampleSize: 0 };
+      }
+    }
+
+    // Calculate trend factor
+    const dates = Object.keys(dailyRevenue).sort();
+    let trendFactor = 1.0;
+    if (dates.length >= 14) {
+      const firstWeekAvg = dates.slice(0, 7).reduce((sum, d) => sum + dailyRevenue[d].revenue, 0) / 7;
+      const lastWeekAvg = dates.slice(-7).reduce((sum, d) => sum + dailyRevenue[d].revenue, 0) / 7;
+      if (firstWeekAvg > 0) {
+        trendFactor = lastWeekAvg / firstWeekAvg;
+        trendFactor = Math.max(0.8, Math.min(1.2, trendFactor));
+      }
+    }
+
+    // Generate forecast
+    const now = new Date();
+    const forecast = [];
+
+    for (let i = 1; i <= forecastDays; i++) {
+      const forecastDate = new Date(now);
+      forecastDate.setDate(forecastDate.getDate() + i);
+      const dayOfWeek = forecastDate.getDay();
+      const dayAvg = dayOfWeekAverages[dayOfWeek];
+
+      const predictedRevenue = Math.round(dayAvg.average * trendFactor);
+      const confidence = Math.min(0.95, Math.max(0.5, 1 - (dayAvg.stdDev / (dayAvg.average || 1))));
+
+      forecast.push({
         day: i,
-        predictedSales: 2000 + (i * 100),
-        confidence: 0.82
+        date: forecastDate.toISOString().split('T')[0],
+        dayName: dayNames[dayOfWeek],
+        predictedRevenue: Math.max(0, predictedRevenue),
+        confidence: Math.round(confidence * 100) / 100,
+        sampleSize: dayAvg.sampleSize,
+        isWeekend: dayOfWeek === 0 || dayOfWeek === 6
       });
     }
-    
+
     res.json({
-      data: mockData,
-      note: 'Mock forecast - ML service unavailable'
+      data: forecast,
+      model: 'statistical_day_of_week_revenue',
+      trendFactor: Math.round(trendFactor * 100) / 100,
+      historicalWeeksAnalyzed: weeksToAnalyze,
+      note: `Based on ${weeksToAnalyze} weeks of historical revenue data`
     });
+  } catch (error) {
+    console.error('Sales forecast error:', error);
+    res.status(500).json({ error: 'Failed to generate sales forecast' });
   }
 };
 

@@ -96,15 +96,16 @@ class _RecipeScreenState extends State<RecipeScreen> {
       if (!mounted) return;
     }
 
-    final created = await showDialog<bool>(
+    final result = await showDialog<Map<String, dynamic>?>(
       context: context,
       builder: (context) {
         return _AddRecipeDialog(inventory: _inventory);
       },
     );
 
-    if (created == true) {
-      await _loadRecipes();
+    // Optimistic update - add to local list without full refresh
+    if (result != null && result['id'] != null) {
+      _addRecipeToLocal(result);
     }
   }
 
@@ -324,6 +325,30 @@ class _RecipeScreenState extends State<RecipeScreen> {
         _isLoading = false;
       });
     }
+  }
+
+  // Optimistic update helpers
+  void _addRecipeToLocal(Map<String, dynamic> recipe) {
+    setState(() {
+      _recipes = [recipe, ..._recipes];
+    });
+  }
+
+  void _removeRecipeFromLocal(String id) {
+    setState(() {
+      _recipes = _recipes.where((r) => r['id'] != id).toList();
+    });
+  }
+
+  void _updateRecipeInLocal(String id, Map<String, dynamic> updates) {
+    setState(() {
+      _recipes = _recipes.map((r) {
+        if (r['id'] == id) {
+          return {...r, ...updates};
+        }
+        return r;
+      }).toList();
+    });
   }
 
   int _asInt(dynamic value, {required int fallback}) {
@@ -709,13 +734,13 @@ class _AddRecipeDialogState extends State<_AddRecipeDialog> {
 
     setState(() => _isSaving = true);
     try {
-      await ApiService.createRecipe(
+      final result = await ApiService.createRecipe(
         name: _nameController.text.trim(),
         baseServings: baseServings,
         ingredients: ingredients,
       );
       if (!mounted) return;
-      Navigator.of(context).pop(true);
+      Navigator.of(context).pop(result['data'] as Map<String, dynamic>?);
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(

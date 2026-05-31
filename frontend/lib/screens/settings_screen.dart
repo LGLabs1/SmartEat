@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import '../services/notification_service.dart';
 import '../services/auth_provider.dart';
 import 'package:provider/provider.dart';
@@ -43,6 +44,39 @@ class _SettingsScreenState extends State<SettingsScreen> {
   void initState() {
     super.initState();
     _loadSettings();
+    _loadBusinessSettings();
+  }
+
+  Future<void> _loadBusinessSettings() async {
+    try {
+      final uid = context.read<AuthProvider>().user?.uid;
+      if (uid == null || uid.isEmpty) return;
+      final doc = await FirebaseFirestore.instance
+          .collection('user_preferences')
+          .doc(uid)
+          .get();
+      final symbol = (doc.data()?['currencySymbol'] ?? '').toString();
+      if (!mounted) return;
+      if (symbol.trim().isEmpty) return;
+      setState(() {
+        _currencySymbol = symbol.trim();
+      });
+    } catch (_) {
+      // Ignore settings load failures
+    }
+  }
+
+  Future<void> _saveCurrencySymbol(String symbol) async {
+    try {
+      final uid = context.read<AuthProvider>().user?.uid;
+      if (uid == null || uid.isEmpty) return;
+      await FirebaseFirestore.instance
+          .collection('user_preferences')
+          .doc(uid)
+          .set({'currencySymbol': symbol.trim()}, SetOptions(merge: true));
+    } catch (_) {
+      // Ignore save failures
+    }
   }
 
   Future<void> _loadSettings() async {
@@ -301,6 +335,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               onChanged: (value) {
                 if (value != null) {
                   setState(() => _currencySymbol = value);
+                  _saveCurrencySymbol(value);
                 }
               },
             ),

@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'package:flutter/foundation.dart';
 import 'notification_service.dart';
 import '../services/api_service.dart';
 
@@ -38,8 +37,6 @@ class NotificationTriggerManager {
 
   /// Run all notification checks
   Future<void> _runAllChecks() async {
-    debugPrint('Running notification checks...');
-
     if (!_notificationService.notificationsEnabled) return;
 
     await Future.wait([
@@ -64,8 +61,7 @@ class NotificationTriggerManager {
       final lastCheck = _lastNotifications[lastCheckKey];
 
       // Only notify once per hour for low stock
-      if (lastCheck != null &&
-          now.difference(lastCheck).inMinutes < 60) {
+      if (lastCheck != null && now.difference(lastCheck).inMinutes < 60) {
         return;
       }
 
@@ -103,11 +99,7 @@ class NotificationTriggerManager {
         ...newItems.map((i) => i['id'].toString()),
       ];
       _lastNotifications[lastCheckKey] = now;
-
-      debugPrint('Low stock notification sent: $message');
-    } catch (e) {
-      debugPrint('Error checking low stock: $e');
-    }
+    } catch (e) {}
   }
 
   /// Check for upcoming bills and notify
@@ -121,74 +113,134 @@ class NotificationTriggerManager {
       if (bills.isEmpty) return;
 
       final now = DateTime.now();
+      final today = DateTime(now.year, now.month, now.day);
       final reminderDays = _notificationService.billReminderDays;
       final reminderDate = now.add(Duration(days: reminderDays));
 
-      // Find bills due within the reminder window
-      final upcomingBills = bills.where((bill) {
+      // Separate overdue and upcoming bills
+      final overdueBills = <dynamic>[];
+      final upcomingBills = <dynamic>[];
+
+      for (final bill in bills) {
         final status = (bill['status'] ?? '').toString().toLowerCase();
-        if (status == 'paid') return false;
+        if (status == 'paid') continue;
 
         final dueDate = _parseDate(bill['dueDate']);
-        if (dueDate == null) return false;
+        if (dueDate == null) continue;
 
-        // Due between now and reminder date
-        return dueDate.isAfter(now.subtract(const Duration(days: 1))) &&
-            dueDate.isBefore(reminderDate.add(const Duration(days: 1)));
-      }).toList();
+        final dueDay = DateTime(dueDate.year, dueDate.month, dueDate.day);
 
-      if (upcomingBills.isEmpty) return;
-
-      final lastCheckKey = 'upcoming_bills';
-      final lastCheck = _lastNotifications[lastCheckKey];
-
-      // Only notify once per day for bills
-      if (lastCheck != null &&
-          now.difference(lastCheck).inHours < 24) {
-        return;
+        if (dueDay.isBefore(today)) {
+          // Overdue
+          overdueBills.add(bill);
+        } else if (dueDay.isBefore(reminderDate.add(const Duration(days: 1)))) {
+          // Due soon (within reminder window)
+          upcomingBills.add(bill);
+        }
       }
 
-      // Get earliest due bill
-      upcomingBills.sort((a, b) {
-        final aDate = _parseDate(a['dueDate']) ?? now;
-        final bDate = _parseDate(b['dueDate']) ?? now;
-        return aDate.compareTo(bDate);
-      });
-
-      final earliestBill = upcomingBills.first;
-      final billName = earliestBill['name']?.toString() ?? 'Bill';
-      final dueDate = _parseDate(earliestBill['dueDate']);
-      final daysUntil = dueDate?.difference(now).inDays ?? 0;
-
-      String timeText;
-      if (daysUntil == 0) {
-        timeText = 'today';
-      } else if (daysUntil == 1) {
-        timeText = 'tomorrow';
-      } else {
-        timeText = 'in $daysUntil days';
+      // Check and notify for overdue bills (higher priority)
+      if (overdueBills.isNotEmpty) {
+        await _notifyOverdueBills(overdueBills, now);
       }
 
-      final amount = earliestBill['amount'];
-      final amountText = amount != null && amount > 0
-          ? ' (₱${amount.toStringAsFixed(2)})'
-          : '';
+      if (upcomingBills.isNotEmpty) {
+        await _notifyUpcomingBills(upcomingBills, now);
+      }
+    } catch (e) {}
+  }
 
-      final message = upcomingBills.length == 1
-          ? '$billName is due $timeText$amountText'
-          : '$billName due $timeText and ${upcomingBills.length - 1} other bills upcoming';
+  /// Send notifications for overdue bills
+  Future<void> _notifyOverdueBills(
+      List<dynamic> overdueBills, DateTime now) async {
+    final lastCheckKey = 'overdue_bills';
+    final lastCheck = _lastNotifications[lastCheckKey];
 
-      await _notificationService.showNotification(
-        title: 'Upcoming Bill',
-        body: message,
-        payload: 'upcoming_bills',
-      );
-
-      _lastNotifications[lastCheckKey] = now;
-      debugPrint('Bill notification sent: $message');
-    } catch (e) {
-      debugPrint('Error checking upcoming bills: $e');
+    // Notify once per day for overdue bills
+    if (lastCheck != null && now.difference(lastCheck).inHours < 24) {
+      return;
     }
+
+    // Sort by most overdue first
+    overdueBills.sort((a, b) {
+      final aDate = _parseDate(a['dueDate']) ?? now;
+      final bDate = _parseDate(b['dueDate']) ?? now;
+      return aDate.compareTo(bDate);
+    });
+
+    final mostOverdue = overdueBills.first;
+    final billName = mostOverdue['name']?.toString() ?? 'Bill';
+    final dueDate = _parseDate(mostOverdue['dueDate']);
+    final daysOverdue = dueDate != null
+        ? now
+            .difference(DateTime(dueDate.year, dueDate.month, dueDate.day))
+            .inDays
+        : 0;
+
+    final amount = mostOverdue['amount'];
+    final amountText =
+        amount != null && amount > 0 ? ' (₱${amount.toStringAsFixed(2)})' : '';
+
+    final message = overdueBills.length == 1
+        ? '$billName is $daysOverdue days overdue$amountText. Tap to pay now.'
+        : '$billName is $daysOverdue days overdue$amountText and ${overdueBills.length - 1} other bills are overdue.';
+
+    await _notificationService.showNotification(
+      title: 'Overdue Bill Alert',
+      body: message,
+      payload: 'bill_overdue',
+    );
+
+    _lastNotifications[lastCheckKey] = now;
+  }
+
+  /// Send notifications for upcoming bills
+  Future<void> _notifyUpcomingBills(
+      List<dynamic> upcomingBills, DateTime now) async {
+    final lastCheckKey = 'upcoming_bills';
+    final lastCheck = _lastNotifications[lastCheckKey];
+
+    // Only notify once per day for upcoming bills
+    if (lastCheck != null && now.difference(lastCheck).inHours < 24) {
+      return;
+    }
+
+    // Get earliest due bill
+    upcomingBills.sort((a, b) {
+      final aDate = _parseDate(a['dueDate']) ?? now;
+      final bDate = _parseDate(b['dueDate']) ?? now;
+      return aDate.compareTo(bDate);
+    });
+
+    final earliestBill = upcomingBills.first;
+    final billName = earliestBill['name']?.toString() ?? 'Bill';
+    final dueDate = _parseDate(earliestBill['dueDate']);
+    final daysUntil = dueDate?.difference(now).inDays ?? 0;
+
+    String timeText;
+    if (daysUntil == 0) {
+      timeText = 'today';
+    } else if (daysUntil == 1) {
+      timeText = 'tomorrow';
+    } else {
+      timeText = 'in $daysUntil days';
+    }
+
+    final amount = earliestBill['amount'];
+    final amountText =
+        amount != null && amount > 0 ? ' (₱${amount.toStringAsFixed(2)})' : '';
+
+    final message = upcomingBills.length == 1
+        ? '$billName is due $timeText$amountText'
+        : '$billName due $timeText and ${upcomingBills.length - 1} other bills upcoming';
+
+    await _notificationService.showNotification(
+      title: 'Bill Due Soon',
+      body: message,
+      payload: 'bill_due_soon',
+    );
+
+    _lastNotifications[lastCheckKey] = now;
   }
 
   /// Check for pending orders and notify (mainly for admin/staff)
@@ -214,8 +266,7 @@ class NotificationTriggerManager {
       final lastCheck = _lastNotifications[lastCheckKey];
 
       // Only notify every 30 minutes for pending orders
-      if (lastCheck != null &&
-          now.difference(lastCheck).inMinutes < 30) {
+      if (lastCheck != null && now.difference(lastCheck).inMinutes < 30) {
         return;
       }
 
@@ -231,10 +282,7 @@ class NotificationTriggerManager {
       );
 
       _lastNotifications[lastCheckKey] = now;
-      debugPrint('Pending orders notification sent: $message');
-    } catch (e) {
-      debugPrint('Error checking pending orders: $e');
-    }
+    } catch (e) {}
   }
 
   /// Parse date from various formats

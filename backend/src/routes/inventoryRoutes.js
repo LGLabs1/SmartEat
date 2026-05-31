@@ -19,6 +19,12 @@ router.get('/analytics', inventoryController.getInventoryAnalytics);
 // GET /api/inventory/usage - Get usage history
 router.get('/usage', inventoryController.getUsageHistory);
 
+// GET /api/inventory/damaged - Get damaged items
+router.get('/damaged', inventoryController.getDamagedItems);
+
+// POST /api/inventory/:id/damage - Mark specific inventory item as damaged
+router.post('/:id/damage', inventoryController.markDamaged);
+
 // GET /api/inventory/:id - Get single inventory item
 router.get('/:id', inventoryController.getInventoryItem);
 

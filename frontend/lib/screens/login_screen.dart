@@ -30,17 +30,6 @@ class _LoginScreenState extends State<LoginScreen>
   @override
   void initState() {
     super.initState();
-    debugPrint('LOGIN_SCREEN: initState called - creating new state');
-
-    // Add a direct listener to FirebaseAuth to catch state changes immediately
-    FirebaseAuth.instance.authStateChanges().listen((User? user) {
-      if (user != null && mounted) {
-        debugPrint(
-            'LOGIN_SCREEN: Auth state changed to authenticated, navigating...');
-        Navigator.of(context)
-            .pushNamedAndRemoveUntil('/home', (route) => false);
-      }
-    });
 
     // Initialize focus nodes
     _emailFocusNode = FocusNode();
@@ -74,7 +63,6 @@ class _LoginScreenState extends State<LoginScreen>
 
   @override
   void dispose() {
-    debugPrint('LOGIN_SCREEN: dispose called');
     _fadeController.dispose();
     _slideController.dispose();
     _emailController.dispose();
@@ -180,29 +168,14 @@ class _LoginScreenState extends State<LoginScreen>
   Future<void> _login() async {
     if (!_formKey.currentState!.validate()) return;
 
-    debugPrint('LOGIN: Starting login process');
-    debugPrint('LOGIN: Email = ${_emailController.text.trim()}');
-
     setState(() => _isLoading = true);
 
     try {
-      debugPrint('LOGIN: Calling AuthProvider.login()');
       await context.read<app_auth.AuthProvider>().login(
             _emailController.text.trim(),
             _passwordController.text,
           );
-      debugPrint('LOGIN: AuthProvider.login() completed successfully');
-      debugPrint('LOGIN: User should be authenticated now');
-
-      // Explicitly navigate to DashboardScreen as a fallback
-      if (mounted) {
-        debugPrint('LOGIN: Explicitly pushing DashboardScreen');
-        Navigator.of(context)
-            .pushNamedAndRemoveUntil('/home', (route) => false);
-      }
     } on FirebaseAuthException catch (e) {
-      debugPrint(
-          'LOGIN: FirebaseAuthException - code: ${e.code}, message: ${e.message}');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -212,7 +185,6 @@ class _LoginScreenState extends State<LoginScreen>
         );
       }
     } catch (e) {
-      debugPrint('LOGIN: Unexpected error - $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -222,7 +194,6 @@ class _LoginScreenState extends State<LoginScreen>
         );
       }
     } finally {
-      debugPrint('LOGIN: Finally block - isLoading = false');
       if (mounted) {
         setState(() => _isLoading = false);
       }
@@ -231,8 +202,6 @@ class _LoginScreenState extends State<LoginScreen>
 
   @override
   Widget build(BuildContext context) {
-    debugPrint(
-        'LOGIN_SCREEN: build called - email: ${_emailController.text}, password: ${_passwordController.text.isNotEmpty ? '****' : 'empty'}');
     return Scaffold(
       body: Container(
         decoration: BoxDecoration(

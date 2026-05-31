@@ -1,7 +1,6 @@
 const express = require('express');
 const cors = require('cors');
 const dotenv = require('dotenv');
-const { initializeCollections } = require('./config/database');
 
 dotenv.config();
 
@@ -20,11 +19,9 @@ app.use((req, res, next) => {
 });
 
 // Routes
-app.use('/api/auth', require('./routes/authRoutes'));
-app.use('/api/menu', require('./routes/menuRoutes'));
-app.use('/api/orders', require('./routes/orderRoutes'));
 app.use('/api/analytics', require('./routes/analyticsRoutes'));
 app.use('/api/inventory', require('./routes/inventoryRoutes'));
+app.use('/api/chatbot', require('./routes/chatbotRoutes'));
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
@@ -46,11 +43,10 @@ app.use((req, res) => {
 });
 
 // Initialize server
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 3000;
 
-app.listen(PORT, async () => {
+app.listen(PORT, () => {
   console.log(`✓ Smart Eat Backend running on port ${PORT}`);
-  await initializeCollections();
 });
 
 module.exports = app;

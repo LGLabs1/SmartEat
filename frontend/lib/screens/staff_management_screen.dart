@@ -4,6 +4,10 @@ import 'package:provider/provider.dart';
 
 import '../services/auth_provider.dart';
 import '../services/api_service.dart';
+import '../widgets/confirmation_dialogs.dart';
+import '../widgets/skeleton_loaders.dart';
+import '../utils/error_messages.dart';
+import '../utils/haptic_feedback.dart';
 
 class StaffManagementScreen extends StatefulWidget {
   const StaffManagementScreen({
@@ -66,6 +70,88 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
         isAdminRaw == 1 ||
         (isAdminRaw is String && isAdminRaw.toLowerCase().trim() == 'true');
     return isAdminFlag || role == 'admin';
+  }
+
+  static String _adminDisplayNameFromProfile(Map<String, dynamic>? profile) {
+    if (profile == null) return '';
+    final firstName = (profile['firstName'] ?? '').toString().trim();
+    final lastName = (profile['lastName'] ?? '').toString().trim();
+    return ('$firstName $lastName').trim();
+  }
+
+  String _getAdminUid() {
+    final authProvider = context.read<AuthProvider>();
+    return authProvider.user?.uid ?? '';
+  }
+
+  Future<void> _approveStaff(BuildContext context, String uid) async {
+    try {
+      await FirebaseFirestore.instance.collection('users').doc(uid).set({
+        'approved': true,
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Staff approved')),
+      );
+    } catch (e) {
+      if (!context.mounted) return;
+      ErrorMessageHelper.showSnackBar(context, e, operationContext: 'staff');
+    }
+  }
+
+  Future<void> _removeStaff(
+    BuildContext context, {
+    required String uid,
+    required String label,
+  }) async {
+    final confirmed = await ConfirmAction.remove(
+      context,
+      itemName: label,
+      details: 'They will immediately lose access to this eatery. '
+          'They can only access again if added back or if they register again.',
+    );
+
+    if (!confirmed) return;
+
+    try {
+      final profile =
+          await context.read<AuthProvider>().getCurrentUserProfile();
+      final eateryId = profile?['eateryId']?.toString() ?? '';
+      final eateryName = profile?['eateryName']?.toString() ?? eateryId;
+      final adminUid = _getAdminUid();
+      final adminFirstName = (profile?['firstName'] ?? '').toString().trim();
+      final adminLastName = (profile?['lastName'] ?? '').toString().trim();
+      final adminName = ('$adminFirstName $adminLastName').trim();
+
+      final finalAdminName = adminName.isNotEmpty ? adminName : 'Admin';
+      final finalEateryName = eateryName.isNotEmpty ? eateryName : eateryId;
+      final message =
+          '$finalAdminName of eatery $finalEateryName has removed you from this eatery. '
+          'You will be logged out. If you believe this is a mistake, please contact your admin.';
+      await FirebaseFirestore.instance.collection('users').doc(uid).set({
+        'eateryId': '',
+        'eateryName': '',
+        'approved': false,
+        'removalMessage': message,
+        'removedAt': FieldValue.serverTimestamp(),
+        'removedByUid': adminUid,
+        'removedByName': finalAdminName,
+        'removedFromEateryId': eateryId,
+        'removedFromEateryName': finalEateryName,
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+      if (!context.mounted) return;
+      HapticHelper.success();
+      ErrorMessageHelper.showSnackBar(
+        context,
+        Exception('Staff removed successfully'),
+        operationContext: 'staff',
+      );
+    } catch (e) {
+      if (!context.mounted) return;
+      ErrorMessageHelper.showSnackBar(context, e, operationContext: 'staff');
+    }
   }
 
   Future<void> _editStaffProfile(
@@ -132,6 +218,12 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
           dailyRate: rate,
           halfDayRate: halfRate,
           status: status,
+          onRemove: isAdmin
+              ? null
+              : () async {
+                  Navigator.of(context).pop();
+                  await _removeStaff(context, uid: uid, label: userName);
+                },
         );
       },
     );
@@ -271,6 +363,50 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
     );
   }
 
+  Future<void> _autoMarkAbsent({
+    required String eateryId,
+    required Map<String, Map<String, dynamic>> usersByUid,
+    required DateTime weekStart,
+    required Map<String, Map<String, dynamic>> existingAttendance,
+  }) async {
+    final now = DateTime.now();
+    final today = _dateOnly(now);
+    final weekEnd = weekStart.add(const Duration(days: 6));
+
+    for (final uid in usersByUid.keys) {
+      for (int i = 0; i < 7; i++) {
+        final day = weekStart.add(Duration(days: i));
+        // Only auto-mark past days (not today or future)
+        if (day.isAfter(today)) continue;
+
+        final dateKey = _fmtDate(day);
+        final key = '$uid|$dateKey';
+
+        // Skip if attendance already exists
+        if (existingAttendance.containsKey(key)) continue;
+
+        // Mark as absent
+        final docId = '${eateryId}_${uid}_$dateKey';
+        await FirebaseFirestore.instance
+            .collection('eateries')
+            .doc(eateryId)
+            .collection('staff_attendance')
+            .doc(docId)
+            .set({
+          'eateryId': eateryId,
+          'uid': uid,
+          'date': dateKey,
+          'present': false,
+          'workUnit': 0.0,
+          'notes': 'Auto-marked absent',
+          'updatedAt': FieldValue.serverTimestamp(),
+          'createdAt': FieldValue.serverTimestamp(),
+          'autoMarked': true,
+        }, SetOptions(merge: true));
+      }
+    }
+  }
+
   Future<void> _recordPayout(
     BuildContext context, {
     required String eateryId,
@@ -339,8 +475,17 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
       future: context.read<AuthProvider>().getCurrentUserProfile(),
       builder: (context, profileSnapshot) {
         if (profileSnapshot.connectionState == ConnectionState.waiting) {
-          return const Scaffold(
-            body: Center(child: CircularProgressIndicator()),
+          return Scaffold(
+            body: ListView(
+              padding: const EdgeInsets.all(16),
+              children: const [
+                SkeletonCard(height: 80),
+                SizedBox(height: 16),
+                SkeletonListTile(hasLeading: true, hasSubtitle: true),
+                SkeletonListTile(hasLeading: true, hasSubtitle: true),
+                SkeletonListTile(hasLeading: true, hasSubtitle: true),
+              ],
+            ),
           );
         }
 
@@ -375,6 +520,9 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
 
         final profile = profileSnapshot.data;
         final eateryId = (profile?['eateryId'] ?? '').toString().trim();
+        final eateryName = (profile?['eateryName'] ?? '').toString().trim();
+        final adminUid = context.read<AuthProvider>().user?.uid ?? '';
+        final adminName = _adminDisplayNameFromProfile(profile);
         if (eateryId.isEmpty) {
           return const Scaffold(
             body: Center(
@@ -420,7 +568,7 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
         final weekLabel = '${_fmtDate(_weekStart)} to ${_fmtDate(weekEnd)}';
 
         return DefaultTabController(
-          length: 4,
+          length: 5,
           child: Scaffold(
             appBar: widget.showAppBar
                 ? AppBar(
@@ -441,6 +589,7 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
                     bottom: const TabBar(
                       tabs: [
                         Tab(text: 'Staff'),
+                        Tab(text: 'Admins'),
                         Tab(text: 'Attendance'),
                         Tab(text: 'Payroll'),
                         Tab(text: 'Meals'),
@@ -559,7 +708,21 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
                         );
                       }
                       if (!usersSnap.hasData) {
-                        return const Center(child: CircularProgressIndicator());
+                        return ListView(
+                          padding: const EdgeInsets.all(16),
+                          children: const [
+                            SkeletonListTile(
+                                hasLeading: true, hasSubtitle: true),
+                            SkeletonListTile(
+                                hasLeading: true, hasSubtitle: true),
+                            SkeletonListTile(
+                                hasLeading: true, hasSubtitle: true),
+                            SkeletonListTile(
+                                hasLeading: true, hasSubtitle: true),
+                            SkeletonListTile(
+                                hasLeading: true, hasSubtitle: true),
+                          ],
+                        );
                       }
 
                       final userDocs = usersSnap.data!.docs;
@@ -571,6 +734,9 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
                         children: [
                           _StaffTab(
                             eateryId: eateryId,
+                            eateryName: eateryName,
+                            adminUid: adminUid,
+                            adminName: adminName,
                             usersByUid: usersByUid,
                             globalSearchQuery: widget.globalSearchQuery,
                             onEditProfile: (uid, data) => _editStaffProfile(
@@ -579,6 +745,8 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
                               uid: uid,
                               userData: data,
                             ),
+                            onApproveStaff: _approveStaff,
+                            onRemoveStaff: _removeStaff,
                           ),
                           _AdminsTab(
                             eateryId: eateryId,
@@ -600,6 +768,13 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
                               eateryId: eateryId,
                               uid: uid,
                               userLabel: label,
+                            ),
+                            onAutoMarkAbsent: (existingAttendance) =>
+                                _autoMarkAbsent(
+                              eateryId: eateryId,
+                              usersByUid: usersByUid,
+                              weekStart: _weekStart,
+                              existingAttendance: existingAttendance,
                             ),
                           ),
                           _PayrollTab(
@@ -655,6 +830,7 @@ class _StaffProfileDialog extends StatefulWidget {
   final double dailyRate;
   final double halfDayRate;
   final String status;
+  final VoidCallback? onRemove;
 
   const _StaffProfileDialog({
     required this.userName,
@@ -665,6 +841,7 @@ class _StaffProfileDialog extends StatefulWidget {
     required this.dailyRate,
     required this.halfDayRate,
     required this.status,
+    this.onRemove,
   });
 
   @override
@@ -898,6 +1075,12 @@ class _StaffProfileDialogState extends State<_StaffProfileDialog> {
             onPressed: () => Navigator.of(context).pop(),
             child: const Text('Close'),
           ),
+          if (widget.onRemove != null)
+            TextButton.icon(
+              onPressed: widget.onRemove,
+              icon: const Icon(Icons.delete_forever, color: Colors.red),
+              label: const Text('Remove', style: TextStyle(color: Colors.red)),
+            ),
           FilledButton.icon(
             onPressed: () => setState(() => _isEditing = true),
             icon: const Icon(Icons.edit),
@@ -926,19 +1109,50 @@ class _StaffProfileDialogState extends State<_StaffProfileDialog> {
   }
 }
 
-class _StaffTab extends StatelessWidget {
+class _StaffTab extends StatefulWidget {
   const _StaffTab({
     required this.eateryId,
+    required this.eateryName,
+    required this.adminUid,
+    required this.adminName,
     required this.usersByUid,
     required this.globalSearchQuery,
     required this.onEditProfile,
+    required this.onApproveStaff,
+    required this.onRemoveStaff,
   });
 
   final String eateryId;
+  final String eateryName;
+  final String adminUid;
+  final String adminName;
   final Map<String, Map<String, dynamic>> usersByUid;
   final ValueNotifier<String>? globalSearchQuery;
   final Future<void> Function(String uid, Map<String, dynamic> userData)
       onEditProfile;
+  final Future<void> Function(BuildContext context, String uid) onApproveStaff;
+  final Future<void> Function(BuildContext context,
+      {required String uid, required String label}) onRemoveStaff;
+
+  @override
+  State<_StaffTab> createState() => _StaffTabState();
+}
+
+class _StaffTabState extends State<_StaffTab> {
+  late TextEditingController _searchController;
+  String _localQuery = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _searchController = TextEditingController();
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
 
   String _displayName(Map<String, dynamic> data, String uid) {
     final firstName = (data['firstName'] ?? '').toString().trim();
@@ -957,15 +1171,19 @@ class _StaffTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final notifier = globalSearchQuery;
+    final notifier = widget.globalSearchQuery;
     if (notifier == null) {
       final q = '';
 
-      final entries = usersByUid.entries.where((e) {
+      final entries = widget.usersByUid.entries.where((e) {
         final uid = e.key;
         final data = e.value;
         final email = (data['email'] ?? '').toString();
         final name = _displayName(data, uid);
+        // Filter out admins - they should only appear in Admins tab
+        final legacyRole = data['role']?.toString().trim().toLowerCase();
+        final isAdmin = (data['isAdmin'] == true) || (legacyRole == 'admin');
+        if (isAdmin) return false;
         return _matches(q, uid) || _matches(q, email) || _matches(q, name);
       }).toList()
         ..sort((a, b) => _displayName(a.value, a.key)
@@ -975,7 +1193,7 @@ class _StaffTab extends StatelessWidget {
       return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
         stream: FirebaseFirestore.instance
             .collection('eateries')
-            .doc(eateryId)
+            .doc(widget.eateryId)
             .collection('staff_profiles')
             .snapshots(),
         builder: (context, profilesSnap) {
@@ -1021,7 +1239,7 @@ class _StaffTab extends StatelessWidget {
                   side: BorderSide(color: Colors.grey.shade200),
                 ),
                 child: ListTile(
-                  onTap: () => onEditProfile(uid, userData),
+                  onTap: () => widget.onEditProfile(uid, userData),
                   leading: CircleAvatar(
                     backgroundColor:
                         isAdmin ? Colors.indigo : Colors.grey.shade400,
@@ -1044,11 +1262,6 @@ class _StaffTab extends StatelessWidget {
                     '${rate > 0 ? ' · ₱${rate.toStringAsFixed(2)}/day' : ''}',
                   ),
                   isThreeLine: true,
-                  trailing: IconButton(
-                    tooltip: 'Edit',
-                    icon: const Icon(Icons.edit),
-                    onPressed: () => onEditProfile(uid, userData),
-                  ),
                 ),
               );
             },
@@ -1058,16 +1271,24 @@ class _StaffTab extends StatelessWidget {
     }
 
     return ValueListenableBuilder<String>(
-      valueListenable: notifier,
+      valueListenable: widget.globalSearchQuery!,
       builder: (context, query, _) {
         final q = query.trim().toLowerCase();
+        final combinedQuery =
+            q.isNotEmpty ? q : _localQuery.trim().toLowerCase();
 
-        final entries = usersByUid.entries.where((e) {
+        final entries = widget.usersByUid.entries.where((e) {
           final uid = e.key;
           final data = e.value;
           final email = (data['email'] ?? '').toString();
           final name = _displayName(data, uid);
-          return _matches(q, uid) || _matches(q, email) || _matches(q, name);
+          // Filter out admins - they should only appear in Admins tab
+          final legacyRole = data['role']?.toString().trim().toLowerCase();
+          final isAdmin = (data['isAdmin'] == true) || (legacyRole == 'admin');
+          if (isAdmin) return false;
+          return _matches(combinedQuery, uid) ||
+              _matches(combinedQuery, email) ||
+              _matches(combinedQuery, name);
         }).toList()
           ..sort((a, b) => _displayName(a.value, a.key)
               .toLowerCase()
@@ -1076,7 +1297,7 @@ class _StaffTab extends StatelessWidget {
         return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
           stream: FirebaseFirestore.instance
               .collection('eateries')
-              .doc(eateryId)
+              .doc(widget.eateryId)
               .collection('staff_profiles')
               .snapshots(),
           builder: (context, profilesSnap) {
@@ -1122,7 +1343,7 @@ class _StaffTab extends StatelessWidget {
                     side: BorderSide(color: Colors.grey.shade200),
                   ),
                   child: ListTile(
-                    onTap: () => onEditProfile(uid, userData),
+                    onTap: () => widget.onEditProfile(uid, userData),
                     leading: CircleAvatar(
                       backgroundColor:
                           isAdmin ? Colors.indigo : Colors.grey.shade400,
@@ -1145,11 +1366,6 @@ class _StaffTab extends StatelessWidget {
                       '${rate > 0 ? ' · ₱${rate.toStringAsFixed(2)}/day' : ''}',
                     ),
                     isThreeLine: true,
-                    trailing: IconButton(
-                      tooltip: 'Edit',
-                      icon: const Icon(Icons.edit),
-                      onPressed: () => onEditProfile(uid, userData),
-                    ),
                   ),
                 );
               },
@@ -1258,7 +1474,24 @@ class _AdminsTab extends StatelessWidget {
                 side: BorderSide(color: Colors.indigo.shade200),
               ),
               child: ListTile(
-                onTap: () => onEditProfile(uid, userData),
+                onTap: () => showDialog(
+                  context: context,
+                  builder: (context) => AlertDialog(
+                    title: Text(label),
+                    content: Text(
+                      '${email.isEmpty ? uid : email}\n'
+                      'Admin · ${status.isEmpty ? 'active' : status}'
+                      '${position.isEmpty ? '' : ' · $position'}'
+                      '${joinedAt != null ? '\nJoined: ${joinedAt.toString().split('T').first}' : ''}',
+                    ),
+                    actions: [
+                      TextButton(
+                        onPressed: () => onEditProfile(uid, userData),
+                        child: const Text('Edit'),
+                      ),
+                    ],
+                  ),
+                ),
                 leading: CircleAvatar(
                   backgroundColor: Colors.indigo,
                   child: const Icon(
@@ -1277,11 +1510,6 @@ class _AdminsTab extends StatelessWidget {
                   '${joinedAt != null ? '\nJoined: ${joinedAt.toString().split('T').first}' : ''}',
                 ),
                 isThreeLine: true,
-                trailing: IconButton(
-                  tooltip: 'Edit',
-                  icon: const Icon(Icons.edit),
-                  onPressed: () => onEditProfile(uid, userData),
-                ),
               ),
             );
           },
@@ -1297,12 +1525,15 @@ class _AttendanceTab extends StatelessWidget {
     required this.usersByUid,
     required this.weekStart,
     required this.onEncodeAttendance,
+    required this.onAutoMarkAbsent,
   });
 
   final String eateryId;
   final Map<String, Map<String, dynamic>> usersByUid;
   final DateTime weekStart;
   final Future<void> Function(String uid, String userLabel) onEncodeAttendance;
+  final Future<void> Function(
+      Map<String, Map<String, dynamic>> existingAttendance) onAutoMarkAbsent;
 
   String _fmtDate(DateTime d) {
     final y = d.year.toString().padLeft(4, '0');
@@ -1354,6 +1585,8 @@ class _AttendanceTab extends StatelessWidget {
             if (uid.isEmpty || date.isEmpty) continue;
             byUidDate['$uid|$date'] = a;
           }
+          // Auto-mark absent for past days without attendance records
+          onAutoMarkAbsent(byUidDate);
         }
 
         final uids = usersByUid.keys.toList()..sort();
@@ -1852,6 +2085,18 @@ class _MealsTabState extends State<_MealsTab> {
     }
   }
 
+  // Optimistic update helper
+  void _updateMealOrderStatusLocal(String orderId, String status) {
+    setState(() {
+      _mealOrders = _mealOrders.map((order) {
+        if (order['id'] == orderId) {
+          return {...order, 'status': status};
+        }
+        return order;
+      }).toList();
+    });
+  }
+
   Future<void> _updateOrderStatus(String orderId, String status) async {
     try {
       await ApiService.updateStaffMealOrderStatus(
@@ -1859,8 +2104,8 @@ class _MealsTabState extends State<_MealsTab> {
         eateryId: widget.eateryId,
         status: status,
       );
-      if (!mounted) return;
-      await _loadMealOrders();
+      // Optimistic update - update status in local list without full refresh
+      _updateMealOrderStatusLocal(orderId, status);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Order $status')),
       );
@@ -2056,7 +2301,14 @@ class _MealsTabState extends State<_MealsTab> {
           // Meal orders list
           Expanded(
             child: _isLoading
-                ? const Center(child: CircularProgressIndicator())
+                ? ListView(
+                    padding: const EdgeInsets.all(16),
+                    children: const [
+                      SkeletonListTile(hasLeading: true, hasSubtitle: true),
+                      SkeletonListTile(hasLeading: true, hasSubtitle: true),
+                      SkeletonListTile(hasLeading: true, hasSubtitle: true),
+                    ],
+                  )
                 : _mealOrders.isEmpty
                     ? const Center(child: Text('No meal orders found'))
                     : ListView.builder(

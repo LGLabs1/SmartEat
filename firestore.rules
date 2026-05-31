@@ -9,37 +9,64 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    function userDocPath() {
+      return /databases/$(database)/documents/users/$(request.auth.uid);
+    }
+
+    function hasUserDoc() {
+      return isSignedIn() && exists(userDocPath());
+    }
+
     function userDoc() {
-      return isSignedIn()
-        ? get(/databases/$(database)/documents/users/$(request.auth.uid)).data
-        : null;
+      return hasUserDoc() ? get(userDocPath()).data : null;
     }
 
     function userEateryId() {
-      return userDoc() != null ? userDoc().eateryId : null;
+      return hasUserDoc() ? userDoc().eateryId : null;
     }
 
     function isAdmin() {
-      return isSignedIn() && (
+      return hasUserDoc() && (
         userDoc().isAdmin == true
         || userDoc().role == 'admin'
       );
     }
 
     function isApprovedStaff() {
-      return isSignedIn() && (userDoc().approved == true || !(userDoc().approved is bool));
+      return hasUserDoc() && (userDoc().approved == true || !(userDoc().approved is bool));
     }
 
     function canAccessEateryData(docEateryId) {
-      return isSignedIn()
+      return hasUserDoc()
         && docEateryId == userEateryId()
         && (isAdmin() || isApprovedStaff());
     }
 
     function canAccessEatery(eateryId) {
-      return isSignedIn()
+      return hasUserDoc()
         && eateryId == userEateryId()
         && (isAdmin() || isApprovedStaff());
+    }
+
+    // NEW: Staff/admin can complete orders
+    function isOrderCompleteUpdate(eateryId) {
+      return resource.data.status == 'pending'
+        && request.resource.data.eateryId == resource.data.eateryId
+        && request.resource.data.eateryId == eateryId
+        && request.resource.data.status == 'completed'
+        && request.resource.data.diff(resource.data).changedKeys().hasOnly([
+          'status',
+          'completedAt',
+          'updatedAt'
+        ]);
+    }
+
+    // NEW: Staff/admin can toggle menu availability (isAvailable only)
+    function isMenuAvailabilityToggleUpdate(eateryId) {
+      return request.resource.data.diff(resource.data).changedKeys().hasOnly([
+        'isAvailable',
+        'updatedAt'
+      ]);
     }
 
     function isPendingOrderAppendUpdate(eateryId) {
@@ -54,6 +81,42 @@ service cloud.firestore {
         ])
         && request.resource.data.items is list
         && request.resource.data.totalAmount is number;
+    }
+
+    function isPendingOrderVoidOrPartialVoidUpdate(eateryId) {
+      return resource.data.status == 'pending'
+        && request.resource.data.eateryId == resource.data.eateryId
+        && request.resource.data.eateryId == eateryId
+        && request.resource.data.diff(resource.data).changedKeys().hasOnly([
+          'items',
+          'totalAmount',
+          'status',
+          'voidReason',
+          'voidedAt',
+          'voidedBy',
+          'updatedAt'
+        ])
+        && request.resource.data.items is list
+        && request.resource.data.totalAmount is number
+        && (request.resource.data.status == 'pending' || request.resource.data.status == 'voided');
+    }
+
+    // UPDATED: removed dependency on menu doc having eateryId field
+    function isMenuStockOnlyUpdate(eateryId) {
+      return request.resource.data.diff(resource.data).changedKeys().hasOnly([
+        'availableServings',
+        'isAvailable',
+        'updatedAt',
+        'inventoryItemId'
+      ]);
+    }
+
+    // UPDATED: removed dependency on inventory doc having eateryId field
+    function isInventoryStockOnlyUpdate(eateryId) {
+      return request.resource.data.diff(resource.data).changedKeys().hasOnly([
+        'currentStock',
+        'updatedAt'
+      ]);
     }
 
     match /users/{userId} {
@@ -89,34 +152,64 @@ service cloud.firestore {
 
     match /eateries/{eateryId}/menu/{docId} {
       allow read: if canAccessEatery(eateryId);
+
       allow create: if isAdmin()
         && eateryId == userEateryId()
         && request.resource.data.eateryId == eateryId;
+
       allow update, delete: if isAdmin()
-        && eateryId == userEateryId()
-        && resource.data.eateryId == eateryId;
+        && eateryId == userEateryId();
+
+      // Staff/admin stock-only updates (includes servings, isAvailable, inventory link)
+      allow update: if canAccessEatery(eateryId)
+        && isMenuStockOnlyUpdate(eateryId);
+
+      // NEW: Staff/admin can toggle availability (isAvailable field only)
+      allow update: if canAccessEatery(eateryId)
+        && isMenuAvailabilityToggleUpdate(eateryId);
     }
 
     match /eateries/{eateryId}/orders/{docId} {
       allow read: if canAccessEatery(eateryId);
+
       allow create: if canAccessEatery(eateryId)
-        && request.resource.data.eateryId == eateryId;
+        && request.resource.data.eateryId == eateryId
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.createdByName is string
+        && request.resource.data.status == 'pending';
+
       allow update: if isAdmin()
         && eateryId == userEateryId();
+
+      // Staff/admin: append items to pending orders
       allow update: if canAccessEatery(eateryId)
         && isPendingOrderAppendUpdate(eateryId);
+
+      // Staff/admin: void/partial void on pending orders
+      allow update: if canAccessEatery(eateryId)
+        && isPendingOrderVoidOrPartialVoidUpdate(eateryId);
+
+      // NEW: Staff/admin: complete orders
+      allow update: if canAccessEatery(eateryId)
+        && isOrderCompleteUpdate(eateryId);
+
       allow delete: if isAdmin()
         && eateryId == userEateryId();
     }
 
     match /eateries/{eateryId}/inventory/{docId} {
       allow read: if canAccessEatery(eateryId);
+
       allow create: if isAdmin()
         && eateryId == userEateryId()
         && request.resource.data.eateryId == eateryId;
+
       allow update, delete: if isAdmin()
-        && eateryId == userEateryId()
-        && resource.data.eateryId == eateryId;
+        && eateryId == userEateryId();
+
+      // Staff/admin stock-only updates
+      allow update: if canAccessEatery(eateryId)
+        && isInventoryStockOnlyUpdate(eateryId);
     }
 
     match /eateries/{eateryId}/inventory_usage/{docId} {
@@ -254,21 +347,51 @@ service cloud.firestore {
 
     match /eateries/{eateryId}/staff_attendance/{docId} {
       allow read: if canAccessEatery(eateryId);
+
+      // Staff can create their own attendance record for self check-in
       allow create: if canAccessEatery(eateryId)
         && request.resource.data.eateryId == eateryId
-        && request.resource.data.uid is string
+        && request.resource.data.uid == request.auth.uid
         && request.resource.data.date is string
-        && request.resource.data.present is bool
-        && (!('workUnit' in request.resource.data)
-          || request.resource.data.workUnit is number);
+        && request.resource.data.uid is string
+        && (
+          // Self check-in: has morning or afternoon check-in timestamps
+          ('morningCheckIn' in request.resource.data
+            || 'afternoonCheckIn' in request.resource.data)
+          // Admin manual encoding: has present and workUnit
+          || (request.resource.data.present is bool
+              && (!('workUnit' in request.resource.data)
+                || request.resource.data.workUnit is number))
+        );
+
+      // Staff can update their own record for check-ins (morning/afternoon)
       allow update: if canAccessEatery(eateryId)
         && resource.data.eateryId == eateryId
         && request.resource.data.eateryId == resource.data.eateryId
         && request.resource.data.uid == resource.data.uid
         && request.resource.data.date == resource.data.date
-        && request.resource.data.present is bool
-        && (!('workUnit' in request.resource.data)
-          || request.resource.data.workUnit is number);
+        // Only allow adding check-in timestamps (self check-in)
+        && (
+          request.resource.data.diff(resource.data).changedKeys().hasOnly([
+            'morningCheckIn',
+            'afternoonCheckIn',
+            'updatedAt'
+          ])
+          // Or admin updating present/workUnit/status
+          || (
+            request.resource.data.present is bool
+            && request.resource.data.diff(resource.data).changedKeys().hasOnly([
+              'present',
+              'workUnit',
+              'status',
+              'notes',
+              'updatedAt',
+              'morningCheckIn',
+              'afternoonCheckIn'
+            ])
+          )
+        );
+
       allow delete: if isAdmin()
         && eateryId == userEateryId()
         && resource.data.eateryId == eateryId;

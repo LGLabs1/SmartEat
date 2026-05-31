@@ -4,6 +4,9 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'dart:math';
 import '../services/api_service.dart';
 import '../services/auth_provider.dart';
+import '../widgets/skeleton_loaders.dart';
+import '../utils/haptic_feedback.dart';
+import '../utils/error_messages.dart';
 
 class POSScreen extends StatefulWidget {
   const POSScreen({
@@ -66,10 +69,12 @@ class _POSScreenState extends State<POSScreen> {
     );
   }
 
+  late Stream<List<Map<String, dynamic>>> _menuStream;
+
   @override
   void initState() {
     super.initState();
-    _loadMenuItems();
+    _menuStream = ApiService.getMenuItemsStream();
     _addToExistingOrder = widget.initialAddToExistingOrder;
     _targetPendingOrderId = widget.initialOrderId.trim();
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -344,8 +349,12 @@ class _POSScreenState extends State<POSScreen> {
     } catch (e) {
       setState(() => _isLoading = false);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error loading menu: $e')),
+        ErrorMessageHelper.showSnackBar(
+          context,
+          e,
+          operationContext: 'menu',
+          onAction: _loadMenuItems,
+          actionLabel: 'Retry',
         );
       }
     }
@@ -468,17 +477,20 @@ class _POSScreenState extends State<POSScreen> {
     final menuId = (item['id'] ?? '').toString().trim();
     if (menuId.isEmpty) return;
 
+    final inventoryItemId = (item['inventoryItemId'] ?? '').toString().trim();
+    final isInventoryLinked = inventoryItemId.isNotEmpty;
     final servingsRaw = item['servings'] ?? item['availableServings'] ?? 0;
     final servings = servingsRaw is num
         ? servingsRaw.toInt()
         : int.tryParse((servingsRaw ?? '').toString()) ?? 0;
-    final isUnlimited = servings == -1;
+    final isUnlimited = servings == -1 || !isInventoryLinked;
     final manualAvailability = item['isAvailable'];
     final isAvailable = manualAvailability is bool
         ? manualAvailability
         : (isUnlimited || servings > 0);
 
     if (!isAvailable && nextQty > 0) {
+      HapticHelper.error();
       return;
     }
 
@@ -495,6 +507,7 @@ class _POSScreenState extends State<POSScreen> {
       if (cappedQty <= 0) {
         if (idx >= 0) {
           _cartItems.removeAt(idx);
+          HapticHelper.removeFromCart();
         }
         _calculateTotal();
         if (_cartItems.isEmpty) {
@@ -513,6 +526,7 @@ class _POSScreenState extends State<POSScreen> {
           ? priceRaw.toDouble()
           : double.tryParse((priceRaw ?? '').toString()) ?? 0.0;
 
+      final wasEmpty = idx < 0;
       if (idx >= 0) {
         _cartItems[idx]['quantity'] = cappedQty;
         _cartItems[idx]['subtotal'] = price * cappedQty;
@@ -525,9 +539,15 @@ class _POSScreenState extends State<POSScreen> {
         });
       }
       _calculateTotal();
+
+      // Haptic feedback for adding to cart
+      if (wasEmpty || nextQty > 0) {
+        HapticHelper.addToCart();
+      }
     });
 
     if (exceeded && mounted) {
+      HapticHelper.error();
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Only $servings left in stock.')),
       );
@@ -752,11 +772,16 @@ class _POSScreenState extends State<POSScreen> {
       );
       if (menu.isEmpty) continue;
 
-      final servingsRaw = menu['servings'] ?? menu['availableServings'] ?? 0;
+      final inventoryItemId = (menu['inventoryItemId'] ?? '').toString().trim();
+      final isInventoryLinked = inventoryItemId.isNotEmpty;
+      final servingsRaw = menu['servings'] ?? menu['availableServings'];
+      // Treat missing/invalid servings as unlimited (-1), or if not linked to inventory
       final servings = servingsRaw is num
           ? servingsRaw.toInt()
-          : int.tryParse((servingsRaw ?? '').toString()) ?? 0;
-      final isUnlimited = servings == -1;
+          : (servingsRaw == null
+              ? -1
+              : (int.tryParse(servingsRaw.toString()) ?? -1));
+      final isUnlimited = servings == -1 || !isInventoryLinked;
       final manualAvailability = menu['isAvailable'];
       final isAvailable =
           manualAvailability is bool ? manualAvailability : servings > 0;
@@ -868,377 +893,427 @@ class _POSScreenState extends State<POSScreen> {
         _loadMenuItems();
         _loadPendingOrders();
 
+        // Success haptic feedback
+        HapticHelper.orderComplete();
+
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(
-              _addToExistingOrder
-                  ? 'Items added to order. Pending completion.'
-                  : 'Order created. Pending completion.',
+            content: Row(
+              children: [
+                const Icon(Icons.check_circle, color: Colors.white),
+                const SizedBox(width: 8),
+                Text(
+                  _addToExistingOrder
+                      ? 'Items added to order!'
+                      : 'Order created successfully!',
+                ),
+              ],
             ),
+            backgroundColor: Colors.green.shade700,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+            margin: const EdgeInsets.all(16),
           ),
         );
       }
     } catch (e) {
       setState(() => _isLoading = false);
       if (mounted) {
-        String message;
-        if (e is FirebaseException) {
-          final code = (e.code).toString();
-          final details = (e.message ?? '').toString();
-          message = details.trim().isEmpty
-              ? 'Firebase error: $code'
-              : 'Firebase error: $code — $details';
-        } else {
-          // Aggressively unwrap Flutter web boxed errors
-          dynamic current = e;
-          for (int i = 0; i < 3; i++) {
-            if (current is FirebaseException) break;
-            try {
-              final next = current.error;
-              if (next == null || next == current) break;
-              current = next;
-            } catch (_) {
-              break;
-            }
-          }
-          if (current is FirebaseException) {
-            final code = (current.code).toString();
-            final details = (current.message ?? '').toString();
-            message = details.trim().isEmpty
-                ? 'Firebase error: $code'
-                : 'Firebase error: $code — $details';
-          } else {
-            message = current.toString();
-          }
-        }
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              _addToExistingOrder
-                  ? 'Error adding items: $message'
-                  : 'Error creating order: $message',
-            ),
-          ),
+        ErrorMessageHelper.showSnackBar(
+          context,
+          e,
+          operationContext: 'order',
+          onAction: _createOrder,
+          actionLabel: 'Retry',
         );
       }
     }
   }
 
+  List<Map<String, dynamic>> _processMenuItems(
+    List<Map<String, dynamic>> menuItems,
+    List<Map<String, dynamic>> inventoryItems,
+  ) {
+    final inventoryById = <String, Map<String, dynamic>>{
+      for (final inv in inventoryItems) (inv['id'] ?? '').toString(): inv,
+    };
+
+    return menuItems.map((item) {
+      if (item['price'] is String) {
+        item['price'] = double.tryParse(item['price']) ?? 0.0;
+      }
+
+      final invId = (item['inventoryItemId'] ?? '').toString().trim();
+      if (invId.isNotEmpty) {
+        final inv = inventoryById[invId];
+        if (inv != null) {
+          final stockRaw = inv['currentStock'];
+          final stock = stockRaw is num
+              ? stockRaw.toInt()
+              : int.tryParse((stockRaw ?? '').toString()) ?? 0;
+          item['availableServings'] = stock;
+          final manual = item['isAvailable'];
+          final manualOff = manual is bool && manual == false;
+          item['isAvailable'] = stock > 0 && !manualOff;
+        }
+      }
+      return item;
+    }).toList();
+  }
+
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final width = constraints.maxWidth;
-        final isCompact = width < 780;
-        final isShortHeight = constraints.maxHeight < 420;
-        final crossAxisCount = width < 520
-            ? 2
-            : width >= 1100
-                ? 4
-                : width >= 820
-                    ? 3
-                    : 2;
-        final childAspectRatio = width < 520
-            ? 0.7
-            : crossAxisCount == 2
-                ? (isShortHeight ? 0.85 : 0.9)
-                : (isShortHeight ? 0.8 : 0.85);
+    return StreamBuilder<List<Map<String, dynamic>>>(
+      stream: _menuStream,
+      builder: (context, menuSnapshot) {
+        return FutureBuilder<Map<String, dynamic>>(
+          future: ApiService.getInventoryItems(),
+          builder: (context, inventorySnapshot) {
+            final isLoading =
+                !menuSnapshot.hasData || !inventorySnapshot.hasData;
+            final menuItems = menuSnapshot.data ?? [];
+            final inventoryItems = inventorySnapshot.hasData
+                ? List<Map<String, dynamic>>.from(
+                    inventorySnapshot.data!['data'] ?? const [])
+                : <Map<String, dynamic>>[];
 
-        final filteredMenuItems = _selectedCategory == 'All'
-            ? _menuItems
-            : _selectedCategory == '📌 Pinned'
-                ? _menuItems
-                    .where((m) => _isPinned((m['id'] ?? '').toString()))
-                    .toList()
-                : _menuItems
-                    .where((m) =>
-                        (m['category'] ?? '').toString().trim() ==
-                        _selectedCategory)
-                    .toList();
+            _menuItems = _processMenuItems(menuItems, inventoryItems);
 
-        return Scaffold(
-          appBar: widget.showAppBar
-              ? AppBar(
-                  title: Text(
-                    _addToExistingOrder &&
-                            _targetPendingOrderId.trim().isNotEmpty
-                        ? 'Add Items — Order #${_shortOrderId(_targetPendingOrderId)}'
-                        : 'Point of Sale',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  actions: [
-                    if (isCompact)
-                      IconButton(
-                        tooltip:
-                            _addToExistingOrder ? 'Add to Order' : 'New Order',
-                        onPressed: () async {
-                          if (_isLoading) return;
-                          final next = !_addToExistingOrder;
-                          setState(() {
-                            _addToExistingOrder = next;
-                            if (!next) {
-                              _targetPendingOrderId = '';
-                              _baselineQtyByMenuId.clear();
-                            }
-                          });
-                          if (next) {
-                            await _pickPendingOrder();
-                            if (!mounted) return;
-                            if (_targetPendingOrderId.trim().isEmpty) {
-                              setState(() {
-                                _addToExistingOrder = false;
-                              });
-                            }
-                          }
-                        },
-                        icon: Icon(
-                          _addToExistingOrder
-                              ? Icons.playlist_add_check
-                              : Icons.playlist_add,
-                        ),
-                      )
-                    else
-                      TextButton.icon(
-                        onPressed: () async {
-                          if (_isLoading) return;
-                          final next = !_addToExistingOrder;
-                          setState(() {
-                            _addToExistingOrder = next;
-                            if (!next) {
-                              _targetPendingOrderId = '';
-                              _baselineQtyByMenuId.clear();
-                            }
-                          });
-                          if (next) {
-                            await _pickPendingOrder();
-                            if (!mounted) return;
-                            if (_targetPendingOrderId.trim().isEmpty) {
-                              setState(() {
-                                _addToExistingOrder = false;
-                              });
-                            }
-                          }
-                        },
-                        icon: Icon(
-                          _addToExistingOrder
-                              ? Icons.playlist_add_check
-                              : Icons.playlist_add,
-                        ),
-                        label: Text(
-                          _addToExistingOrder ? 'Add to Order' : 'New Order',
-                        ),
-                      ),
-                    if (isCompact)
-                      IconButton(
-                        tooltip: _cartItems.isEmpty
-                            ? 'Cart'
-                            : 'Cart (${_cartItems.length})',
-                        onPressed: _openCartSheet,
-                        icon: const Icon(Icons.shopping_cart_outlined),
-                      ),
-                    IconButton(
-                      icon: const Icon(Icons.refresh),
-                      onPressed: _loadMenuItems,
-                    ),
-                  ],
-                )
-              : null,
-          bottomNavigationBar: isCompact
-              ? SafeArea(
-                  top: false,
-                  child: Container(
-                    constraints: const BoxConstraints(minHeight: 56),
-                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 6),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      border: Border(
-                        top: BorderSide(color: Colors.grey.shade200),
-                      ),
-                    ),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.center,
-                      children: [
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(
-                                '₱${_totalAmount.toStringAsFixed(2)}',
-                                style: const TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.w800,
+            return LayoutBuilder(
+              builder: (context, constraints) {
+                final width = constraints.maxWidth;
+                final isCompact = width < 780;
+                final isShortHeight = constraints.maxHeight < 420;
+                final crossAxisCount = width < 520
+                    ? 2
+                    : width >= 1100
+                        ? 4
+                        : width >= 820
+                            ? 3
+                            : 2;
+                final childAspectRatio = width < 520
+                    ? 0.7
+                    : crossAxisCount == 2
+                        ? (isShortHeight ? 0.85 : 0.9)
+                        : (isShortHeight ? 0.8 : 0.85);
+
+                final filteredMenuItems = _selectedCategory == 'All'
+                    ? _menuItems
+                    : _selectedCategory == '📌 Pinned'
+                        ? _menuItems
+                            .where((m) => _isPinned((m['id'] ?? '').toString()))
+                            .toList()
+                        : _menuItems
+                            .where((m) =>
+                                (m['category'] ?? '').toString().trim() ==
+                                _selectedCategory)
+                            .toList();
+
+                return Scaffold(
+                  appBar: widget.showAppBar
+                      ? AppBar(
+                          title: Text(
+                            _addToExistingOrder &&
+                                    _targetPendingOrderId.trim().isNotEmpty
+                                ? 'Add Items — Order #${_shortOrderId(_targetPendingOrderId)}'
+                                : 'Point of Sale',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          actions: [
+                            if (isCompact)
+                              IconButton(
+                                tooltip: _addToExistingOrder
+                                    ? 'Add to Order'
+                                    : 'New Order',
+                                onPressed: () async {
+                                  if (_isLoading) return;
+                                  final next = !_addToExistingOrder;
+                                  setState(() {
+                                    _addToExistingOrder = next;
+                                    if (!next) {
+                                      _targetPendingOrderId = '';
+                                      _baselineQtyByMenuId.clear();
+                                    }
+                                  });
+                                  if (next) {
+                                    await _pickPendingOrder();
+                                    if (!mounted) return;
+                                    if (_targetPendingOrderId.trim().isEmpty) {
+                                      setState(() {
+                                        _addToExistingOrder = false;
+                                      });
+                                    }
+                                  }
+                                },
+                                icon: Icon(
+                                  _addToExistingOrder
+                                      ? Icons.playlist_add_check
+                                      : Icons.playlist_add,
+                                ),
+                              )
+                            else
+                              TextButton.icon(
+                                onPressed: () async {
+                                  if (_isLoading) return;
+                                  final next = !_addToExistingOrder;
+                                  setState(() {
+                                    _addToExistingOrder = next;
+                                    if (!next) {
+                                      _targetPendingOrderId = '';
+                                      _baselineQtyByMenuId.clear();
+                                    }
+                                  });
+                                  if (next) {
+                                    await _pickPendingOrder();
+                                    if (!mounted) return;
+                                    if (_targetPendingOrderId.trim().isEmpty) {
+                                      setState(() {
+                                        _addToExistingOrder = false;
+                                      });
+                                    }
+                                  }
+                                },
+                                icon: Icon(
+                                  _addToExistingOrder
+                                      ? Icons.playlist_add_check
+                                      : Icons.playlist_add,
+                                ),
+                                label: Text(
+                                  _addToExistingOrder
+                                      ? 'Add to Order'
+                                      : 'New Order',
                                 ),
                               ),
-                              const SizedBox(height: 2),
-                              Text(
-                                _cartItems.isEmpty
-                                    ? 'No items'
-                                    : '${_cartItems.length} item(s) in cart',
-                                style: TextStyle(
-                                  color: Colors.grey.shade700,
-                                  fontWeight: FontWeight.w600,
-                                  fontSize: 12,
-                                ),
+                            if (isCompact)
+                              IconButton(
+                                tooltip: _cartItems.isEmpty
+                                    ? 'Cart'
+                                    : 'Cart (${_cartItems.length})',
+                                onPressed: _openCartSheet,
+                                icon: const Icon(Icons.shopping_cart_outlined),
                               ),
-                            ],
-                          ),
-                        ),
-                        SizedBox(
-                          height: 36,
-                          child: FilledButton.icon(
-                            onPressed: _isLoading
-                                ? null
-                                : (_cartItems.isEmpty
-                                    ? _openCartSheet
-                                    : (_addToExistingOrder
-                                        ? _createOrder
-                                        : _openCartSheet)),
-                            style: FilledButton.styleFrom(
-                              minimumSize: const Size(0, 36),
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 12,
-                                vertical: 6,
+                            IconButton(
+                              icon: const Icon(Icons.refresh),
+                              onPressed: _loadMenuItems,
+                            ),
+                          ],
+                        )
+                      : null,
+                  bottomNavigationBar: isCompact
+                      ? SafeArea(
+                          top: false,
+                          child: Container(
+                            constraints: const BoxConstraints(minHeight: 56),
+                            padding: const EdgeInsets.fromLTRB(16, 8, 16, 6),
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              border: Border(
+                                top: BorderSide(color: Colors.grey.shade200),
                               ),
-                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                              visualDensity: VisualDensity.compact,
                             ),
-                            icon: const Icon(
-                              Icons.shopping_cart_outlined,
-                              size: 18,
-                            ),
-                            label: Text(
-                              _cartItems.isEmpty
-                                  ? 'View Cart'
-                                  : _addToExistingOrder
-                                      ? 'Add Items'
-                                      : 'Checkout',
-                              style: const TextStyle(fontSize: 12),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                )
-              : null,
-          body: isCompact
-              ? Column(
-                  children: [
-                    _buildCategoryChips(),
-                    Expanded(
-                      child: _isLoading
-                          ? const Center(child: CircularProgressIndicator())
-                          : (_selectedCategory == 'All'
-                              ? _buildMenuByCategory(
-                                  items: filteredMenuItems,
-                                  crossAxisCount: crossAxisCount,
-                                  childAspectRatio: childAspectRatio,
-                                )
-                              : GridView.builder(
-                                  padding: const EdgeInsets.all(12),
-                                  gridDelegate:
-                                      SliverGridDelegateWithFixedCrossAxisCount(
-                                    crossAxisCount: crossAxisCount,
-                                    childAspectRatio: childAspectRatio,
-                                    crossAxisSpacing: 12,
-                                    mainAxisSpacing: 12,
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.center,
+                              children: [
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Text(
+                                        '₱${_totalAmount.toStringAsFixed(2)}',
+                                        style: const TextStyle(
+                                          fontSize: 16,
+                                          fontWeight: FontWeight.w800,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 2),
+                                      Text(
+                                        _cartItems.isEmpty
+                                            ? 'No items'
+                                            : '${_cartItems.length} item(s) in cart',
+                                        style: TextStyle(
+                                          color: Colors.grey.shade700,
+                                          fontWeight: FontWeight.w600,
+                                          fontSize: 12,
+                                        ),
+                                      ),
+                                    ],
                                   ),
-                                  itemCount: filteredMenuItems.length,
-                                  itemBuilder: (context, index) {
-                                    final item = filteredMenuItems[index];
-                                    final id =
-                                        (item['id'] ?? '').toString().trim();
-                                    final qty = id.isEmpty ? 0 : _qtyInCart(id);
-                                    return _MenuItemCard(
-                                      item: item,
-                                      quantityInCart: qty,
-                                      onIncrement: () =>
-                                          _setQtyForItem(item, qty + 1),
-                                      onDecrement: () =>
-                                          _setQtyForItem(item, qty - 1),
-                                    );
-                                  },
-                                )),
-                    ),
-                  ],
-                )
-              : Row(
-                  children: [
-                    Expanded(
-                      flex: 3,
-                      child: Column(
-                        children: [
-                          _buildCategoryChips(),
-                          Expanded(
-                            child: _isLoading
-                                ? const Center(
-                                    child: CircularProgressIndicator(),
-                                  )
-                                : (_selectedCategory == 'All'
-                                    ? _buildMenuByCategory(
-                                        items: filteredMenuItems,
-                                        crossAxisCount: crossAxisCount,
-                                        childAspectRatio: childAspectRatio,
-                                      )
-                                    : GridView.builder(
-                                        padding: const EdgeInsets.all(12),
-                                        gridDelegate:
-                                            SliverGridDelegateWithFixedCrossAxisCount(
+                                ),
+                                SizedBox(
+                                  height: 36,
+                                  child: FilledButton.icon(
+                                    onPressed: _isLoading
+                                        ? null
+                                        : (_cartItems.isEmpty
+                                            ? _openCartSheet
+                                            : (_addToExistingOrder
+                                                ? _createOrder
+                                                : _openCartSheet)),
+                                    style: FilledButton.styleFrom(
+                                      minimumSize: const Size(0, 36),
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 12,
+                                        vertical: 6,
+                                      ),
+                                      tapTargetSize:
+                                          MaterialTapTargetSize.shrinkWrap,
+                                      visualDensity: VisualDensity.compact,
+                                    ),
+                                    icon: const Icon(
+                                      Icons.shopping_cart_outlined,
+                                      size: 18,
+                                    ),
+                                    label: Text(
+                                      _cartItems.isEmpty
+                                          ? 'View Cart'
+                                          : _addToExistingOrder
+                                              ? 'Add Items'
+                                              : 'Checkout',
+                                      style: const TextStyle(fontSize: 12),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        )
+                      : null,
+                  body: isCompact
+                      ? Column(
+                          children: [
+                            _buildCategoryChips(),
+                            Expanded(
+                              child: isLoading
+                                  ? const SkeletonPOS()
+                                  : (_selectedCategory == 'All'
+                                      ? _buildMenuByCategory(
+                                          items: filteredMenuItems,
                                           crossAxisCount: crossAxisCount,
                                           childAspectRatio: childAspectRatio,
-                                          crossAxisSpacing: 12,
-                                          mainAxisSpacing: 12,
-                                        ),
-                                        itemCount: filteredMenuItems.length,
-                                        itemBuilder: (context, index) {
-                                          final item = filteredMenuItems[index];
-                                          final id = (item['id'] ?? '')
-                                              .toString()
-                                              .trim();
-                                          final qty =
-                                              id.isEmpty ? 0 : _qtyInCart(id);
-                                          return _MenuItemCard(
-                                            item: item,
-                                            quantityInCart: qty,
-                                            onIncrement: () =>
-                                                _setQtyForItem(item, qty + 1),
-                                            onDecrement: () =>
-                                                _setQtyForItem(item, qty - 1),
-                                          );
-                                        },
-                                      )),
-                          ),
-                        ],
-                      ),
-                    ),
-                    SizedBox(
-                      width: width >= 1200 ? 420 : 360,
-                      child: Padding(
-                        padding: const EdgeInsets.fromLTRB(0, 16, 16, 16),
-                        child: _CartPanel(
-                          cartItems: _cartItems,
-                          totalAmount: _totalAmount,
-                          isLoading: _isLoading,
-                          isAddToExistingOrder: _addToExistingOrder,
-                          orderId: _addToExistingOrder
-                              ? _targetPendingOrderId
-                              : _newOrderTempId,
-                          isNewOrder: !_addToExistingOrder,
-                          baselineQtyByMenuId: _baselineQtyByMenuId,
-                          onQuantityChanged: (index, qty) =>
-                              _updateQuantity(index, qty),
-                          onRemove: (index) => _removeFromCart(index),
-                          onCreateOrder: _createOrder,
-                          actionLabel: _addToExistingOrder
-                              ? 'Add Items'
-                              : 'Create Order',
+                                        )
+                                      : GridView.builder(
+                                          padding: const EdgeInsets.all(12),
+                                          gridDelegate:
+                                              SliverGridDelegateWithFixedCrossAxisCount(
+                                            crossAxisCount: crossAxisCount,
+                                            childAspectRatio: childAspectRatio,
+                                            crossAxisSpacing: 12,
+                                            mainAxisSpacing: 12,
+                                          ),
+                                          itemCount: filteredMenuItems.length,
+                                          itemBuilder: (context, index) {
+                                            final item =
+                                                filteredMenuItems[index];
+                                            final id = (item['id'] ?? '')
+                                                .toString()
+                                                .trim();
+                                            final qty =
+                                                id.isEmpty ? 0 : _qtyInCart(id);
+                                            return _MenuItemCard(
+                                              item: item,
+                                              quantityInCart: qty,
+                                              onIncrement: () =>
+                                                  _setQtyForItem(item, qty + 1),
+                                              onDecrement: () =>
+                                                  _setQtyForItem(item, qty - 1),
+                                            );
+                                          },
+                                        )),
+                            ),
+                          ],
+                        )
+                      : Row(
+                          children: [
+                            Expanded(
+                              flex: 3,
+                              child: Column(
+                                children: [
+                                  _buildCategoryChips(),
+                                  Expanded(
+                                    child: isLoading
+                                        ? const SkeletonPOS()
+                                        : (_selectedCategory == 'All'
+                                            ? _buildMenuByCategory(
+                                                items: filteredMenuItems,
+                                                crossAxisCount: crossAxisCount,
+                                                childAspectRatio:
+                                                    childAspectRatio,
+                                              )
+                                            : GridView.builder(
+                                                padding:
+                                                    const EdgeInsets.all(12),
+                                                gridDelegate:
+                                                    SliverGridDelegateWithFixedCrossAxisCount(
+                                                  crossAxisCount:
+                                                      crossAxisCount,
+                                                  childAspectRatio:
+                                                      childAspectRatio,
+                                                  crossAxisSpacing: 12,
+                                                  mainAxisSpacing: 12,
+                                                ),
+                                                itemCount:
+                                                    filteredMenuItems.length,
+                                                itemBuilder: (context, index) {
+                                                  final item =
+                                                      filteredMenuItems[index];
+                                                  final id = (item['id'] ?? '')
+                                                      .toString()
+                                                      .trim();
+                                                  final qty = id.isEmpty
+                                                      ? 0
+                                                      : _qtyInCart(id);
+                                                  return _MenuItemCard(
+                                                    item: item,
+                                                    quantityInCart: qty,
+                                                    onIncrement: () =>
+                                                        _setQtyForItem(
+                                                            item, qty + 1),
+                                                    onDecrement: () =>
+                                                        _setQtyForItem(
+                                                            item, qty - 1),
+                                                  );
+                                                },
+                                              )),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            SizedBox(
+                              width: width >= 1200 ? 420 : 360,
+                              child: Padding(
+                                padding:
+                                    const EdgeInsets.fromLTRB(0, 16, 16, 16),
+                                child: _CartPanel(
+                                  cartItems: _cartItems,
+                                  totalAmount: _totalAmount,
+                                  isLoading: isLoading,
+                                  isAddToExistingOrder: _addToExistingOrder,
+                                  orderId: _addToExistingOrder
+                                      ? _targetPendingOrderId
+                                      : _newOrderTempId,
+                                  isNewOrder: !_addToExistingOrder,
+                                  baselineQtyByMenuId: _baselineQtyByMenuId,
+                                  onQuantityChanged: (index, qty) =>
+                                      _updateQuantity(index, qty),
+                                  onRemove: (index) => _removeFromCart(index),
+                                  onCreateOrder: _createOrder,
+                                  actionLabel: _addToExistingOrder
+                                      ? 'Add Items'
+                                      : 'Create Order',
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
-                      ),
-                    ),
-                  ],
-                ),
+                );
+              },
+            );
+          },
         );
       },
     );
@@ -1283,6 +1358,18 @@ class _CartPanel extends StatelessWidget {
     if (v is int) return v;
     if (v is num) return v.toInt();
     return int.tryParse((v ?? '').toString()) ?? 0;
+  }
+
+  String _formatDateTime(DateTime dateTime) {
+    final hour = dateTime.hour > 12
+        ? dateTime.hour - 12
+        : (dateTime.hour == 0 ? 12 : dateTime.hour);
+    final minute = dateTime.minute.toString().padLeft(2, '0');
+    final period = dateTime.hour >= 12 ? 'PM' : 'AM';
+    final month = dateTime.month.toString().padLeft(2, '0');
+    final day = dateTime.day.toString().padLeft(2, '0');
+    final year = dateTime.year;
+    return '$month/$day/$year $hour:$minute $period';
   }
 
   Widget _buildAddToOrderSections(BuildContext context) {
@@ -1444,6 +1531,16 @@ class _CartPanel extends StatelessWidget {
                         style: TextStyle(
                             fontSize: 18, fontWeight: FontWeight.bold),
                       ),
+                      Padding(
+                        padding: const EdgeInsets.only(top: 2),
+                        child: Text(
+                          _formatDateTime(DateTime.now()),
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey.shade600,
+                          ),
+                        ),
+                      ),
                       if ((isAddToExistingOrder || isNewOrder) &&
                           orderId.trim().isNotEmpty)
                         Padding(
@@ -1566,14 +1663,35 @@ class _MenuItemCard extends StatelessWidget {
     required this.onDecrement,
   }) : super(key: key);
 
+  String _getInitials(String name) {
+    if (name.isEmpty) return '';
+    // Remove parentheses and their contents
+    var cleaned = name.replaceAll(RegExp(r'\([^)]*\)'), '');
+    // Remove special characters, keep only letters and spaces
+    cleaned = cleaned.replaceAll(RegExp(r'[^a-zA-Z\s]'), '');
+    cleaned = cleaned.trim();
+    final words =
+        cleaned.split(RegExp(r'\s+')).where((w) => w.isNotEmpty).toList();
+    if (words.isEmpty) return '';
+    if (words.length == 1) {
+      return words[0].substring(0, 1).toUpperCase();
+    }
+    return words
+        .take(2)
+        .map((w) => w.isNotEmpty ? w[0].toUpperCase() : '')
+        .join('');
+  }
+
   @override
   Widget build(BuildContext context) {
     final isShortHeight = MediaQuery.of(context).size.height < 420;
+    final inventoryItemId = (item['inventoryItemId'] ?? '').toString().trim();
+    final isInventoryLinked = inventoryItemId.isNotEmpty;
     final servingsRaw = item['servings'] ?? item['availableServings'] ?? 0;
     final servings = servingsRaw is num
         ? servingsRaw.toInt()
         : int.tryParse((servingsRaw ?? '').toString()) ?? 0;
-    final isUnlimited = servings == -1;
+    final isUnlimited = servings == -1 || !isInventoryLinked;
     final manualAvailability = item['isAvailable'];
     final isAvailable = manualAvailability is bool
         ? manualAvailability
@@ -1586,6 +1704,9 @@ class _MenuItemCard extends StatelessWidget {
         : double.tryParse(priceRaw.toString()) ?? 0.0;
 
     final category = (item['category'] ?? '').toString();
+    final imageUrl = (item['imageUrl'] ?? '').toString().trim();
+    final name = (item['name'] ?? '').toString();
+    final initials = _getInitials(name);
 
     return Card(
       elevation: 0,
@@ -1623,7 +1744,7 @@ class _MenuItemCard extends StatelessWidget {
                     borderRadius: BorderRadius.circular(999),
                   ),
                   child: Text(
-                    isAvailable ? 'In stock' : 'Unavailable',
+                    isAvailable ? 'Available' : 'Unavailable',
                     style: TextStyle(
                       color: isAvailable ? Colors.green : Colors.red,
                       fontWeight: FontWeight.w800,
@@ -1659,17 +1780,46 @@ class _MenuItemCard extends StatelessWidget {
                     ),
                   ),
                 const Spacer(),
-                Text(
-                  isUnlimited ? 'Left: —' : 'Left: $servings',
-                  style: TextStyle(
-                    color: Colors.grey.shade700,
-                    fontWeight: FontWeight.w700,
-                    fontSize: 11,
+                if (isInventoryLinked)
+                  Text(
+                    isUnlimited ? 'Left: —' : 'Left: $servings',
+                    style: TextStyle(
+                      color: Colors.grey.shade700,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 11,
+                    ),
                   ),
-                ),
               ],
             ),
             const Spacer(),
+            // Initials placeholder (vertically centered with equal spacing)
+            if (imageUrl.isEmpty && initials.isNotEmpty)
+              Expanded(
+                child: Center(
+                  child: FittedBox(
+                    fit: BoxFit.contain,
+                    child: ShaderMask(
+                      shaderCallback: (bounds) => LinearGradient(
+                        colors: [
+                          Colors.blue.shade400,
+                          Colors.blue.shade700,
+                        ],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ).createShader(bounds),
+                      child: Text(
+                        initials,
+                        style: const TextStyle(
+                          fontSize: 56,
+                          fontWeight: FontWeight.w900,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            if (imageUrl.isNotEmpty) const Spacer(),
             Text(
               '₱${price.toStringAsFixed(2)}',
               style: const TextStyle(

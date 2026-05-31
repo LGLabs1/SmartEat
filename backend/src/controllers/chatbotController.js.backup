@@ -1,0 +1,324 @@
+const axios = require('axios');
+const { db } = require('../config/firebase');
+
+const OLLAMA_BASE_URL = process.env.OLLAMA_URL || 'http://localhost:11434';
+const MODEL_NAME = 'llama3.2';
+
+// Helper to get eateryId
+const getEateryId = async (req) => {
+  // 1. Directly supplied in the request (body, query, or header)
+  if (req.body?.eateryId) return req.body.eateryId;
+  if (req.query?.eateryId) return req.query.eateryId;
+  if (req.headers?.['x-eatery-id']) return req.headers['x-eatery-id'];
+  // 2. From authenticated user token (if present)
+  if (req.user?.eateryId) return req.user.eateryId;
+  // 3. Fallback: look up eateryId via user UID in Firestore
+  if (req.user?.uid) {
+    try {
+      const doc = await db.collection('users').doc(req.user.uid).get();
+      if (doc.exists) {
+        return doc.data().eateryId;
+      }
+    } catch (e) {
+      console.error('Error fetching user eateryId:', e);
+    }
+  }
+  return null;
+};
+
+// System prompt for SmartEat context
+const SYSTEM_PROMPT = `You are SmartBot, an AI assistant for SmartEat - a Restaurant Management System.
+You help restaurant owners with two things:
+1. Answering questions about how to use the SmartEat system (like navigating, adding items, managing orders).
+2. Providing insights about their live restaurant data using the "RESTAURANT CURRENT DATA" section below.
+
+CRITICAL RULES:
+1. NEVER invent, guess, or hallucinate restaurant data (like items, prices, or dates).
+2. If the user asks a question about their sales, inventory, or data, and it is NOT in the data below, you must state: "I don't have access to that specific information right now."
+3. If the user asks a general question about how to use SmartEat, answer it helpfully!
+4. Be concise and professional (2-4 sentences max).`;
+
+/**
+ * Generate chat response using Ollama
+ */
+exports.chat = async (req, res) => {
+  try {
+    const { message, history = [] } = req.body;
+    const eateryId = await getEateryId(req);
+
+    if (!message) {
+      return res.status(400).json({ error: 'Message is required' });
+    }
+
+    let contextData = `\n\n--- RESTAURANT CURRENT DATA ---\nNo data available. Cannot authenticate restaurant.`;
+    if (eateryId) {
+      try {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        
+        const last7DaysDate = new Date();
+        last7DaysDate.setDate(last7DaysDate.getDate() - 7);
+        
+        // Fetch basic context data in parallel
+        const [menuSnapshot, ordersSnapshot, inventorySnapshot] = await Promise.all([
+          db.collection('eateries').doc(eateryId).collection('menu').limit(50).get(),
+          db.collection('eateries').doc(eateryId).collection('orders')
+            .where('createdAt', '>=', last7DaysDate).get(),
+          db.collection('eateries').doc(eateryId).collection('inventory').get()
+        ]);
+        
+        const menuItems = menuSnapshot.docs.map(d => d.data().name).join(', ');
+        
+        let todayRevenue = 0;
+        let todayOrders = 0;
+        let weekRevenue = 0;
+        let weekOrders = 0;
+        let highestSale = 0;
+        const itemSales = {};
+        
+        ordersSnapshot.docs.forEach(d => {
+          const order = d.data();
+          if (order.status === 'completed') {
+            const amount = order.totalAmount || 0;
+            weekRevenue += amount;
+            weekOrders++;
+            
+            if (amount > highestSale) {
+              highestSale = amount;
+            }
+            
+            // Check if order is from today
+            let orderDate = null;
+            if (order.createdAt?.toDate) {
+              orderDate = order.createdAt.toDate();
+            } else if (order.createdAt) {
+              orderDate = new Date(order.createdAt);
+            }
+            
+            if (orderDate && orderDate >= today) {
+              todayRevenue += amount;
+              todayOrders++;
+            }
+            
+            (order.items || []).forEach(item => {
+              const name = item.name || 'Unknown';
+              itemSales[name] = (itemSales[name] || 0) + (item.quantity || 1);
+            });
+          }
+        });
+        
+        const topItems = Object.entries(itemSales)
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 5)
+          .map(([name, qty]) => `${name} (${qty} sold)`)
+          .join(', ');
+        
+        const lowStock = inventorySnapshot.docs
+          .map(d => d.data())
+          .filter(i => (i.currentStock || 0) <= (i.minStock || 0))
+          .map(i => i.name)
+          .join(', ');
+
+        const topItemsText = topItems.length > 0 ? topItems : '0 (No sales recorded)';
+        const lowStockText = lowStock.length > 0 ? lowStock : '0 items';
+        const menuItemsText = menuItems.length > 0 ? menuItems : '0 items';
+
+        contextData = `\n\n--- RESTAURANT CURRENT DATA ---
+Today's Completed Orders: ${todayOrders}
+Today's Revenue: ₱${todayRevenue.toFixed(2)}
+Last 7 Days Orders: ${weekOrders}
+Last 7 Days Revenue: ₱${weekRevenue.toFixed(2)}
+Highest Single Sale (Last 7 Days): ₱${highestSale.toFixed(2)}
+Top Selling Items (Last 7 Days): ${topItemsText}
+Low Stock Items: ${lowStockText}
+Menu Items (sample): ${menuItemsText}
+-------------------------------
+Use this data to answer questions accurately. DO NOT INVENT DATA.`;
+      } catch (e) {
+        console.error('Error fetching context for chat:', e);
+        contextData = `\n\n--- RESTAURANT CURRENT DATA ---\nError fetching data.`;
+      }
+    }
+
+    // Build messages array with context
+    const messages = [
+      { role: 'system', content: SYSTEM_PROMPT + contextData }
+    ];
+
+    // Add conversation history (last 10 messages)
+    const recentHistory = history.slice(-10);
+    messages.push(...recentHistory);
+
+    // Add user message
+    messages.push({ role: 'user', content: message });
+
+    // Call Ollama (longer timeout for first-time model loading)
+    const response = await axios.post(`${OLLAMA_BASE_URL}/api/chat`, {
+      model: MODEL_NAME,
+      messages: messages,
+      stream: false,
+      options: {
+        temperature: 0.0,
+        num_predict: 200
+      }
+    }, {
+      timeout: 300000 // 5 minute timeout for model loading / slower CPUs
+    });
+
+    const assistantMessage = response.data.message?.content || 
+      'I apologize, I could not generate a response at this time.';
+
+    res.json({
+      success: true,
+      response: assistantMessage,
+      model: MODEL_NAME,
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    console.error('Chatbot error:', error.message);
+    console.error('Error details:', error.response?.data || error.code || 'Unknown error');
+    
+    // Check if Ollama is not running
+    if (error.code === 'ECONNREFUSED') {
+      return res.status(503).json({
+        error: 'AI service unavailable',
+        message: 'Ollama is not running. Please start Ollama first (ollama serve).'
+      });
+    }
+
+    // Ollama is running but model generation is taking too long
+    if (error.code === 'ECONNABORTED') {
+      return res.status(504).json({
+        error: 'AI request timed out',
+        message: 'The AI model is still loading or responding slowly. Please try again in a moment.'
+      });
+    }
+
+    res.status(500).json({
+      error: 'Failed to generate response',
+      message: error.message
+    });
+  }
+};
+
+/**
+ * Check Ollama status
+ */
+exports.getStatus = async (req, res) => {
+  try {
+    const response = await axios.get(`${OLLAMA_BASE_URL}/api/tags`, {
+      timeout: 5000
+    });
+    
+    const models = response.data.models || [];
+    const llamaInstalled = models.some(m => m.name.includes('llama3.2'));
+
+    res.json({
+      status: 'online',
+      ollamaRunning: true,
+      mistralInstalled: llamaInstalled,
+      availableModels: models.map(m => m.name),
+      baseUrl: OLLAMA_BASE_URL
+    });
+  } catch (error) {
+    console.error('Ollama status check failed:', error.message);
+    res.status(503).json({
+      status: 'offline',
+      ollamaRunning: false,
+      mistralInstalled: false,
+      message: 'Ollama is not running. Start it with: ollama serve',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * Get quick insights about eatery data
+ */
+exports.getInsights = async (req, res) => {
+  try {
+    const eateryId = await getEateryId(req);
+
+    if (!eateryId) {
+      return res.status(400).json({ error: 'Eatery ID required' });
+    }
+
+    // Fetch recent analytics data from Firestore
+    const last7Days = new Date();
+    last7Days.setDate(last7Days.getDate() - 7);
+
+    const ordersSnapshot = await db
+      .collection('eateries')
+      .doc(eateryId)
+      .collection('orders')
+      .where('createdAt', '>=', last7Days)
+      .get();
+
+    let totalOrders = 0;
+    let totalRevenue = 0;
+    const dailyOrders = {};
+
+    ordersSnapshot.docs.forEach(doc => {
+      const order = doc.data();
+      if (order.status === 'completed') {
+        totalOrders++;
+        totalRevenue += order.totalAmount || 0;
+        
+        const date = order.createdAt?.toDate ? 
+          order.createdAt.toDate().toISOString().split('T')[0] : 
+          new Date().toISOString().split('T')[0];
+        
+        dailyOrders[date] = (dailyOrders[date] || 0) + 1;
+      }
+    });
+
+    const avgDailyOrders = Object.keys(dailyOrders).length > 0 ?
+      totalOrders / Object.keys(dailyOrders).length : 0;
+
+    // Generate AI summary using Ollama
+    const insightsPrompt = `Based on this restaurant data for the last 7 days:
+- Total completed orders: ${totalOrders}
+- Total revenue: ₱${totalRevenue.toFixed(2)}
+- Average orders per day: ${avgDailyOrders.toFixed(1)}
+- Active days: ${Object.keys(dailyOrders).length}
+
+Provide 2-3 brief, actionable insights or observations about this performance. Be concise and helpful.`;
+
+    const aiResponse = await axios.post(`${OLLAMA_BASE_URL}/api/generate`, {
+      model: MODEL_NAME,
+      prompt: insightsPrompt,
+      stream: false,
+      options: {
+        temperature: 0.5,
+        num_predict: 200
+      }
+    }, {
+      timeout: 300000
+    });
+
+    const summary = aiResponse.data.response || 
+      'Unable to generate insights at this time.';
+
+    res.json({
+      success: true,
+      data: {
+        totalOrders,
+        totalRevenue: Math.round(totalRevenue * 100) / 100,
+        avgDailyOrders: Math.round(avgDailyOrders * 10) / 10,
+        activeDays: Object.keys(dailyOrders).length,
+        aiSummary: summary
+      },
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    console.error('Insights error:', error.message);
+    res.status(500).json({
+      error: 'Failed to generate insights',
+      message: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};
+
+module.exports = exports;

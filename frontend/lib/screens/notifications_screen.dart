@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../services/auth_provider.dart';
+import '../services/api_service.dart';
 import 'package:provider/provider.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
@@ -45,51 +46,25 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
 
       _eateryId = eateryId;
 
-      // Fetch notifications from Firestore
-      QuerySnapshot snapshot;
-      try {
-        // Try indexed query first (requires composite index)
-        snapshot = await FirebaseFirestore.instance
-            .collection('notifications')
-            .where('eateryId', isEqualTo: eateryId)
-            .orderBy('createdAt', descending: true)
-            .limit(50)
-            .get();
-      } catch (e) {
-        // Fallback: query without ordering if index not ready
-        if (e.toString().contains('failed-precondition') ||
-            e.toString().contains('index')) {
-          debugPrint('Index not ready, using fallback query');
-          snapshot = await FirebaseFirestore.instance
-              .collection('notifications')
-              .where('eateryId', isEqualTo: eateryId)
-              .limit(100)
-              .get();
-        } else {
-          rethrow;
-        }
+      // Fetch all data sources in parallel
+      final results = await Future.wait([
+        _fetchStoredNotifications(eateryId),
+        _fetchInventoryNotifications(eateryId),
+        _fetchPayableNotifications(eateryId),
+      ]);
+
+      // Combine all notifications
+      final allNotifications = <NotificationItem>[];
+      for (final list in results) {
+        allNotifications.addAll(list);
       }
 
-      final notifications = snapshot.docs.map((doc) {
-        final data = doc.data() as Map<String, dynamic>;
-        return NotificationItem(
-          id: doc.id,
-          title: data['title'] ?? 'Notification',
-          body: data['body'] ?? '',
-          type: data['type'] ?? 'general',
-          isRead: data['isRead'] ?? false,
-          createdAt:
-              (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
-          data: data,
-        );
-      }).toList();
-
-      // Sort by createdAt descending (for fallback query without orderBy)
-      notifications.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      // Sort by createdAt/due date descending
+      allNotifications.sort((a, b) => b.createdAt.compareTo(a.createdAt));
 
       if (mounted) {
         setState(() {
-          _notifications = notifications;
+          _notifications = allNotifications;
           _isLoading = false;
         });
       }
@@ -117,6 +92,163 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     }
   }
 
+  Future<List<NotificationItem>> _fetchStoredNotifications(
+      String eateryId) async {
+    try {
+      QuerySnapshot snapshot;
+      try {
+        snapshot = await FirebaseFirestore.instance
+            .collection('notifications')
+            .where('eateryId', isEqualTo: eateryId)
+            .orderBy('createdAt', descending: true)
+            .limit(50)
+            .get();
+      } catch (e) {
+        if (e.toString().contains('failed-precondition') ||
+            e.toString().contains('index')) {
+          snapshot = await FirebaseFirestore.instance
+              .collection('notifications')
+              .where('eateryId', isEqualTo: eateryId)
+              .limit(100)
+              .get();
+        } else {
+          rethrow;
+        }
+      }
+
+      return snapshot.docs.map((doc) {
+        final data = doc.data() as Map<String, dynamic>;
+        return NotificationItem(
+          id: doc.id,
+          title: data['title'] ?? 'Notification',
+          body: data['body'] ?? '',
+          type: data['type'] ?? 'general',
+          isRead: data['isRead'] ?? false,
+          createdAt:
+              (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
+          data: data,
+        );
+      }).toList();
+    } catch (e) {
+      return [];
+    }
+  }
+
+  Future<List<NotificationItem>> _fetchInventoryNotifications(
+      String eateryId) async {
+    try {
+      final result = await ApiService.getInventoryItems();
+      final items = result['data'] as List<dynamic>? ?? [];
+      final notifications = <NotificationItem>[];
+
+      for (final item in items) {
+        final name = (item['name'] ?? 'Unknown Item').toString();
+        final currentStock = (item['currentStock'] as num?)?.toDouble() ?? 0;
+        final minStock = (item['minStock'] as num?)?.toDouble() ?? 0;
+        final unit = (item['unit'] ?? '').toString();
+        final id = (item['id'] ?? '').toString();
+
+        if (currentStock <= 0) {
+          // Out of stock notification
+          notifications.add(NotificationItem(
+            id: 'out_of_stock_$id',
+            title: 'Out of Stock: $name',
+            body:
+                '$name is currently out of stock. Please restock immediately.',
+            type: 'out_of_stock',
+            isRead: false,
+            createdAt: DateTime.now(),
+            data: {'itemId': id, 'type': 'inventory', 'priority': 'high'},
+          ));
+        } else if (currentStock <= minStock && minStock > 0) {
+          // Low stock notification
+          notifications.add(NotificationItem(
+            id: 'low_stock_$id',
+            title: 'Low Stock: $name',
+            body:
+                '$name is running low. Current: $currentStock $unit (Min: $minStock $unit)',
+            type: 'low_stock',
+            isRead: false,
+            createdAt: DateTime.now(),
+            data: {'itemId': id, 'type': 'inventory', 'priority': 'medium'},
+          ));
+        }
+      }
+
+      return notifications;
+    } catch (e) {
+      return [];
+    }
+  }
+
+  Future<List<NotificationItem>> _fetchPayableNotifications(
+      String eateryId) async {
+    try {
+      final result = await ApiService.getPayables();
+      final items = result['data'] as List<dynamic>? ?? [];
+      final notifications = <NotificationItem>[];
+      final now = DateTime.now();
+
+      for (final item in items) {
+        final name = (item['name'] ?? 'Unknown Bill').toString();
+        final dueDateStr = item['dueDate']?.toString();
+        final status = (item['status'] ?? 'unpaid').toString().toLowerCase();
+        final amount = (item['amount'] as num?)?.toDouble() ?? 0.0;
+        final id = (item['id'] ?? '').toString();
+
+        if (dueDateStr == null || dueDateStr.isEmpty) continue;
+
+        final dueDate = DateTime.tryParse(dueDateStr);
+        if (dueDate == null) continue;
+
+        final daysUntil = dueDate.difference(now).inDays;
+
+        // Only notify for unpaid bills
+        if (status != 'paid') {
+          if (daysUntil < 0) {
+            // Overdue
+            notifications.add(NotificationItem(
+              id: 'overdue_$id',
+              title: 'Overdue Bill: $name',
+              body: amount > 0
+                  ? '$name is overdue by ${daysUntil.abs()} days. Amount: ₱${amount.toStringAsFixed(2)}'
+                  : '$name is overdue by ${daysUntil.abs()} days. Variable amount.',
+              type: 'bill_overdue',
+              isRead: false,
+              createdAt: dueDate,
+              data: {'payableId': id, 'type': 'payable', 'priority': 'high'},
+            ));
+          } else if (daysUntil <= 3) {
+            // Due soon (within 3 days)
+            String dueText;
+            if (daysUntil == 0) {
+              dueText = 'today';
+            } else if (daysUntil == 1) {
+              dueText = 'tomorrow';
+            } else {
+              dueText = 'in $daysUntil days';
+            }
+            notifications.add(NotificationItem(
+              id: 'due_soon_$id',
+              title: 'Bill Due Soon: $name',
+              body: amount > 0
+                  ? '$name is due $dueText. Amount: ₱${amount.toStringAsFixed(2)}'
+                  : '$name is due $dueText. Variable amount.',
+              type: 'bill_due_soon',
+              isRead: false,
+              createdAt: dueDate,
+              data: {'payableId': id, 'type': 'payable', 'priority': 'medium'},
+            ));
+          }
+        }
+      }
+
+      return notifications;
+    } catch (e) {
+      return [];
+    }
+  }
+
   Future<void> _markAsRead(String notificationId) async {
     try {
       await FirebaseFirestore.instance
@@ -138,9 +270,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
           );
         }
       });
-    } catch (e) {
-      debugPrint('Failed to mark as read: $e');
-    }
+    } catch (e) {}
   }
 
   Future<void> _markAllAsRead() async {
@@ -172,9 +302,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                 ))
             .toList();
       });
-    } catch (e) {
-      debugPrint('Failed to mark all as read: $e');
-    }
+    } catch (e) {}
   }
 
   Future<void> _deleteNotification(String notificationId) async {
@@ -188,7 +316,6 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         _notifications.removeWhere((n) => n.id == notificationId);
       });
     } catch (e) {
-      debugPrint('Failed to delete notification: $e');
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Failed to delete: $e')),
       );
@@ -197,9 +324,14 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
 
   IconData _getIconForType(String type) {
     switch (type.toLowerCase()) {
+      case 'out_of_stock':
+        return Icons.error_outline;
       case 'low_stock':
       case 'inventory':
         return Icons.inventory_2_outlined;
+      case 'bill_overdue':
+        return Icons.warning_amber_outlined;
+      case 'bill_due_soon':
       case 'bill':
       case 'payable':
         return Icons.receipt_long_outlined;
@@ -216,8 +348,14 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
 
   Color _getColorForType(String type) {
     switch (type.toLowerCase()) {
+      case 'out_of_stock':
+        return Colors.red;
       case 'low_stock':
       case 'inventory':
+        return Colors.orange;
+      case 'bill_overdue':
+        return Colors.red;
+      case 'bill_due_soon':
         return Colors.orange;
       case 'bill':
       case 'payable':
@@ -563,9 +701,6 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
               onPressed: () {
                 Navigator.pop(context);
                 // Handle action navigation
-                final action = notification.data['action'];
-                final relatedId = notification.data['relatedId'];
-                debugPrint('Navigate to: $action, ID: $relatedId');
               },
               child: const Text('View Details'),
             ),

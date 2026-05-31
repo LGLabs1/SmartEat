@@ -41,6 +41,7 @@ class _MenuScreenState extends State<MenuScreen> {
   String _searchQuery = '';
   String _selectedCategoryFilter = 'All';
   bool _isAdmin = false;
+  bool _isApprovedStaff = false;
   String? _lastRoleUid;
   VoidCallback? _globalSearchListener;
   // Track pinned item IDs
@@ -135,9 +136,11 @@ class _MenuScreenState extends State<MenuScreen> {
           await context.read<AuthProvider>().getCurrentUserProfile();
       if (!mounted) return;
       final nextIsAdmin = _isAdminFromProfile(profile);
+      final nextIsStaff = _isStaffFromProfile(profile);
       final shouldReload = !_isAdmin && nextIsAdmin;
       setState(() {
         _isAdmin = nextIsAdmin;
+        _isApprovedStaff = nextIsStaff;
       });
       if (shouldReload) {
         await _loadMenuItems();
@@ -146,8 +149,15 @@ class _MenuScreenState extends State<MenuScreen> {
       if (!mounted) return;
       setState(() {
         _isAdmin = false;
+        _isApprovedStaff = false;
       });
     }
+  }
+
+  bool _isStaffFromProfile(Map<String, dynamic>? profile) {
+    if (profile == null) return false;
+    final approved = profile['approved'];
+    return approved != false; // Staff is approved unless explicitly false
   }
 
   Future<void> _confirmDeleteMenuItem(Map<String, dynamic> item) async {
@@ -182,8 +192,8 @@ class _MenuScreenState extends State<MenuScreen> {
 
     try {
       await ApiService.deleteMenuItem(id);
-      if (!mounted) return;
-      await _loadMenuItems();
+      // Optimistic update - remove from local list without full refresh
+      _removeMenuItemFromLocal(id);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Menu item deleted')),
@@ -395,6 +405,30 @@ class _MenuScreenState extends State<MenuScreen> {
         );
       }
     }
+  }
+
+  // Optimistic update helpers
+  void _removeMenuItemFromLocal(String id) {
+    setState(() {
+      _menuItems = _menuItems.where((m) => m['id'] != id).toList();
+    });
+  }
+
+  void _addMenuItemToLocal(Map<String, dynamic> item) {
+    setState(() {
+      _menuItems = [item, ..._menuItems];
+    });
+  }
+
+  void _updateMenuItemInLocal(String id, Map<String, dynamic> updates) {
+    setState(() {
+      _menuItems = _menuItems.map((m) {
+        if (m['id'] == id) {
+          return {...m, ...updates};
+        }
+        return m;
+      }).toList();
+    });
   }
 
   Future<void> _loadPinnedItems() async {
@@ -657,7 +691,8 @@ class _MenuScreenState extends State<MenuScreen> {
                                                 ? () =>
                                                     _confirmDeleteMenuItem(item)
                                                 : null,
-                                            onToggleAvailability: _isAdmin
+                                            onToggleAvailability: (_isAdmin ||
+                                                    _isApprovedStaff)
                                                 ? (v) => _setItemAvailability(
                                                     item, v)
                                                 : null,
@@ -693,9 +728,10 @@ class _MenuScreenState extends State<MenuScreen> {
                                   onDelete: _isAdmin
                                       ? () => _confirmDeleteMenuItem(item)
                                       : null,
-                                  onToggleAvailability: _isAdmin
-                                      ? (v) => _setItemAvailability(item, v)
-                                      : null,
+                                  onToggleAvailability:
+                                      (_isAdmin || _isApprovedStaff)
+                                          ? (v) => _setItemAvailability(item, v)
+                                          : null,
                                 );
                               },
                             );
@@ -707,26 +743,34 @@ class _MenuScreenState extends State<MenuScreen> {
     );
   }
 
-  void _showAddItemDialog() {
-    showDialog(
+  Future<void> _showAddItemDialog() async {
+    final result = await showDialog<Map<String, dynamic>?>(
       context: context,
       builder: (context) => _AddItemDialog(
         inventoryItems: _inventoryItems,
-        onItemAdded: _loadMenuItems,
       ),
     );
+
+    // Optimistic update - add to local list without full refresh
+    if (result != null && result['id'] != null) {
+      _addMenuItemToLocal(result);
+    }
   }
 
-  void _showEditItemDialog(Map<String, dynamic> item) {
-    showDialog(
+  Future<void> _showEditItemDialog(Map<String, dynamic> item) async {
+    final result = await showDialog<Map<String, dynamic>?>(
       context: context,
       builder: (context) => _EditItemDialog(
         item: item,
         isAdmin: _isAdmin,
         inventoryItems: _inventoryItems,
-        onItemUpdated: _loadMenuItems,
       ),
     );
+
+    // Optimistic update - update local list without full refresh
+    if (result != null && result['id'] != null) {
+      _updateMenuItemInLocal(result['id'] as String, result);
+    }
   }
 
   List<String> _extractCategories(Map<String, dynamic> item) {
@@ -771,7 +815,13 @@ class _MenuGridCard extends StatelessWidget {
     final isAvailable =
         manualAvailability is bool ? manualAvailability : servings > 0;
     final imageUrl = (item['imageUrl'] ?? '').toString().trim();
+    final shouldShowImage = imageUrl.isNotEmpty &&
+        !imageUrl.toLowerCase().startsWith('https://share.google/') &&
+        !imageUrl.toLowerCase().startsWith('http://share.google/') &&
+        !imageUrl.toLowerCase().contains('drive.google.com');
     final availableServings = item['availableServings'];
+    final inventoryItemId = (item['inventoryItemId'] ?? '').toString().trim();
+    final isInventoryLinked = inventoryItemId.isNotEmpty;
     final category = (item['category'] ?? '').toString();
     final name = (item['name'] ?? '').toString();
     final price = (item['price'] ?? 0);
@@ -791,7 +841,7 @@ class _MenuGridCard extends StatelessWidget {
             child: Stack(
               children: [
                 Positioned.fill(
-                  child: imageUrl.isEmpty
+                  child: !shouldShowImage
                       ? Container(
                           color: Colors.grey.shade200,
                           child: Icon(
@@ -1004,32 +1054,35 @@ class _MenuGridCard extends StatelessWidget {
                         ),
                       ),
                     ),
-                    const SizedBox(width: 6),
-                    Expanded(
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 6,
-                          vertical: 3,
-                        ),
-                        decoration: BoxDecoration(
-                          color: Colors.indigo.shade50,
-                          borderRadius: BorderRadius.circular(999),
-                          border: Border.all(color: Colors.indigo.shade200),
-                        ),
-                        child: Text(
-                          availableServings == null || availableServings == -1
-                              ? '—'
-                              : '$availableServings',
-                          style: TextStyle(
-                            color: Colors.indigo.shade800,
-                            fontSize: 10,
-                            fontWeight: FontWeight.w700,
+                    if (isInventoryLinked) ...[
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 3,
                           ),
-                          overflow: TextOverflow.ellipsis,
-                          textAlign: TextAlign.center,
+                          decoration: BoxDecoration(
+                            color: Colors.indigo.shade50,
+                            borderRadius: BorderRadius.circular(999),
+                            border: Border.all(color: Colors.indigo.shade200),
+                          ),
+                          child: Center(
+                            child: Text(
+                              availableServings == null ||
+                                      availableServings == -1
+                                  ? '—'
+                                  : 'x$availableServings',
+                              style: TextStyle(
+                                color: Colors.indigo.shade800,
+                                fontSize: 10,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
                         ),
                       ),
-                    ),
+                    ],
                   ],
                 ),
               ],
@@ -1042,12 +1095,10 @@ class _MenuGridCard extends StatelessWidget {
 }
 
 class _AddItemDialog extends StatefulWidget {
-  final VoidCallback onItemAdded;
   final List<Map<String, dynamic>> inventoryItems;
 
   const _AddItemDialog({
     Key? key,
-    required this.onItemAdded,
     required this.inventoryItems,
   }) : super(key: key);
 
@@ -1059,8 +1110,6 @@ class _AddItemDialogState extends State<_AddItemDialog> {
   final _formKey = GlobalKey<FormState>();
   final _nameController = TextEditingController();
   int _price = 0;
-  int _availableServings = 0;
-  bool _isUnlimitedServings = false;
   final _descriptionController = TextEditingController();
   final _imageUrlController = TextEditingController();
   bool _isLoading = false;
@@ -1088,9 +1137,6 @@ class _AddItemDialogState extends State<_AddItemDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final selectedInventoryId = _selectedInventoryItemId.trim();
-    final inventoryLinked = selectedInventoryId.isNotEmpty;
-
     return AlertDialog(
       title: const Text('Add Menu Item'),
       content: SizedBox(
@@ -1183,64 +1229,12 @@ class _AddItemDialogState extends State<_AddItemDialog> {
                   },
                 ),
                 const SizedBox(height: 12),
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(
-                      child: _IntStepperTextFormField(
-                        labelText: 'Price (₱)',
-                        value: _price,
-                        min: 0,
-                        onChanged: (v) => setState(() => _price = v),
-                        validator: (v) => v <= 0 ? 'Required' : null,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          _IntStepperTextFormField(
-                            labelText: 'Servings',
-                            value: _availableServings,
-                            min: 0,
-                            enabled: !inventoryLinked && !_isUnlimitedServings,
-                            onChanged: (v) =>
-                                setState(() => _availableServings = v),
-                            validator: (v) => v < 0 ? 'Invalid' : null,
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    SizedBox(
-                      width: 80,
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.start,
-                        children: [
-                          Text(
-                            'Unspecified',
-                            style: TextStyle(
-                              fontSize: 11,
-                              color: inventoryLinked
-                                  ? Colors.grey
-                                  : Colors.black87,
-                            ),
-                          ),
-                          Transform.scale(
-                            scale: 0.7,
-                            child: Switch(
-                              value: _isUnlimitedServings,
-                              onChanged: inventoryLinked
-                                  ? null
-                                  : (v) =>
-                                      setState(() => _isUnlimitedServings = v),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
+                _IntStepperTextFormField(
+                  labelText: 'Price (₱)',
+                  value: _price,
+                  min: 0,
+                  onChanged: (v) => setState(() => _price = v),
+                  validator: (v) => v <= 0 ? 'Required' : null,
                 ),
                 const SizedBox(height: 12),
                 TextFormField(
@@ -1285,8 +1279,8 @@ class _AddItemDialogState extends State<_AddItemDialog> {
     setState(() => _isLoading = true);
 
     try {
-      var servingsToSave = _availableServings;
       final invId = _selectedInventoryItemId.trim();
+      int servingsToSave;
       if (invId.isNotEmpty) {
         final inv =
             widget.inventoryItems.cast<Map<String, dynamic>>().firstWhere(
@@ -1297,26 +1291,28 @@ class _AddItemDialogState extends State<_AddItemDialog> {
         servingsToSave = stockRaw is num
             ? stockRaw.toInt()
             : int.tryParse((stockRaw ?? '').toString()) ?? 0;
+      } else {
+        servingsToSave = -1; // Unlimited when not linked to inventory
       }
 
       final name = _nameController.text.trim();
       final cats = _selectedCategories.toList()..sort();
       final category = cats.isEmpty ? '' : cats.first;
 
-      await ApiService.createMenuItem(
+      final result = await ApiService.createMenuItem(
         name: name,
         category: category,
         categories: cats,
         inventoryItemId: invId.isEmpty ? null : invId,
         price: _price,
-        availableServings: _isUnlimitedServings ? -1 : servingsToSave,
+        availableServings: servingsToSave,
         description: _descriptionController.text,
         imageUrl: _imageUrlController.text.trim(),
       );
 
       if (mounted) {
-        Navigator.of(context).pop();
-        widget.onItemAdded();
+        final newItem = result['data'] as Map<String, dynamic>?;
+        Navigator.of(context).pop(newItem);
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Menu item added successfully')),
         );
@@ -1343,7 +1339,6 @@ class _AddItemDialogState extends State<_AddItemDialog> {
 
 class _EditItemDialog extends StatefulWidget {
   final Map<String, dynamic> item;
-  final VoidCallback onItemUpdated;
   final List<Map<String, dynamic>> inventoryItems;
   final bool isAdmin;
 
@@ -1351,7 +1346,6 @@ class _EditItemDialog extends StatefulWidget {
     Key? key,
     required this.item,
     required this.isAdmin,
-    required this.onItemUpdated,
     required this.inventoryItems,
   }) : super(key: key);
 
@@ -1671,8 +1665,21 @@ class _EditItemDialogState extends State<_EditItemDialog> {
       );
 
       if (mounted) {
-        Navigator.of(context).pop();
-        widget.onItemUpdated();
+        // Optimistic update - return updated data
+        final updatedItem = {
+          ...widget.item,
+          'name': _nameController.text,
+          'category':
+              _selectedCategories.isEmpty ? '' : _selectedCategories.first,
+          'categories': _selectedCategories.toList()..sort(),
+          'price': _price,
+          'inventoryItemId': invId,
+          'availableServings': _isUnlimitedServings ? -1 : servingsToSave,
+          'isAvailable': _manualIsAvailable,
+          'description': _descriptionController.text,
+          'imageUrl': _imageUrlController.text.trim(),
+        };
+        Navigator.of(context).pop(updatedItem);
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Menu item updated successfully')),
         );

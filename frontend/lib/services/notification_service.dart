@@ -1,16 +1,12 @@
 import 'dart:async';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
-import 'package:flutter/foundation.dart';
-import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 // Background message handler must be a top-level function
 @pragma('vm:entry-point')
-Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
-  debugPrint('Handling background message: ${message.messageId}');
-}
+Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {}
 
 class NotificationService {
   static final NotificationService _instance = NotificationService._internal();
@@ -44,27 +40,22 @@ class NotificationService {
   Future<void> initialize() async {
     try {
       // Request permission (especially important for iOS)
-      final settings = await _messaging.requestPermission(
+      await _messaging.requestPermission(
         alert: true,
         badge: true,
         sound: true,
         provisional: false,
       );
 
-      debugPrint(
-          'Notification permission status: ${settings.authorizationStatus}');
-
       // Set up background handler
       FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
 
       // Get FCM token
       _fcmToken = await _messaging.getToken();
-      debugPrint('FCM Token: $_fcmToken');
 
       // Listen for token refresh
       _messaging.onTokenRefresh.listen((token) {
         _fcmToken = token;
-        debugPrint('FCM Token refreshed: $token');
       });
 
       // Set up local notifications for foreground messages
@@ -81,7 +72,6 @@ class NotificationService {
       // Load user preferences
       await _loadPreferences();
     } catch (e) {
-      debugPrint('Notification service initialization failed: $e');
       // Don't rethrow - notifications are not critical to app function
     }
   }
@@ -119,15 +109,12 @@ class NotificationService {
               AndroidFlutterLocalNotificationsPlugin>()
           ?.createNotificationChannel(androidChannel);
     } catch (e) {
-      debugPrint('Local notifications setup failed: $e');
       // Continue without local notifications - not critical
     }
   }
 
   /// Handle foreground messages
   void _handleForegroundMessage(RemoteMessage message) {
-    debugPrint('Got foreground message: ${message.notification?.title}');
-
     if (!_notificationsEnabled) return;
 
     final notification = message.notification;
@@ -143,13 +130,11 @@ class NotificationService {
 
   /// Handle notification tap when app is in background
   void _handleMessageOpenedApp(RemoteMessage message) {
-    debugPrint('Message opened app: ${message.messageId}');
     // Navigation can be handled here based on message data
   }
 
   /// Handle local notification tap
   void _onNotificationTap(NotificationResponse response) {
-    debugPrint('Notification tapped: ${response.payload}');
     // Navigation can be handled here based on payload
   }
 
@@ -219,9 +204,7 @@ class NotificationService {
         _orderAlertsEnabled = data['orderAlertsEnabled'] ?? true;
         _billReminderDays = data['billReminderDays'] ?? 3;
       }
-    } catch (e) {
-      debugPrint('Error loading notification preferences: $e');
-    }
+    } catch (e) {}
   }
 
   /// Save user preferences to Firestore
@@ -241,9 +224,7 @@ class NotificationService {
         'billReminderDays': _billReminderDays,
         'updatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
-    } catch (e) {
-      debugPrint('Error saving notification preferences: $e');
-    }
+    } catch (e) {}
   }
 
   /// Update notification settings
@@ -315,6 +296,40 @@ class NotificationService {
   /// Cancel specific notification
   Future<void> cancelNotification(int id) async {
     await _localNotifications.cancel(id);
+  }
+
+  /// Show low stock notification
+  Future<void> showLowStockNotification({
+    required String itemName,
+    required double currentStock,
+    required double minStock,
+  }) async {
+    if (!_notificationsEnabled || !_lowStockEnabled) return;
+
+    await _showLocalNotification(
+      id: 'low_stock_$itemName'.hashCode,
+      title: 'Low Stock Alert',
+      body: '$itemName is running low (Current: $currentStock, Min: $minStock)',
+      payload: 'inventory',
+    );
+  }
+
+  /// Show order created notification for managers
+  Future<void> showOrderCreatedNotification({
+    required String orderId,
+    required String creatorName,
+    required double total,
+    required int itemCount,
+  }) async {
+    if (!_notificationsEnabled || !_orderAlertsEnabled) return;
+
+    await _showLocalNotification(
+      id: orderId.hashCode,
+      title: 'New Order Created',
+      body:
+          '$creatorName created Order #${orderId.substring(0, orderId.length > 6 ? 6 : orderId.length)} - ₱${total.toStringAsFixed(2)} ($itemCount items)',
+      payload: 'orders',
+    );
   }
 
   /// Dispose

@@ -19,8 +19,8 @@ router.get('/items/performance', analyticsController.getItemPerformance);
 // GET /api/analytics/peak-hours - Get peak hours analysis
 router.get('/peak-hours', analyticsController.getPeakHours);
 
-// GET /api/analytics/forecast/demand - Get demand forecast
-router.get('/forecast/demand', analyticsController.getDemandForecast);
+// GET /api/analytics/forecast/orders - Get order count forecast
+router.get('/forecast/orders', analyticsController.getOrderCountForecast);
 
 // GET /api/analytics/forecast/sales - Get sales forecast
 router.get('/forecast/sales', analyticsController.getSalesForecast);

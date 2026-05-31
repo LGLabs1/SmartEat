@@ -1,0 +1,140 @@
+import 'package:flutter/material.dart';
+import 'api_service.dart';
+import 'firebase_service.dart';
+
+class ChatMessage {
+  final String role;
+  final String content;
+  final DateTime timestamp;
+
+  ChatMessage({
+    required this.role,
+    required this.content,
+    required this.timestamp,
+  });
+
+  Map<String, dynamic> toJson() => {
+        'role': role,
+        'content': content,
+      };
+}
+
+class ChatProvider extends ChangeNotifier {
+  final List<ChatMessage> _messages = [];
+  bool _isLoading = false;
+  bool _ollamaOnline = false;
+  bool _isCheckingStatus = true;
+
+  List<ChatMessage> get messages => _messages;
+  bool get isLoading => _isLoading;
+  bool get ollamaOnline => _ollamaOnline;
+  bool get isCheckingStatus => _isCheckingStatus;
+
+  ChatProvider() {
+    _addWelcomeMessage();
+    checkStatus();
+  }
+
+  void _addWelcomeMessage() {
+    if (_messages.isEmpty) {
+      _messages.add(ChatMessage(
+        role: 'assistant',
+        content:
+            "Hello! I'm SmartBot, your AI assistant for SmartEat. I can help you with questions about the system, analytics insights, feature explanations, and quick tips for managing your restaurant.",
+        timestamp: DateTime.now(),
+      ));
+    }
+  }
+
+  Future<void> checkStatus() async {
+    try {
+      final status = await ApiService.getChatbotStatus();
+      _ollamaOnline = status['ollamaRunning'] == true;
+    } catch (e) {
+      _ollamaOnline = false;
+    }
+    _isCheckingStatus = false;
+    notifyListeners();
+  }
+
+  Future<void> sendMessage(String text) async {
+    final trimmedText = text.trim();
+    if (trimmedText.isEmpty) return;
+
+    _messages.add(ChatMessage(
+      role: 'user',
+      content: trimmedText,
+      timestamp: DateTime.now(),
+    ));
+    _isLoading = true;
+    notifyListeners();
+
+    try {
+      final allMessages = _messages.where((m) => m.role != 'system').toList();
+      final history = allMessages.length > 10
+          ? allMessages.sublist(allMessages.length - 10)
+          : allMessages;
+      final historyJson = history.map((m) => m.toJson()).toList();
+
+      final response = await ApiService.sendChatMessage(
+        message: trimmedText,
+        history: historyJson,
+      );
+
+      _messages.add(ChatMessage(
+        role: 'assistant',
+        content: response['response'] ??
+            'I apologize, I could not generate a response.',
+        timestamp: DateTime.now(),
+      ));
+    } catch (e) {
+      _messages.add(ChatMessage(
+        role: 'assistant',
+        content:
+            'Sorry, I encountered an error. Please make sure:\n\n1. The backend server is running\n2. Ollama is started (run: ollama serve)\n3. Llama3.2 model is pulled (run: ollama pull llama3.2)',
+        timestamp: DateTime.now(),
+      ));
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> getAIInsights() async {
+    _isLoading = true;
+    notifyListeners();
+
+    try {
+      final response = await ApiService.getAIInsights();
+      final data = response['data'];
+      final summary = data['aiSummary'];
+
+      _messages.add(ChatMessage(
+        role: 'assistant',
+        content: '📊 **AI Insights (Last 7 Days)**\n\n'
+            '• Total Orders: ${data['totalOrders']}\n'
+            '• Total Revenue: ₱${data['totalRevenue'].toStringAsFixed(2)}\n'
+            '• Avg Daily Orders: ${data['avgDailyOrders']}\n'
+            '• Active Days: ${data['activeDays']}\n\n'
+            '**Summary:**\n$summary',
+        timestamp: DateTime.now(),
+      ));
+    } catch (e) {
+      _messages.add(ChatMessage(
+        role: 'assistant',
+        content:
+            'Could not fetch insights. Please check your connection and try again.',
+        timestamp: DateTime.now(),
+      ));
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  void clearHistory() {
+    _messages.clear();
+    _addWelcomeMessage();
+    notifyListeners();
+  }
+}

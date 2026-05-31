@@ -6,8 +6,7 @@ class AuthProvider extends ChangeNotifier {
   User? _user;
   bool _isLoading = false;
   String? _error;
-  bool _isNavigating =
-      false; // Flag to prevent duplicate notifications during login
+  bool _isLoggingOut = false;
 
   User? get user => _user;
   bool get isLoading => _isLoading;
@@ -19,20 +18,12 @@ class AuthProvider extends ChangeNotifier {
     // Defer initial user check to ensure Firebase is fully initialized
     Future.delayed(const Duration(milliseconds: 100), () {
       _user = FirebaseAuth.instance.currentUser;
-      debugPrint('AuthProvider initialized - user: ${_user?.email ?? "null"}');
       notifyListeners();
     });
   }
 
   void _initAuthListener() {
     FirebaseAuth.instance.authStateChanges().listen((User? user) {
-      // Skip if we're in the middle of a login/logout operation
-      if (_isNavigating) {
-        debugPrint(
-            'Auth state changed (ignored - navigating) - user: ${user?.email ?? "null"}');
-        return;
-      }
-      debugPrint('Auth state changed - user: ${user?.email ?? "null"}');
       _user = user;
       notifyListeners();
     });
@@ -45,47 +36,26 @@ class AuthProvider extends ChangeNotifier {
 
   Future<void> login(String email, String password) async {
     try {
-      debugPrint('AUTH_PROVIDER: login method started for $email');
-      _isNavigating = true; // Prevent auth listener from notifying
       _isLoading = true;
       _error = null;
       notifyListeners();
 
-      debugPrint(
-          'AUTH_PROVIDER: Calling FirebaseService.signInWithEmailAndPassword');
       final userCredential = await FirebaseService.signInWithEmailAndPassword(
         email,
         password,
       );
 
-      debugPrint(
-          'AUTH_PROVIDER: Firebase signIn successful. User UID: ${userCredential.user?.uid}');
       _user = userCredential.user;
       _error = null;
       _isLoading = false;
-
-      debugPrint(
-          'AUTH_PROVIDER: Login successful - user: ${_user?.email}, isAuthenticated: $isAuthenticated');
-      debugPrint(
-          'AUTH_PROVIDER: Waiting 100ms before clearing _isNavigating and notifying');
-
-      // Small delay to allow navigation to complete before notifying listeners
-      await Future.delayed(const Duration(milliseconds: 100));
-      _isNavigating = false;
-      debugPrint('AUTH_PROVIDER: Notifying listeners of success');
       notifyListeners();
     } on FirebaseAuthException catch (e) {
-      debugPrint(
-          'AUTH_PROVIDER: FirebaseAuthException caught - code: ${e.code}, message: ${e.message}');
-      _isNavigating = false;
       _user = null;
       _error = _getFirebaseAuthErrorMessage(e);
       _isLoading = false;
       notifyListeners();
       throw Exception(_error);
     } catch (e) {
-      debugPrint('AUTH_PROVIDER: Unexpected error caught - $e');
-      _isNavigating = false;
       _user = null;
       _error = 'An unexpected error occurred: $e';
       _isLoading = false;
@@ -134,17 +104,19 @@ class AuthProvider extends ChangeNotifier {
   }
 
   Future<void> logout() async {
+    if (_isLoggingOut) {
+      return;
+    }
+    _isLoggingOut = true;
     try {
-      debugPrint('Logging out user: ${_user?.email}');
-      await FirebaseService.signOut();
-      _user = null;
       _error = null;
-      debugPrint('Logout complete');
+      await FirebaseService.signOut();
+      // Auth state listener will handle setting _user = null
     } catch (e) {
       _error = 'Failed to logout: $e';
-      debugPrint('Logout error: $_error');
-    } finally {
       notifyListeners();
+    } finally {
+      _isLoggingOut = false;
     }
   }
 

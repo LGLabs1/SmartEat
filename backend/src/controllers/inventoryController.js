@@ -1,4 +1,6 @@
 const Inventory = require('../models/Inventory');
+const InventoryLog = require('../models/InventoryLog');
+const DamagedItem = require('../models/DamagedItem');
 
 /**
  * Create new inventory item
@@ -131,7 +133,7 @@ exports.updateInventoryItem = async (req, res) => {
 exports.updateStock = async (req, res) => {
   try {
     const { id } = req.params;
-    const { quantity, operation = 'set' } = req.body;
+    const { quantity, operation = 'set', isBadStock = false, badStockQuantity = 0 } = req.body;
 
     if (quantity === undefined || isNaN(quantity)) {
       return res.status(400).json({ error: 'Valid quantity required' });
@@ -147,11 +149,28 @@ exports.updateStock = async (req, res) => {
       return res.status(403).json({ error: 'Access denied' });
     }
 
+    // Update stock based on operation
     const updatedInventory = await Inventory.updateStock(id, Number(quantity), operation);
 
+    // If this is a bad stock adjustment, mark the item accordingly
+    if (isBadStock && Number(badStockQuantity) > 0) {
+      await Inventory.update(id, {
+        isBadStock: true,
+        badStockQuantity: Number(badStockQuantity),
+      });
+    }
+    // After potential bad stock update, fetch latest item
+    const finalInventory = await Inventory.getById(id);
+    // Record a stock log entry for this operation
+    await InventoryLog.create({
+      inventoryItemId: id,
+      quantityChange: Number(quantity) * (operation === 'add' ? 1 : operation === 'subtract' ? -1 : 0),
+      reason: isBadStock ? 'Bad Stock' : 'Stock Update',
+      performedBy: req.user.id,
+    });
     res.json({
       message: 'Stock updated successfully',
-      data: updatedInventory,
+      data: finalInventory,
     });
   } catch (error) {
     console.error('Update stock error:', error);
@@ -172,6 +191,75 @@ exports.getLowStockItems = async (req, res) => {
   } catch (error) {
     console.error('Get low stock error:', error);
     res.status(500).json({ error: 'Failed to fetch low stock items' });
+  }
+};
+
+/**
+ * Mark inventory quantity as damaged/bad and record damaged item
+ */
+exports.markDamaged = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { badQuantity, reason = 'Damaged' } = req.body;
+
+    if (badQuantity === undefined || isNaN(badQuantity) || Number(badQuantity) <= 0) {
+      return res.status(400).json({ error: 'Valid badQuantity is required' });
+    }
+
+    const item = await Inventory.getById(id);
+    if (!item) return res.status(404).json({ error: 'Inventory item not found' });
+    if (item.eateryId !== req.user.eateryId) return res.status(403).json({ error: 'Access denied' });
+
+    const qty = Number(badQuantity);
+    if (item.currentStock < qty) {
+      return res.status(400).json({ error: 'Not enough stock to mark as damaged' });
+    }
+
+    // Subtract from current stock
+    const updated = await Inventory.updateStock(id, qty, 'subtract');
+
+    // Compute cost
+    const unitCost = Number(item.unitCost || 0);
+    const totalCost = Math.round((unitCost * qty) * 100) / 100;
+
+    // Create damaged item record
+    const damagedRecord = await DamagedItem.create({
+      inventoryItemId: id,
+      name: item.name,
+      quantity: qty,
+      unit: item.unit || '',
+      unitCost,
+      totalCost,
+      reason,
+      eateryId: req.user.eateryId,
+      recordedBy: req.user.id,
+    });
+
+    // Log the change
+    await InventoryLog.create({
+      inventoryItemId: id,
+      quantityChange: -qty,
+      reason: 'Damaged',
+      performedBy: req.user.id,
+    });
+
+    res.status(201).json({ message: 'Marked as damaged', data: { damagedRecord, updatedInventory: updated } });
+  } catch (error) {
+    console.error('Mark damaged error:', error);
+    res.status(500).json({ error: 'Failed to mark damaged' });
+  }
+};
+
+/**
+ * Get damaged items for eatery
+ */
+exports.getDamagedItems = async (req, res) => {
+  try {
+    const damaged = await DamagedItem.getByEatery(req.user.eateryId);
+    res.json({ data: damaged });
+  } catch (error) {
+    console.error('Get damaged items error:', error);
+    res.status(500).json({ error: 'Failed to fetch damaged items' });
   }
 };
 

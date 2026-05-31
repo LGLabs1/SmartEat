@@ -1,3 +1,28 @@
+import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+
+class StockLog {
+  final DateTime timestamp;
+  final double change;
+  final String reason;
+
+  StockLog({required this.timestamp, required this.change, required this.reason});
+
+  factory StockLog.fromJson(Map<String, dynamic> json) => StockLog(
+        timestamp: json['timestamp'] is String
+            ? DateTime.parse(json['timestamp'])
+            : (json['timestamp'] as Timestamp).toDate(),
+        change: (json['change'] ?? 0).toDouble(),
+        reason: json['reason'] ?? '',
+      );
+
+  Map<String, dynamic> toJson() => {
+        'timestamp': timestamp,
+        'change': change,
+        'reason': reason,
+      };
+}
+
 class InventoryItem {
   final String id;
   final String name;
@@ -10,6 +35,9 @@ class InventoryItem {
   final String supplier;
   final DateTime createdAt;
   final DateTime updatedAt;
+  final bool isBadStock;
+  final double badStockQuantity;
+  final List<StockLog> stockLogs;
 
   InventoryItem({
     required this.id,
@@ -23,8 +51,12 @@ class InventoryItem {
     this.supplier = '',
     DateTime? createdAt,
     DateTime? updatedAt,
+    this.isBadStock = false,
+    this.badStockQuantity = 0,
+    List<StockLog>? stockLogs,
   })  : createdAt = createdAt ?? DateTime.now(),
-        updatedAt = updatedAt ?? DateTime.now();
+        updatedAt = updatedAt ?? DateTime.now(),
+        stockLogs = stockLogs ?? [];
 
   factory InventoryItem.fromJson(Map<String, dynamic> json) {
     return InventoryItem(
@@ -40,31 +72,38 @@ class InventoryItem {
       createdAt: json['createdAt'] != null
           ? (json['createdAt'] is String
               ? DateTime.parse(json['createdAt'])
-              : json['createdAt'].toDate())
+              : (json['createdAt'] as Timestamp).toDate())
           : DateTime.now(),
       updatedAt: json['updatedAt'] != null
           ? (json['updatedAt'] is String
               ? DateTime.parse(json['updatedAt'])
-              : json['updatedAt'].toDate())
+              : (json['updatedAt'] as Timestamp).toDate())
           : DateTime.now(),
+      isBadStock: json['isBadStock'] ?? false,
+      badStockQuantity: (json['badStockQuantity'] ?? 0).toDouble(),
+      stockLogs: (json['stockLogs'] as List<dynamic>?)
+              ?.map((e) => StockLog.fromJson(e as Map<String, dynamic>))
+              .toList() ??
+          [],
     );
   }
 
-  Map<String, dynamic> toJson() {
-    return {
-      'id': id,
-      'name': name,
-      'category': category,
-      'currentStock': currentStock,
-      'unit': unit,
-      'minStock': minStock,
-      'unitCost': unitCost,
-      'sellingPrice': sellingPrice,
-      'supplier': supplier,
-      'createdAt': createdAt,
-      'updatedAt': updatedAt,
-    };
-  }
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'name': name,
+        'category': category,
+        'currentStock': currentStock,
+        'unit': unit,
+        'minStock': minStock,
+        'unitCost': unitCost,
+        'sellingPrice': sellingPrice,
+        'supplier': supplier,
+        'createdAt': createdAt,
+        'updatedAt': updatedAt,
+        'isBadStock': isBadStock,
+        'badStockQuantity': badStockQuantity,
+        'stockLogs': stockLogs.map((e) => e.toJson()).toList(),
+      };
 
   bool get isLowStock => currentStock <= minStock;
   double get totalValue => currentStock * unitCost;
@@ -81,6 +120,9 @@ class InventoryItem {
     String? supplier,
     DateTime? createdAt,
     DateTime? updatedAt,
+    bool? isBadStock,
+    double? badStockQuantity,
+    List<StockLog>? stockLogs,
   }) {
     return InventoryItem(
       id: id ?? this.id,
@@ -94,6 +136,9 @@ class InventoryItem {
       supplier: supplier ?? this.supplier,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
+      isBadStock: isBadStock ?? this.isBadStock,
+      badStockQuantity: badStockQuantity ?? this.badStockQuantity,
+      stockLogs: stockLogs ?? this.stockLogs,
     );
   }
 
@@ -108,7 +153,6 @@ class InventoryItem {
   int get hashCode => id.hashCode;
 
   @override
-  String toString() {
-    return 'InventoryItem{id: $id, name: $name, category: $category, currentStock: $currentStock, unit: $unit}';
-  }
+  String toString() =>
+      'InventoryItem{id: $id, name: $name, category: $category, currentStock: $currentStock, unit: $unit}';
 }
