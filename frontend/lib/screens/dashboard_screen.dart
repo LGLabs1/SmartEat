@@ -1,12 +1,12 @@
 import 'dart:async';
 import 'dart:convert';
-
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/auth_provider.dart';
 import '../services/api_service.dart';
+import '../services/ai_assistant_provider.dart';
 import '../services/firebase_service.dart';
 import '../services/notification_trigger_manager.dart';
 import '../services/sound_service.dart';
@@ -120,21 +120,21 @@ class _StaffHomeTabState extends State<StaffHomeTab> {
         _ActionChip(
           icon: Icons.shopping_cart,
           label: 'POS',
-          color: Colors.blue,
+          color: Theme.of(context).colorScheme.primary,
           onTap: () => widget.onNavigate(0),
           compact: true,
         ),
         _ActionChip(
           icon: Icons.restaurant_menu,
           label: 'Menu',
-          color: Colors.teal,
+          color: Theme.of(context).colorScheme.secondary,
           onTap: () => widget.onNavigate(2),
           compact: true,
         ),
         _ActionChip(
           icon: Icons.food_bank,
           label: 'Staff Meal',
-          color: Colors.orange,
+          color: Theme.of(context).colorScheme.secondary,
           onTap: () => _showStaffMealDialog(context),
           compact: true,
         ),
@@ -148,7 +148,7 @@ class _StaffHomeTabState extends State<StaffHomeTab> {
             icon: Icons.receipt_outlined,
             label: 'Total',
             value: orders.length.toString(),
-            color: Colors.indigo,
+            color: Theme.of(context).colorScheme.tertiary,
           ),
         ),
         const SizedBox(width: 8),
@@ -157,7 +157,7 @@ class _StaffHomeTabState extends State<StaffHomeTab> {
             icon: Icons.schedule,
             label: 'Pending',
             value: pendingCount.toString(),
-            color: Colors.orange,
+            color: Theme.of(context).colorScheme.secondary,
           ),
         ),
         const SizedBox(width: 8),
@@ -166,7 +166,7 @@ class _StaffHomeTabState extends State<StaffHomeTab> {
             icon: Icons.check_circle_outline,
             label: 'Done',
             value: completedCount.toString(),
-            color: Colors.green,
+            color: Theme.of(context).colorScheme.secondary,
           ),
         ),
       ],
@@ -174,10 +174,10 @@ class _StaffHomeTabState extends State<StaffHomeTab> {
 
     return Card(
       elevation: 0,
-      color: Colors.white,
+      color: Theme.of(context).colorScheme.surface,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(16),
-        side: BorderSide(color: Colors.grey.shade200),
+        side: BorderSide(color: Theme.of(context).colorScheme.outline),
       ),
       child: Padding(
         padding: const EdgeInsets.all(12),
@@ -241,7 +241,7 @@ class _StaffHomeTabState extends State<StaffHomeTab> {
                     'Today',
                     style: TextStyle(
                       fontSize: 14,
-                      color: Colors.grey.shade600,
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
                       fontWeight: FontWeight.w500,
                     ),
                   ),
@@ -269,10 +269,10 @@ class _StaffHomeTabState extends State<StaffHomeTab> {
   Widget _buildTodayOrders(List<Map<String, dynamic>> orders) {
     return Card(
       elevation: 0,
-      color: Colors.white,
+      color: Theme.of(context).colorScheme.surface,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(16),
-        side: BorderSide(color: Colors.grey.shade200),
+        side: BorderSide(color: Theme.of(context).colorScheme.outline),
       ),
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -282,14 +282,14 @@ class _StaffHomeTabState extends State<StaffHomeTab> {
             Row(
               children: [
                 Icon(Icons.receipt_long_outlined,
-                    color: Colors.grey.shade700, size: 20),
+                    color: Theme.of(context).colorScheme.onSurfaceVariant, size: 20),
                 const SizedBox(width: 8),
                 Text(
                   'Today\'s Orders',
                   style: TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.bold,
-                    color: Colors.grey.shade800,
+                    color: Theme.of(context).colorScheme.onSurface,
                   ),
                 ),
                 const Spacer(),
@@ -298,7 +298,7 @@ class _StaffHomeTabState extends State<StaffHomeTab> {
                     padding:
                         const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                     decoration: BoxDecoration(
-                      color: Colors.grey.shade100,
+                      color: Theme.of(context).colorScheme.surfaceVariant,
                       borderRadius: BorderRadius.circular(999),
                     ),
                     child: Text(
@@ -306,7 +306,7 @@ class _StaffHomeTabState extends State<StaffHomeTab> {
                       style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w600,
-                        color: Colors.grey.shade700,
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
                       ),
                     ),
                   ),
@@ -317,7 +317,7 @@ class _StaffHomeTabState extends State<StaffHomeTab> {
               Container(
                 padding: const EdgeInsets.all(24),
                 decoration: BoxDecoration(
-                  color: Colors.grey.shade50,
+                  color: Theme.of(context).colorScheme.surfaceVariant,
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Center(
@@ -326,13 +326,13 @@ class _StaffHomeTabState extends State<StaffHomeTab> {
                       Icon(
                         Icons.receipt_long_outlined,
                         size: 40,
-                        color: Colors.grey.shade400,
+                        color: Theme.of(context).colorScheme.outline,
                       ),
                       const SizedBox(height: 8),
                       Text(
                         'No orders yet today',
                         style: TextStyle(
-                          color: Colors.grey.shade600,
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
                           fontWeight: FontWeight.w500,
                         ),
                       ),
@@ -356,24 +356,24 @@ class _StaffHomeTabState extends State<StaffHomeTab> {
 
                 switch (statusKey) {
                   case 'completed':
-                    statusColor = Colors.green;
-                    statusBgColor = Colors.green.withValues(alpha: 0.1);
+                    statusColor = Theme.of(context).colorScheme.secondary;
+                    statusBgColor = Theme.of(context).colorScheme.secondary.withOpacity(0.1);
                     statusIcon = Icons.check_circle;
                     break;
                   case 'pending':
-                    statusColor = Colors.orange;
-                    statusBgColor = Colors.orange.withValues(alpha: 0.1);
+                    statusColor = Theme.of(context).colorScheme.secondary;
+                    statusBgColor = Theme.of(context).colorScheme.secondary.withOpacity(0.1);
                     statusIcon = Icons.schedule;
                     break;
                   case 'rejected':
                   case 'voided':
-                    statusColor = Colors.red;
-                    statusBgColor = Colors.red.withValues(alpha: 0.1);
+                    statusColor = Theme.of(context).colorScheme.error;
+                    statusBgColor = Theme.of(context).colorScheme.error.withOpacity(0.1);
                     statusIcon = Icons.cancel;
                     break;
                   default:
-                    statusColor = Colors.grey;
-                    statusBgColor = Colors.grey.withValues(alpha: 0.1);
+                    statusColor = Theme.of(context).colorScheme.onSurfaceVariant;
+                    statusBgColor = Theme.of(context).colorScheme.onSurfaceVariant.withOpacity(0.1);
                     statusIcon = Icons.help_outline;
                 }
 
@@ -389,9 +389,9 @@ class _StaffHomeTabState extends State<StaffHomeTab> {
                     child: Container(
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
-                        color: Colors.grey.shade50,
+                        color: Theme.of(context).colorScheme.surfaceVariant,
                         borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: Colors.grey.shade200),
+                        border: Border.all(color: Theme.of(context).colorScheme.outline),
                       ),
                       child: Row(
                         children: [
@@ -427,7 +427,7 @@ class _StaffHomeTabState extends State<StaffHomeTab> {
                                   '${items.length} item${items.length != 1 ? 's' : ''}',
                                   style: TextStyle(
                                     fontSize: 12,
-                                    color: Colors.grey.shade600,
+                                    color: Theme.of(context).colorScheme.onSurfaceVariant,
                                   ),
                                 ),
                               ],
@@ -582,7 +582,7 @@ class _StaffHomeTabState extends State<StaffHomeTab> {
                       padding: const EdgeInsets.symmetric(
                           horizontal: 8, vertical: 3),
                       decoration: BoxDecoration(
-                        color: Colors.purple.shade50,
+                        color: Theme.of(context).colorScheme.surfaceVariant,
                         borderRadius: BorderRadius.circular(999),
                       ),
                       child: Text(
@@ -590,7 +590,7 @@ class _StaffHomeTabState extends State<StaffHomeTab> {
                         style: TextStyle(
                           fontSize: 11,
                           fontWeight: FontWeight.w600,
-                          color: Colors.purple.shade600,
+                          color: Theme.of(context).colorScheme.tertiary,
                         ),
                       ),
                     ),
@@ -638,10 +638,10 @@ class _StaffHomeTabState extends State<StaffHomeTab> {
 
     return Card(
       elevation: 0,
-      color: Colors.white,
+      color: Theme.of(context).colorScheme.surface,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(16),
-        side: BorderSide(color: Colors.grey.shade200),
+        side: BorderSide(color: Theme.of(context).colorScheme.outline),
       ),
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -650,14 +650,14 @@ class _StaffHomeTabState extends State<StaffHomeTab> {
           children: [
             Row(
               children: [
-                Icon(Icons.update, color: Colors.teal.shade400, size: 20),
+                Icon(Icons.update, color: Theme.of(context).colorScheme.secondary, size: 20),
                 const SizedBox(width: 8),
                 Text(
                   'Recent Activity',
                   style: TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.bold,
-                    color: Colors.grey.shade800,
+                    color: Theme.of(context).colorScheme.onSurface,
                   ),
                 ),
                 const Spacer(),
@@ -665,7 +665,7 @@ class _StaffHomeTabState extends State<StaffHomeTab> {
                   padding:
                       const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                   decoration: BoxDecoration(
-                    color: Colors.teal.shade50,
+                    color: Theme.of(context).colorScheme.surfaceVariant,
                     borderRadius: BorderRadius.circular(999),
                   ),
                   child: Text(
@@ -673,7 +673,7 @@ class _StaffHomeTabState extends State<StaffHomeTab> {
                     style: TextStyle(
                       fontSize: 10,
                       fontWeight: FontWeight.w600,
-                      color: Colors.teal.shade600,
+                      color: Theme.of(context).colorScheme.secondary,
                     ),
                   ),
                 ),
@@ -703,12 +703,12 @@ class _StaffHomeTabState extends State<StaffHomeTab> {
                       width: 36,
                       height: 36,
                       decoration: BoxDecoration(
-                        color: Colors.green.shade50,
+                        color: Theme.of(context).colorScheme.surfaceVariant,
                         borderRadius: BorderRadius.circular(8),
                       ),
                       child: Icon(
                         Icons.check_circle,
-                        color: Colors.green.shade500,
+                        color: Theme.of(context).colorScheme.secondary,
                         size: 18,
                       ),
                     ),
@@ -732,7 +732,7 @@ class _StaffHomeTabState extends State<StaffHomeTab> {
                             '₱${total.toStringAsFixed(2)}',
                             style: TextStyle(
                               fontSize: 12,
-                              color: Colors.grey.shade600,
+                              color: Theme.of(context).colorScheme.onSurfaceVariant,
                             ),
                           ),
                         ],
@@ -742,7 +742,7 @@ class _StaffHomeTabState extends State<StaffHomeTab> {
                       timeAgo,
                       style: TextStyle(
                         fontSize: 11,
-                        color: Colors.grey.shade500,
+                        color: Theme.of(context).colorScheme.onSurface,
                         fontWeight: FontWeight.w500,
                       ),
                     ),
@@ -1305,6 +1305,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       NotificationTriggerManager();
 
   StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _userDocSub;
+  StreamSubscription<String>? _aiNavigationSub;
   bool _sidebarVisible = true;
   bool _removalDialogShown = false;
 
@@ -1433,6 +1434,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     _globalSearchController.dispose();
     _globalSearchQuery.dispose();
     _userDocSub?.cancel();
+    _aiNavigationSub?.cancel();
     super.dispose();
   }
 
@@ -1453,6 +1455,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
         setState(() => _isRoleLoading = false);
       }
       return;
+    }
+    if (_aiNavigationSub == null) {
+      _aiNavigationSub = context
+          .read<AIAssistantProvider>()
+          .navigationRequests
+          .listen(_handleAIAssistantNavigation);
+      context
+          .read<AIAssistantProvider>()
+          .setActivePage(_activePageNameForIndex(_selectedIndex));
     }
     if (uid != _lastLoadedUid) {
       _lastLoadedUid = uid;
@@ -1553,6 +1564,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
       }
       setState(() => _selectedIndex = index);
       _saveTabIndex(index);
+      context
+          .read<AIAssistantProvider>()
+          .setActivePage(_activePageNameForIndex(index));
     } catch (e) {}
   }
 
@@ -1626,6 +1640,74 @@ class _DashboardScreenState extends State<DashboardScreen> {
       default:
         return 'Smart Eat';
     }
+  }
+
+  String _activePageNameForIndex(int index) {
+    if (_isAdminRole) {
+      switch (index) {
+        case 0:
+          return 'dashboard';
+        case 1:
+          return 'menu';
+        case 2:
+          return 'inventory';
+        case 3:
+          return 'reports';
+        case 4:
+          return 'finance';
+        case 5:
+          return 'staff';
+        default:
+          return 'general';
+      }
+    }
+
+    switch (index) {
+      case 0:
+        return 'orders';
+      case 1:
+        return 'dashboard';
+      case 2:
+        return 'menu';
+      default:
+        return 'general';
+    }
+  }
+
+  void _handleAIAssistantNavigation(String pageName) {
+    final pageIndex = _indexForPageName(pageName);
+    if (pageIndex != null) {
+      _goToTab(pageIndex);
+    }
+  }
+
+  int? _indexForPageName(String pageName) {
+    if (_isAdminRole) {
+      switch (pageName) {
+        case 'dashboard':
+          return 0;
+        case 'menu':
+          return 1;
+        case 'inventory':
+          return 2;
+        case 'reports':
+          return 3;
+        case 'finance':
+          return 4;
+        case 'staff':
+          return 5;
+      }
+    } else {
+      switch (pageName) {
+        case 'orders':
+          return 0;
+        case 'dashboard':
+          return 1;
+        case 'menu':
+          return 2;
+      }
+    }
+    return null;
   }
 
   @override
@@ -5606,7 +5688,6 @@ class _StaffMealDialogState extends State<StaffMealDialog> {
     );
   }
 }
-
 // Global search result model
 class _GlobalSearchResult {
   final String id;
@@ -5625,7 +5706,6 @@ class _GlobalSearchResult {
     this.data,
   });
 }
-
 // Global search dialog
 class _GlobalSearchDialog extends StatefulWidget {
   final String query;

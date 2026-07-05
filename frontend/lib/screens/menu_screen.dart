@@ -180,7 +180,9 @@ class _MenuScreenState extends State<MenuScreen> {
             ),
             TextButton(
               onPressed: () => Navigator.of(context).pop(true),
-              style: TextButton.styleFrom(foregroundColor: Colors.red),
+              style: TextButton.styleFrom(
+                foregroundColor: Theme.of(context).colorScheme.error,
+              ),
               child: const Text('Delete'),
             ),
           ],
@@ -528,6 +530,8 @@ class _MenuScreenState extends State<MenuScreen> {
       return matchesQuery && matchesCategory;
     }).toList();
 
+    final theme = Theme.of(context);
+
     return Scaffold(
       appBar: widget.showAppBar
           ? AppBar(
@@ -576,8 +580,23 @@ class _MenuScreenState extends State<MenuScreen> {
                       final label = availableFilters[index];
                       final isSelected = label == selectedCategoryFilter;
                       return ChoiceChip(
-                        label: Text(label),
+                        label: Text(
+                          label,
+                          style: theme.textTheme.labelMedium?.copyWith(
+                            color: isSelected
+                                ? theme.colorScheme.primary
+                                : theme.colorScheme.onSurface,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
                         selected: isSelected,
+                        selectedColor: theme.colorScheme.primaryContainer,
+                        backgroundColor: theme.colorScheme.surfaceVariant,
+                        side: BorderSide(
+                          color: isSelected
+                              ? theme.colorScheme.primary
+                              : theme.colorScheme.outline,
+                        ),
                         onSelected: (_) =>
                             setState(() => _selectedCategoryFilter = label),
                       );
@@ -611,15 +630,17 @@ class _MenuScreenState extends State<MenuScreen> {
                                   children: [
                                     Text(
                                       title,
-                                      style: const TextStyle(
-                                        fontSize: 16,
-                                        fontWeight: FontWeight.w800,
-                                      ),
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .titleSmall
+                                          ?.copyWith(
+                                            fontWeight: FontWeight.w800,
+                                          ),
                                     ),
                                     const SizedBox(width: 10),
                                     Expanded(
                                       child: Divider(
-                                        color: Colors.grey.shade300,
+                                        color: Theme.of(context).colorScheme.outline,
                                         height: 1,
                                       ),
                                     ),
@@ -831,6 +852,7 @@ class _MenuGridCard extends StatelessWidget {
         : int.tryParse(price.toString()) ??
             (double.tryParse(price.toString())?.round() ?? 0);
     final priceText = '₱$priceInt';
+    final theme = Theme.of(context);
 
     return Card(
       clipBehavior: Clip.antiAlias,
@@ -843,10 +865,10 @@ class _MenuGridCard extends StatelessWidget {
                 Positioned.fill(
                   child: !shouldShowImage
                       ? Container(
-                          color: Colors.grey.shade200,
+                          color: Theme.of(context).colorScheme.surfaceVariant,
                           child: Icon(
                             Icons.restaurant_menu,
-                            color: Colors.grey.shade500,
+                            color: Theme.of(context).colorScheme.onSurfaceVariant,
                             size: 40,
                           ),
                         )
@@ -855,10 +877,10 @@ class _MenuGridCard extends StatelessWidget {
                           fit: BoxFit.cover,
                           errorBuilder: (context, error, stackTrace) {
                             return Container(
-                              color: Colors.grey.shade200,
+                              color: Theme.of(context).colorScheme.surfaceVariant,
                               child: Icon(
                                 Icons.image_not_supported_outlined,
-                                color: Colors.grey.shade500,
+                                color: Theme.of(context).colorScheme.onSurfaceVariant,
                                 size: 34,
                               ),
                             );
@@ -869,7 +891,7 @@ class _MenuGridCard extends StatelessWidget {
                   top: 6,
                   left: 6,
                   child: Material(
-                    color: Colors.transparent,
+                    color: theme.colorScheme.surface.withOpacity(0),
                     child: InkWell(
                       onTap: onToggleAvailability == null
                           ? null
@@ -879,9 +901,11 @@ class _MenuGridCard extends StatelessWidget {
                         padding: const EdgeInsets.symmetric(
                             horizontal: 10, vertical: 6),
                         decoration: BoxDecoration(
-                          color: Colors.white.withValues(alpha: 0.92),
+                          color: Theme.of(context).colorScheme.surface.withOpacity(0.92),
                           borderRadius: BorderRadius.circular(999),
-                          border: Border.all(color: Colors.grey.shade300),
+                          border: Border.all(
+                            color: Theme.of(context).colorScheme.outline.withOpacity(0.7),
+                          ),
                         ),
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
@@ -891,8 +915,8 @@ class _MenuGridCard extends StatelessWidget {
                               height: 7,
                               decoration: BoxDecoration(
                                 color: isAvailable
-                                    ? Colors.green.shade600
-                                    : Colors.red.shade600,
+                                    ? Theme.of(context).colorScheme.secondary
+                                    : Theme.of(context).colorScheme.error,
                                 borderRadius: BorderRadius.circular(999),
                               ),
                             ),
@@ -900,7 +924,7 @@ class _MenuGridCard extends StatelessWidget {
                             Text(
                               isAvailable ? 'Available' : 'Unavailable',
                               style: TextStyle(
-                                color: Colors.grey.shade900,
+                                color: Theme.of(context).colorScheme.onSurface,
                                 fontWeight: FontWeight.w700,
                                 fontSize: 10,
                               ),
@@ -915,7 +939,7 @@ class _MenuGridCard extends StatelessWidget {
                   top: 6,
                   right: 6,
                   child: Material(
-                    color: Colors.transparent,
+                    color: theme.colorScheme.surface.withOpacity(0),
                     child: PopupMenuButton<String>(
                       tooltip: 'Actions',
                       itemBuilder: (context) => [
@@ -945,15 +969,22 @@ class _MenuGridCard extends StatelessWidget {
                           ),
                         ),
                         if (onDelete != null)
-                          const PopupMenuItem(
+                          PopupMenuItem(
                             value: 'delete',
                             child: Row(
                               children: [
-                                Icon(Icons.delete_outline,
-                                    size: 18, color: Colors.red),
-                                SizedBox(width: 8),
-                                Text('Delete',
-                                    style: TextStyle(color: Colors.red)),
+                                Icon(
+                                  Icons.delete_outline,
+                                  size: 18,
+                                  color: theme.colorScheme.error,
+                                ),
+                                const SizedBox(width: 8),
+                                Text(
+                                  'Delete',
+                                  style: TextStyle(
+                                    color: theme.colorScheme.error,
+                                  ),
+                                ),
                               ],
                             ),
                           ),
@@ -971,17 +1002,20 @@ class _MenuGridCard extends StatelessWidget {
                         padding: const EdgeInsets.all(4),
                         decoration: BoxDecoration(
                           color: isPinned
-                              ? Colors.red.withValues(alpha: 0.9)
-                              : Colors.white.withValues(alpha: 0.9),
+                              ? Theme.of(context).colorScheme.error.withOpacity(0.92)
+                              : Theme.of(context).colorScheme.surface.withOpacity(0.9),
                           borderRadius: BorderRadius.circular(999),
                           border: isPinned
-                              ? Border.all(color: Colors.red.shade700, width: 1)
+                              ? Border.all(
+                                  color: theme.colorScheme.error.withOpacity(0.92),
+                                  width: 1,
+                                )
                               : null,
                         ),
                         child: Icon(
                           isPinned ? Icons.push_pin : Icons.more_horiz,
                           size: 14,
-                          color: isPinned ? Colors.white : null,
+                          color: isPinned ? Theme.of(context).colorScheme.onError : null,
                         ),
                       ),
                     ),
@@ -1003,7 +1037,7 @@ class _MenuGridCard extends StatelessWidget {
                         child: Icon(
                           Icons.push_pin,
                           size: 10,
-                          color: Colors.red.shade700,
+                          color: Theme.of(context).colorScheme.error,
                         ),
                       ),
                     Expanded(
@@ -1023,7 +1057,7 @@ class _MenuGridCard extends StatelessWidget {
                 Text(
                   category,
                   style: TextStyle(
-                    color: Colors.grey.shade600,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
                     fontSize: 10,
                   ),
                   overflow: TextOverflow.ellipsis,
@@ -1038,16 +1072,18 @@ class _MenuGridCard extends StatelessWidget {
                           vertical: 3,
                         ),
                         decoration: BoxDecoration(
-                          color: Colors.green.shade50,
+                          color: Theme.of(context).colorScheme.secondaryContainer,
                           borderRadius: BorderRadius.circular(999),
-                          border: Border.all(color: Colors.green.shade200),
+                          border: Border.all(
+                            color: Theme.of(context).colorScheme.secondaryContainer,
+                          ),
                         ),
                         child: Text(
                           priceText,
                           style: TextStyle(
                             fontSize: 10,
                             fontWeight: FontWeight.w800,
-                            color: Colors.green.shade800,
+                            color: Theme.of(context).colorScheme.secondary,
                           ),
                           overflow: TextOverflow.ellipsis,
                           textAlign: TextAlign.center,
@@ -1063,9 +1099,10 @@ class _MenuGridCard extends StatelessWidget {
                             vertical: 3,
                           ),
                           decoration: BoxDecoration(
-                            color: Colors.indigo.shade50,
+                            color: theme.colorScheme.primaryContainer,
                             borderRadius: BorderRadius.circular(999),
-                            border: Border.all(color: Colors.indigo.shade200),
+                            border: Border.all(
+                                color: theme.colorScheme.primaryContainer),
                           ),
                           child: Center(
                             child: Text(
@@ -1074,7 +1111,7 @@ class _MenuGridCard extends StatelessWidget {
                                   ? '—'
                                   : 'x$availableServings',
                               style: TextStyle(
-                                color: Colors.indigo.shade800,
+                                color: Theme.of(context).colorScheme.primary,
                                 fontSize: 10,
                                 fontWeight: FontWeight.w700,
                               ),
@@ -1111,10 +1148,12 @@ class _AddItemDialogState extends State<_AddItemDialog> {
   final _nameController = TextEditingController();
   int _price = 0;
   final _descriptionController = TextEditingController();
-  final _imageUrlController = TextEditingController();
   bool _isLoading = false;
   final Set<String> _selectedCategories = <String>{};
   String _selectedInventoryItemId = '';
+  final _imageUrlController = TextEditingController();
+  double _imageAlignmentX = 0.0;
+  double _imageAlignmentY = 0.0;
 
   static const List<String> _categoryOptions = <String>[
     'Chicken',
@@ -1131,145 +1170,327 @@ class _AddItemDialogState extends State<_AddItemDialog> {
   ];
 
   @override
-  void initState() {
-    super.initState();
-  }
-
-  @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('Add Menu Item'),
-      content: SizedBox(
-        width: double.maxFinite,
-        child: Form(
-          key: _formKey,
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextFormField(
-                  controller: _nameController,
-                  decoration: const InputDecoration(
-                    labelText: 'Dish',
-                    border: OutlineInputBorder(),
-                  ),
-                  validator: (value) =>
-                      value?.isEmpty ?? true ? 'Required' : null,
-                ),
-                const SizedBox(height: 12),
-                DropdownButtonFormField<String>(
-                  value: _selectedInventoryItemId,
-                  decoration: const InputDecoration(
-                    labelText: 'Inventory Link (Optional)',
-                    border: OutlineInputBorder(),
-                  ),
-                  items: [
-                    const DropdownMenuItem(
-                      value: '',
-                      child: Text('None'),
+    final theme = Theme.of(context);
+
+    return Dialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+      clipBehavior: Clip.antiAlias,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 520, maxHeight: 750),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // Fixed Header
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 20, 16, 16),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Add Menu Item',
+                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                            fontWeight: FontWeight.bold,
+                          ),
                     ),
-                    ...widget.inventoryItems.map((inv) {
-                      final id = (inv['id'] ?? '').toString();
-                      final name = (inv['name'] ?? '').toString();
-                      final unit = (inv['unit'] ?? '').toString();
-                      final stockRaw = inv['currentStock'];
-                      final stock = stockRaw is num
-                          ? stockRaw.toInt()
-                          : int.tryParse((stockRaw ?? '').toString()) ?? 0;
-                      final label = unit.isEmpty
-                          ? '$name ($stock)'
-                          : '$name ($stock$unit)';
-                      return DropdownMenuItem(
-                        value: id,
-                        child:
-                            Text(label.trim().isEmpty ? 'Unnamed item' : label),
-                      );
-                    }),
-                  ],
-                  onChanged: (value) {
-                    setState(() {
-                      _selectedInventoryItemId = value ?? '';
-                    });
-                  },
-                ),
-                const SizedBox(height: 12),
-                FormField<Set<String>>(
-                  initialValue: _selectedCategories,
-                  validator: (value) =>
-                      (value == null || value.isEmpty) ? 'Required' : null,
-                  builder: (state) {
-                    return InputDecorator(
-                      decoration: InputDecoration(
-                        labelText: 'Category',
-                        border: const OutlineInputBorder(),
-                        errorText: state.errorText,
-                      ),
-                      child: Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: _categoryOptions.map((c) {
-                          final selected = state.value?.contains(c) ?? false;
-                          return ChoiceChip(
-                            label: Text(c),
-                            selected: selected,
-                            onSelected: (_) {
-                              setState(() {
-                                if (_selectedCategories.contains(c)) {
-                                  _selectedCategories.remove(c);
-                                } else {
-                                  _selectedCategories.add(c);
-                                }
-                              });
-                              state.didChange(_selectedCategories);
-                            },
-                          );
-                        }).toList(),
-                      ),
-                    );
-                  },
-                ),
-                const SizedBox(height: 12),
-                _IntStepperTextFormField(
-                  labelText: 'Price (₱)',
-                  value: _price,
-                  min: 0,
-                  onChanged: (v) => setState(() => _price = v),
-                  validator: (v) => v <= 0 ? 'Required' : null,
-                ),
-                const SizedBox(height: 12),
-                TextFormField(
-                  controller: _descriptionController,
-                  decoration: const InputDecoration(
-                    labelText: 'Description (Optional)',
-                    border: OutlineInputBorder(),
                   ),
-                  maxLines: 3,
-                ),
-                const SizedBox(height: 12),
-                TextFormField(
-                  controller: _imageUrlController,
-                  decoration: const InputDecoration(
-                    labelText: 'Image URL (Optional)',
-                    border: OutlineInputBorder(),
+                  IconButton(
+                    icon: const Icon(Icons.close),
+                    onPressed: () => Navigator.of(context).pop(),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
+            const Divider(height: 1),
+            
+            // Scrollable Content
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+                child: Form(
+                  key: _formKey,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      TextFormField(
+                        controller: _nameController,
+                        decoration: const InputDecoration(
+                          labelText: 'Dish Name',
+                          prefixIcon: Icon(Icons.restaurant_menu_rounded),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.all(Radius.circular(12)),
+                          ),
+                        ),
+                        validator: (value) =>
+                            value?.isEmpty ?? true ? 'Required' : null,
+                      ),
+                      const SizedBox(height: 16),
+                      DropdownButtonFormField<String>(
+                        value: _selectedInventoryItemId,
+                        decoration: const InputDecoration(
+                          labelText: 'Inventory Link (Optional)',
+                          prefixIcon: Icon(Icons.link_rounded),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.all(Radius.circular(12)),
+                          ),
+                        ),
+                        items: [
+                          const DropdownMenuItem(
+                            value: '',
+                            child: Text('None'),
+                          ),
+                          ...widget.inventoryItems.map((inv) {
+                            final id = (inv['id'] ?? '').toString();
+                            final name = (inv['name'] ?? '').toString();
+                            final unit = (inv['unit'] ?? '').toString();
+                            final stockRaw = inv['currentStock'];
+                            final stock = stockRaw is num
+                                ? stockRaw.toInt()
+                                : int.tryParse((stockRaw ?? '').toString()) ?? 0;
+                            final label = unit.isEmpty
+                                ? '$name ($stock)'
+                                : '$name ($stock$unit)';
+                            return DropdownMenuItem(
+                              value: id,
+                              child:
+                                  Text(label.trim().isEmpty ? 'Unnamed item' : label),
+                            );
+                          }),
+                        ],
+                        onChanged: (value) {
+                          setState(() {
+                            _selectedInventoryItemId = value ?? '';
+                          });
+                        },
+                      ),
+                      const SizedBox(height: 16),
+                      FormField<Set<String>>(
+                        initialValue: _selectedCategories,
+                        validator: (value) =>
+                            (value == null || value.isEmpty) ? 'Required' : null,
+                        builder: (state) {
+                          final theme = Theme.of(context);
+                          return InputDecorator(
+                            decoration: InputDecoration(
+                              labelText: 'Category',
+                              prefixIcon: const Icon(Icons.category_rounded),
+                              border: const OutlineInputBorder(
+                                borderRadius: BorderRadius.all(Radius.circular(12)),
+                              ),
+                              errorText: state.errorText,
+                            ),
+                            child: Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              children: _categoryOptions.map((c) {
+                                final selected = state.value?.contains(c) ?? false;
+                                return FilterChip(
+                                  label: Text(
+                                    c,
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                                      color: selected
+                                          ? theme.colorScheme.primary
+                                          : theme.colorScheme.onSurfaceVariant,
+                                    ),
+                                  ),
+                                  selected: selected,
+                                  onSelected: (_) {
+                                    setState(() {
+                                      if (_selectedCategories.contains(c)) {
+                                        _selectedCategories.remove(c);
+                                      } else {
+                                        _selectedCategories.add(c);
+                                      }
+                                    });
+                                    state.didChange(_selectedCategories);
+                                  },
+                                  selectedColor:
+                                      theme.colorScheme.primary.withOpacity(0.12),
+                                  checkmarkColor: theme.colorScheme.primary,
+                                  backgroundColor: theme.colorScheme.surfaceVariant,
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(8),
+                                    side: BorderSide(
+                                      color: selected
+                                          ? theme.colorScheme.primary.withOpacity(0.4)
+                                          : theme.dividerColor,
+                                      width: 1,
+                                    ),
+                                  ),
+                                );
+                              }).toList(),
+                            ),
+                          );
+                        },
+                      ),
+                      const SizedBox(height: 16),
+                      _IntStepperTextFormField(
+                        labelText: 'Price (₱)',
+                        value: _price,
+                        min: 0,
+                        onChanged: (v) => setState(() => _price = v),
+                        validator: (v) => v <= 0 ? 'Required' : null,
+                        prefixIcon: Icons.payments_rounded,
+                      ),
+                      const SizedBox(height: 16),
+                      TextFormField(
+                        controller: _descriptionController,
+                        decoration: const InputDecoration(
+                          labelText: 'Description (Optional)',
+                          prefixIcon: Icon(Icons.description_rounded),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.all(Radius.circular(12)),
+                          ),
+                        ),
+                        maxLines: 3,
+                      ),
+                      const SizedBox(height: 20),
+                      TextFormField(
+                        controller: _imageUrlController,
+                        decoration: InputDecoration(
+                          labelText: 'Dish Image URL (Optional)',
+                          hintText: 'https://example.com/image.jpg',
+                          prefixIcon: const Icon(Icons.image_rounded),
+                          suffixIcon: _imageUrlController.text.trim().isEmpty
+                              ? null
+                              : IconButton(
+                                  icon: const Icon(Icons.clear),
+                                  onPressed: () {
+                                    setState(() {
+                                      _imageUrlController.clear();
+                                      _imageAlignmentX = 0.0;
+                                      _imageAlignmentY = 0.0;
+                                    });
+                                  },
+                                ),
+                          border: const OutlineInputBorder(
+                            borderRadius: BorderRadius.all(Radius.circular(12)),
+                          ),
+                        ),
+                        keyboardType: TextInputType.url,
+                        onChanged: (_) => setState(() {}),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'Paste a direct image URL ending with .jpg, .png, or .webp. Preview matches the POS view.',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: Theme.of(context).colorScheme.onSurfaceVariant,
+                            ),
+                      ),
+                      const SizedBox(height: 16),
+                      _MenuItemPreviewCard(
+                        name: _nameController.text.trim().isEmpty
+                            ? 'Sample Dish'
+                            : _nameController.text.trim(),
+                        price: _price.toDouble(),
+                        imageUrl: _imageUrlController.text.trim(),
+                        imageAlignmentX: _imageAlignmentX,
+                        imageAlignmentY: _imageAlignmentY,
+                      ),
+                      if (_imageUrlController.text.trim().isNotEmpty) ...[
+                        const SizedBox(height: 16),
+                        Text(
+                          'Adjust image focus',
+                          style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                                fontWeight: FontWeight.w700,
+                              ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          'Horizontal focus',
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                        Slider(
+                          value: _imageAlignmentX,
+                          min: -1,
+                          max: 1,
+                          divisions: 20,
+                          label: _imageAlignmentX == 0
+                              ? 'Center'
+                              : _imageAlignmentX < 0
+                                  ? 'Left'
+                                  : 'Right',
+                          onChanged: (value) => setState(() {
+                            _imageAlignmentX = value;
+                          }),
+                        ),
+                        Text(
+                          'Vertical focus',
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                        Slider(
+                          value: _imageAlignmentY,
+                          min: -1,
+                          max: 1,
+                          divisions: 20,
+                          label: _imageAlignmentY == 0
+                              ? 'Center'
+                              : _imageAlignmentY < 0
+                                  ? 'Top'
+                                  : 'Bottom',
+                          onChanged: (value) => setState(() {
+                            _imageAlignmentY = value;
+                          }),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            
+            const Divider(height: 1),
+            // Fixed Footer
+            Padding(
+              padding: const EdgeInsets.all(20.0),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  OutlinedButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: theme.colorScheme.onSurface,
+                      side: BorderSide(color: theme.colorScheme.outline),
+                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    child: const Text('Cancel'),
+                  ),
+                  const SizedBox(width: 12),
+                  ElevatedButton(
+                    onPressed: _isLoading ? null : _addItem,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: theme.colorScheme.primary,
+                      foregroundColor: theme.colorScheme.onPrimary,
+                      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      elevation: 0,
+                    ),
+                    child: _isLoading
+                        ? SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              valueColor: AlwaysStoppedAnimation<Color>(
+                                  theme.colorScheme.onPrimary),
+                            ),
+                          )
+                        : const Text('Add Item'),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ),
       ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
-        ),
-        ElevatedButton(
-          onPressed: _isLoading ? null : _addItem,
-          child: _isLoading
-              ? const CircularProgressIndicator()
-              : const Text('Add Item'),
-        ),
-      ],
     );
   }
 
@@ -1298,6 +1519,7 @@ class _AddItemDialogState extends State<_AddItemDialog> {
       final name = _nameController.text.trim();
       final cats = _selectedCategories.toList()..sort();
       final category = cats.isEmpty ? '' : cats.first;
+      final imageUrl = _imageUrlController.text.trim();
 
       final result = await ApiService.createMenuItem(
         name: name,
@@ -1307,7 +1529,9 @@ class _AddItemDialogState extends State<_AddItemDialog> {
         price: _price,
         availableServings: servingsToSave,
         description: _descriptionController.text,
-        imageUrl: _imageUrlController.text.trim(),
+        imageUrl: imageUrl.isEmpty ? null : imageUrl,
+        imageAlignmentX: imageUrl.isEmpty ? null : _imageAlignmentX,
+        imageAlignmentY: imageUrl.isEmpty ? null : _imageAlignmentY,
       );
 
       if (mounted) {
@@ -1363,6 +1587,8 @@ class _EditItemDialogState extends State<_EditItemDialog> {
   late final TextEditingController _imageUrlController;
   bool _isLoading = false;
   final Set<String> _selectedCategories = <String>{};
+  double _imageAlignmentX = 0.0;
+  double _imageAlignmentY = 0.0;
 
   String _selectedInventoryItemId = '';
   bool _manualIsAvailable = true;
@@ -1388,8 +1614,29 @@ class _EditItemDialogState extends State<_EditItemDialog> {
         TextEditingController(text: (widget.item['name'] ?? '').toString());
     _descriptionController = TextEditingController(
         text: (widget.item['description'] ?? '').toString());
-    _imageUrlController =
-        TextEditingController(text: (widget.item['imageUrl'] ?? '').toString());
+    _imageUrlController = TextEditingController(
+      text: (widget.item['imageUrl'] ?? '').toString().trim(),
+    );
+    _imageUrlController.addListener(() => setState(() {}));
+    final rawImageAlignmentX = widget.item['imageAlignmentX'] is num
+        ? (widget.item['imageAlignmentX'] as num).toDouble()
+        : double.tryParse((widget.item['imageAlignmentX'] ?? '').toString()) ??
+            0.0;
+    _imageAlignmentX = rawImageAlignmentX < -1.0
+        ? -1.0
+        : rawImageAlignmentX > 1.0
+            ? 1.0
+            : rawImageAlignmentX;
+
+    final rawImageAlignmentY = widget.item['imageAlignmentY'] is num
+        ? (widget.item['imageAlignmentY'] as num).toDouble()
+        : double.tryParse((widget.item['imageAlignmentY'] ?? '').toString()) ??
+            0.0;
+    _imageAlignmentY = rawImageAlignmentY < -1.0
+        ? -1.0
+        : rawImageAlignmentY > 1.0
+            ? 1.0
+            : rawImageAlignmentY;
 
     final priceRaw = widget.item['price'];
     _price = priceRaw is num
@@ -1424,203 +1671,391 @@ class _EditItemDialogState extends State<_EditItemDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     final selectedInventoryId = _selectedInventoryItemId.trim();
     final inventoryLinked = selectedInventoryId.isNotEmpty;
 
-    return AlertDialog(
-      title: const Text('Edit Menu Item'),
-      content: SizedBox(
-        width: double.maxFinite,
-        child: Form(
-          key: _formKey,
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextFormField(
-                  controller: _nameController,
-                  decoration: const InputDecoration(
-                    labelText: 'Dish',
-                    border: OutlineInputBorder(),
+    return Dialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+      clipBehavior: Clip.antiAlias,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 520, maxHeight: 750),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // Fixed Header
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 20, 16, 16),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Edit Menu Item',
+                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                            fontWeight: FontWeight.bold,
+                          ),
+                    ),
                   ),
-                  validator: (value) =>
-                      value?.isEmpty ?? true ? 'Required' : null,
-                ),
-                const SizedBox(height: 12),
-                DropdownButtonFormField<String>(
-                  value: _selectedInventoryItemId,
-                  decoration: const InputDecoration(
-                    labelText: 'Inventory Link (Optional)',
-                    border: OutlineInputBorder(),
-                  ),
-                  items: [
-                    const DropdownMenuItem(
-                      value: '',
-                      child: Text('None'),
-                    ),
-                    ...widget.inventoryItems.map((inv) {
-                      final id = (inv['id'] ?? '').toString();
-                      final name = (inv['name'] ?? '').toString();
-                      final unit = (inv['unit'] ?? '').toString();
-                      final stockRaw = inv['currentStock'];
-                      final stock = stockRaw is num
-                          ? stockRaw.toInt()
-                          : int.tryParse((stockRaw ?? '').toString()) ?? 0;
-                      final label = unit.isEmpty
-                          ? '$name ($stock)'
-                          : '$name ($stock$unit)';
-                      return DropdownMenuItem(
-                        value: id,
-                        child:
-                            Text(label.trim().isEmpty ? 'Unnamed item' : label),
-                      );
-                    }),
-                  ],
-                  onChanged: (value) {
-                    setState(() {
-                      _selectedInventoryItemId = value ?? '';
-                    });
-                  },
-                ),
-                const SizedBox(height: 12),
-                FormField<Set<String>>(
-                  initialValue: _selectedCategories,
-                  validator: (value) =>
-                      (value == null || value.isEmpty) ? 'Required' : null,
-                  builder: (state) {
-                    return InputDecorator(
-                      decoration: InputDecoration(
-                        labelText: 'Category',
-                        border: const OutlineInputBorder(),
-                        errorText: state.errorText,
-                      ),
-                      child: Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: _categoryOptions.map((c) {
-                          final selected = state.value?.contains(c) ?? false;
-                          return ChoiceChip(
-                            label: Text(c),
-                            selected: selected,
-                            onSelected: (_) {
-                              setState(() {
-                                if (_selectedCategories.contains(c)) {
-                                  _selectedCategories.remove(c);
-                                } else {
-                                  _selectedCategories.add(c);
-                                }
-                              });
-                              state.didChange(_selectedCategories);
-                            },
-                          );
-                        }).toList(),
-                      ),
-                    );
-                  },
-                ),
-                const SizedBox(height: 12),
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(
-                      child: _IntStepperTextFormField(
-                        labelText: 'Price (₱)',
-                        value: _price,
-                        min: 0,
-                        onChanged: (v) => setState(() => _price = v),
-                        validator: (v) => v <= 0 ? 'Required' : null,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          _IntStepperTextFormField(
-                            labelText: 'Servings',
-                            value: _availableServings,
-                            min: 0,
-                            enabled: !inventoryLinked && !_isUnlimitedServings,
-                            onChanged: (v) =>
-                                setState(() => _availableServings = v),
-                            validator: (v) => v < 0 ? 'Invalid' : null,
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    SizedBox(
-                      width: 80,
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.start,
-                        children: [
-                          Text(
-                            'Unspecified',
-                            style: TextStyle(
-                              fontSize: 11,
-                              color: inventoryLinked
-                                  ? Colors.grey
-                                  : Colors.black87,
-                            ),
-                          ),
-                          Transform.scale(
-                            scale: 0.7,
-                            child: Switch(
-                              value: _isUnlimitedServings,
-                              onChanged: inventoryLinked
-                                  ? null
-                                  : (v) =>
-                                      setState(() => _isUnlimitedServings = v),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-                if (widget.isAdmin) ...[
-                  const SizedBox(height: 12),
-                  SwitchListTile(
-                    contentPadding: EdgeInsets.zero,
-                    title: const Text('Available in POS'),
-                    value: _manualIsAvailable,
-                    onChanged: (v) => setState(() => _manualIsAvailable = v),
+                  IconButton(
+                    icon: const Icon(Icons.close),
+                    onPressed: () => Navigator.of(context).pop(),
                   ),
                 ],
-                const SizedBox(height: 12),
-                TextFormField(
-                  controller: _descriptionController,
-                  decoration: const InputDecoration(
-                    labelText: 'Description (Optional)',
-                    border: OutlineInputBorder(),
-                  ),
-                  maxLines: 3,
-                ),
-                const SizedBox(height: 12),
-                TextFormField(
-                  controller: _imageUrlController,
-                  decoration: const InputDecoration(
-                    labelText: 'Image URL (Optional)',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-              ],
+              ),
             ),
-          ),
+            const Divider(height: 1),
+            
+            // Scrollable Content
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+                child: Form(
+                  key: _formKey,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      TextFormField(
+                        controller: _nameController,
+                        decoration: const InputDecoration(
+                          labelText: 'Dish Name',
+                          prefixIcon: Icon(Icons.restaurant_menu_rounded),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.all(Radius.circular(12)),
+                          ),
+                        ),
+                        validator: (value) =>
+                            value?.isEmpty ?? true ? 'Required' : null,
+                      ),
+                      const SizedBox(height: 16),
+                      DropdownButtonFormField<String>(
+                        value: _selectedInventoryItemId,
+                        decoration: const InputDecoration(
+                          labelText: 'Inventory Link (Optional)',
+                          prefixIcon: Icon(Icons.link_rounded),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.all(Radius.circular(12)),
+                          ),
+                        ),
+                        items: [
+                          const DropdownMenuItem(
+                            value: '',
+                            child: Text('None'),
+                          ),
+                          ...widget.inventoryItems.map((inv) {
+                            final id = (inv['id'] ?? '').toString();
+                            final name = (inv['name'] ?? '').toString();
+                            final unit = (inv['unit'] ?? '').toString();
+                            final stockRaw = inv['currentStock'];
+                            final stock = stockRaw is num
+                                ? stockRaw.toInt()
+                                : int.tryParse((stockRaw ?? '').toString()) ?? 0;
+                            final label = unit.isEmpty
+                                ? '$name ($stock)'
+                                : '$name ($stock$unit)';
+                            return DropdownMenuItem(
+                              value: id,
+                              child:
+                                  Text(label.trim().isEmpty ? 'Unnamed item' : label),
+                            );
+                          }),
+                        ],
+                        onChanged: (value) {
+                          setState(() {
+                            _selectedInventoryItemId = value ?? '';
+                          });
+                        },
+                      ),
+                      const SizedBox(height: 16),
+                      FormField<Set<String>>(
+                        initialValue: _selectedCategories,
+                        validator: (value) =>
+                            (value == null || value.isEmpty) ? 'Required' : null,
+                        builder: (state) {
+                          final theme = Theme.of(context);
+                          return InputDecorator(
+                            decoration: InputDecoration(
+                              labelText: 'Category',
+                              prefixIcon: const Icon(Icons.category_rounded),
+                              border: const OutlineInputBorder(
+                                borderRadius: BorderRadius.all(Radius.circular(12)),
+                              ),
+                              errorText: state.errorText,
+                            ),
+                            child: Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              children: _categoryOptions.map((c) {
+                                final selected = state.value?.contains(c) ?? false;
+                                return FilterChip(
+                                  label: Text(
+                                    c,
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                                      color: selected
+                                          ? theme.colorScheme.primary
+                                          : theme.colorScheme.onSurfaceVariant,
+                                    ),
+                                  ),
+                                  selected: selected,
+                                  onSelected: (_) {
+                                    setState(() {
+                                      if (_selectedCategories.contains(c)) {
+                                        _selectedCategories.remove(c);
+                                      } else {
+                                        _selectedCategories.add(c);
+                                      }
+                                    });
+                                    state.didChange(_selectedCategories);
+                                  },
+                                  selectedColor:
+                                      theme.colorScheme.primary.withOpacity(0.12),
+                                  checkmarkColor: theme.colorScheme.primary,
+                                  backgroundColor: theme.colorScheme.surfaceVariant,
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(8),
+                                    side: BorderSide(
+                                      color: selected
+                                          ? theme.colorScheme.primary.withOpacity(0.4)
+                                          : theme.dividerColor,
+                                      width: 1,
+                                    ),
+                                  ),
+                                );
+                              }).toList(),
+                            ),
+                          );
+                        },
+                      ),
+                      const SizedBox(height: 16),
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(
+                            child: _IntStepperTextFormField(
+                              labelText: 'Price (₱)',
+                              value: _price,
+                              min: 0,
+                              onChanged: (v) => setState(() => _price = v),
+                              validator: (v) => v <= 0 ? 'Required' : null,
+                              prefixIcon: Icons.payments_rounded,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                _IntStepperTextFormField(
+                                  labelText: 'Servings',
+                                  value: _availableServings,
+                                  min: 0,
+                                  enabled: !inventoryLinked && !_isUnlimitedServings,
+                                  onChanged: (v) =>
+                                      setState(() => _availableServings = v),
+                                  validator: (v) => v < 0 ? 'Invalid' : null,
+                                  prefixIcon: Icons.restaurant_rounded,
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          SizedBox(
+                            width: 80,
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Unspecified',
+                                  style: theme.textTheme.bodySmall?.copyWith(
+                                    fontSize: 11,
+                                    color: inventoryLinked
+                                        ? theme.colorScheme.onSurfaceVariant
+                                        : theme.colorScheme.onSurface,
+                                  ),
+                                ),
+                                Transform.scale(
+                                  scale: 0.7,
+                                  child: Switch(
+                                    value: _isUnlimitedServings,
+                                    onChanged: inventoryLinked
+                                        ? null
+                                        : (v) =>
+                                            setState(() => _isUnlimitedServings = v),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                      if (widget.isAdmin) ...[
+                        const SizedBox(height: 16),
+                        SwitchListTile(
+                          contentPadding: EdgeInsets.zero,
+                          title: const Text('Available in POS'),
+                          value: _manualIsAvailable,
+                          onChanged: (v) => setState(() => _manualIsAvailable = v),
+                        ),
+                      ],
+                      const SizedBox(height: 16),
+                      TextFormField(
+                        controller: _descriptionController,
+                        decoration: const InputDecoration(
+                          labelText: 'Description (Optional)',
+                          prefixIcon: Icon(Icons.description_rounded),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.all(Radius.circular(12)),
+                          ),
+                        ),
+                        maxLines: 3,
+                      ),
+                      const SizedBox(height: 20),
+                      TextFormField(
+                        controller: _imageUrlController,
+                        decoration: InputDecoration(
+                          labelText: 'Dish Image URL (Optional)',
+                          hintText: 'https://example.com/dish.jpg',
+                          prefixIcon: const Icon(Icons.image_outlined),
+                          suffixIcon: _imageUrlController.text.trim().isEmpty
+                              ? null
+                              : IconButton(
+                                  icon: const Icon(Icons.clear),
+                                  onPressed: () {
+                                    setState(() {
+                                      _imageUrlController.clear();
+                                      _imageAlignmentX = 0.0;
+                                      _imageAlignmentY = 0.0;
+                                    });
+                                  },
+                                ),
+                          border: const OutlineInputBorder(
+                            borderRadius: BorderRadius.all(Radius.circular(12)),
+                          ),
+                        ),
+                        keyboardType: TextInputType.url,
+                        autofillHints: const [AutofillHints.url],
+                        onChanged: (_) => setState(() {}),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'Paste a direct image URL ending with .jpg, .png, or .webp. Preview matches the POS style.',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: Theme.of(context).colorScheme.onSurfaceVariant,
+                            ),
+                      ),
+                      const SizedBox(height: 16),
+                      _MenuItemPreviewCard(
+                        name: _nameController.text.trim().isEmpty
+                            ? 'Sample Dish'
+                            : _nameController.text.trim(),
+                        price: _price.toDouble(),
+                        imageUrl: _imageUrlController.text.trim(),
+                        imageAlignmentX: _imageAlignmentX,
+                        imageAlignmentY: _imageAlignmentY,
+                      ),
+                      if (_imageUrlController.text.trim().isNotEmpty) ...[
+                        const SizedBox(height: 16),
+                        Text(
+                          'Adjust image focus',
+                          style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                                fontWeight: FontWeight.w700,
+                              ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          'Horizontal focus',
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                        Slider(
+                          value: _imageAlignmentX,
+                          min: -1,
+                          max: 1,
+                          divisions: 20,
+                          label: _imageAlignmentX == 0
+                              ? 'Center'
+                              : _imageAlignmentX < 0
+                                  ? 'Left'
+                                  : 'Right',
+                          onChanged: (value) => setState(() {
+                            _imageAlignmentX = value;
+                          }),
+                        ),
+                        Text(
+                          'Vertical focus',
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                        Slider(
+                          value: _imageAlignmentY,
+                          min: -1,
+                          max: 1,
+                          divisions: 20,
+                          label: _imageAlignmentY == 0
+                              ? 'Center'
+                              : _imageAlignmentY < 0
+                                  ? 'Top'
+                                  : 'Bottom',
+                          onChanged: (value) => setState(() {
+                            _imageAlignmentY = value;
+                          }),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            
+            const Divider(height: 1),
+            // Fixed Footer
+            Padding(
+              padding: const EdgeInsets.all(20.0),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  OutlinedButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: theme.colorScheme.onSurface,
+                      side: BorderSide(color: theme.colorScheme.outline),
+                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    child: const Text('Cancel'),
+                  ),
+                  const SizedBox(width: 12),
+                  ElevatedButton(
+                    onPressed: _isLoading ? null : _updateItem,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: theme.colorScheme.primary,
+                      foregroundColor: theme.colorScheme.onPrimary,
+                      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      elevation: 0,
+                    ),
+                    child: _isLoading
+                        ? SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              valueColor: AlwaysStoppedAnimation<Color>(
+                                  theme.colorScheme.onPrimary),
+                            ),
+                          )
+                        : const Text('Update Item'),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ),
       ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
-        ),
-        ElevatedButton(
-          onPressed: _isLoading ? null : _updateItem,
-          child: _isLoading
-              ? const CircularProgressIndicator()
-              : const Text('Update Item'),
-        ),
-      ],
     );
   }
 
@@ -1662,6 +2097,8 @@ class _EditItemDialogState extends State<_EditItemDialog> {
         isAvailable: _manualIsAvailable,
         description: _descriptionController.text,
         imageUrl: _imageUrlController.text.trim(),
+        imageAlignmentX: _imageAlignmentX,
+        imageAlignmentY: _imageAlignmentY,
       );
 
       if (mounted) {
@@ -1678,6 +2115,8 @@ class _EditItemDialogState extends State<_EditItemDialog> {
           'isAvailable': _manualIsAvailable,
           'description': _descriptionController.text,
           'imageUrl': _imageUrlController.text.trim(),
+          'imageAlignmentX': _imageAlignmentX,
+          'imageAlignmentY': _imageAlignmentY,
         };
         Navigator.of(context).pop(updatedItem);
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1704,6 +2143,117 @@ class _EditItemDialogState extends State<_EditItemDialog> {
   }
 }
 
+class _MenuItemPreviewCard extends StatelessWidget {
+  const _MenuItemPreviewCard({
+    Key? key,
+    required this.name,
+    required this.price,
+    required this.imageUrl,
+    required this.imageAlignmentX,
+    required this.imageAlignmentY,
+  }) : super(key: key);
+
+  final String name;
+  final double price;
+  final String imageUrl;
+  final double imageAlignmentX;
+  final double imageAlignmentY;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final displayName = name.trim().isEmpty ? 'Menu preview' : name;
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        decoration: BoxDecoration(
+          color: theme.colorScheme.surfaceVariant,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: theme.dividerColor),
+        ),
+        child: AspectRatio(
+          aspectRatio: 1.0,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              if (imageUrl.isNotEmpty)
+                Image.network(
+                  imageUrl,
+                  fit: BoxFit.cover,
+                  alignment: Alignment(imageAlignmentX, imageAlignmentY),
+                  errorBuilder: (context, error, stackTrace) => Container(
+                    color: Theme.of(context).colorScheme.surfaceVariant,
+                    alignment: Alignment.center,
+                    padding: const EdgeInsets.all(16),
+                    child: Text(
+                      'Unable to load image preview',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
+                )
+              else
+                Container(
+                  color: Theme.of(context).colorScheme.surfaceVariant,
+                  alignment: Alignment.center,
+                  child: Icon(
+                    Icons.image_not_supported_outlined,
+                    size: 52,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              Container(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [
+                      theme.colorScheme.onSurface.withOpacity(0.0),
+                      theme.colorScheme.onSurface.withOpacity(0.65),
+                    ],
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                  ),
+                ),
+              ),
+              Positioned(
+                left: 16,
+                right: 16,
+                bottom: 16,
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Expanded(
+                      child: Text(
+                        displayName,
+                        style: theme.textTheme.bodyLarge?.copyWith(
+                          color: theme.colorScheme.onPrimary,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w800,
+                        ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Text(
+                      '₱${price.toStringAsFixed(2)}',
+                      style: theme.textTheme.bodyLarge?.copyWith(
+                        color: theme.colorScheme.secondary,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _IntStepperTextFormField extends StatefulWidget {
   const _IntStepperTextFormField({
     required this.labelText,
@@ -1712,6 +2262,7 @@ class _IntStepperTextFormField extends StatefulWidget {
     this.min = 0,
     this.enabled = true,
     this.validator,
+    this.prefixIcon,
   });
 
   final String labelText;
@@ -1720,6 +2271,7 @@ class _IntStepperTextFormField extends StatefulWidget {
   final ValueChanged<int> onChanged;
   final bool enabled;
   final String? Function(int value)? validator;
+  final IconData? prefixIcon;
 
   @override
   State<_IntStepperTextFormField> createState() =>
@@ -1770,14 +2322,25 @@ class _IntStepperTextFormFieldState extends State<_IntStepperTextFormField> {
           enabled: widget.enabled,
           decoration: InputDecoration(
             labelText: widget.labelText,
-            border: const OutlineInputBorder(),
+            border: const OutlineInputBorder(
+              borderRadius: BorderRadius.all(Radius.circular(12)),
+            ),
             errorText: state.errorText,
-            prefixIcon: IconButton(
-              tooltip: 'Decrease',
-              onPressed:
-                  canDecrement ? () => _setValue(widget.value - 1) : null,
-              icon: const Icon(Icons.remove_circle_outline),
-              color: canDecrement ? colorScheme.primary : null,
+            prefixIcon: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (widget.prefixIcon != null) ...[
+                  const SizedBox(width: 12),
+                  Icon(widget.prefixIcon, color: colorScheme.onSurfaceVariant.withOpacity(0.7)),
+                ],
+                IconButton(
+                  tooltip: 'Decrease',
+                  onPressed:
+                      canDecrement ? () => _setValue(widget.value - 1) : null,
+                  icon: const Icon(Icons.remove_circle_outline),
+                  color: canDecrement ? colorScheme.primary : null,
+                ),
+              ],
             ),
             suffixIcon: IconButton(
               tooltip: 'Increase',

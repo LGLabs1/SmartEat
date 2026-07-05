@@ -1,3 +1,5 @@
+// ignore_for_file: unused_field, unused_element
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -99,16 +101,17 @@ class _InventoryTableState extends State<_InventoryTable> {
   }
 
   Widget _headerLabel(BuildContext context, String text) {
-    final style = Theme.of(context).textTheme.labelSmall?.copyWith(
+    final theme = Theme.of(context);
+    final style = theme.textTheme.labelSmall?.copyWith(
               fontWeight: FontWeight.w900,
               letterSpacing: 0.9,
-              color: Colors.grey.shade900,
+              color: theme.colorScheme.onSurfaceVariant,
             ) ??
         TextStyle(
           fontSize: 11,
           fontWeight: FontWeight.w900,
           letterSpacing: 0.9,
-          color: Colors.grey.shade900,
+          color: theme.colorScheme.onSurfaceVariant,
         );
 
     return Padding(
@@ -122,16 +125,17 @@ class _InventoryTableState extends State<_InventoryTable> {
     return LayoutBuilder(
       builder: (context, constraints) {
         final minWidth = 760.0;
-        final headingBg = Colors.grey.shade200;
-        final dataStyle = Theme.of(context).textTheme.bodyMedium;
+        final theme = Theme.of(context);
+        final headingBg = theme.colorScheme.surfaceVariant;
+        final dataStyle = theme.textTheme.bodyMedium;
 
         final table = DataTableTheme(
           data: DataTableThemeData(
             headingRowColor: WidgetStatePropertyAll(headingBg),
-            headingTextStyle: Theme.of(context).textTheme.labelSmall?.copyWith(
+            headingTextStyle: theme.textTheme.labelSmall?.copyWith(
                   fontWeight: FontWeight.w900,
                   letterSpacing: 0.9,
-                  color: Colors.grey.shade900,
+                  color: theme.colorScheme.onSurfaceVariant,
                 ),
             dataTextStyle: dataStyle,
             dividerThickness: 0.8,
@@ -173,7 +177,9 @@ class _InventoryTableState extends State<_InventoryTable> {
               final isLowStock = item.isLowStock;
               final stockStyle = TextStyle(
                 fontWeight: FontWeight.w700,
-                color: isLowStock ? Colors.red.shade700 : Colors.green.shade700,
+                color: isLowStock
+                    ? theme.colorScheme.error
+                    : theme.colorScheme.primary,
               );
               return DataRow(
                 onSelectChanged: (_) => widget.onRowTap(item),
@@ -237,14 +243,15 @@ class _InventoryItemDetailsCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     final isLowStock = item.isLowStock;
 
     return Card(
       elevation: 0,
-      color: Colors.white,
+      color: theme.colorScheme.surface,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(16),
-        side: BorderSide(color: Colors.grey.shade200),
+        side: BorderSide(color: theme.colorScheme.outline),
       ),
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -268,7 +275,7 @@ class _InventoryItemDetailsCard extends StatelessWidget {
                       const SizedBox(height: 4),
                       Text(
                         item.category,
-                        style: TextStyle(color: Colors.grey.shade700),
+                        style: TextStyle(color: theme.colorScheme.onSurfaceVariant),
                       ),
                     ],
                   ),
@@ -291,7 +298,7 @@ class _InventoryItemDetailsCard extends StatelessWidget {
                     icon: const Icon(Icons.delete_outline),
                     label: const Text('Delete'),
                     style: OutlinedButton.styleFrom(
-                      foregroundColor: Colors.red,
+                      foregroundColor: theme.colorScheme.error,
                     ),
                   ),
                 ],
@@ -304,7 +311,9 @@ class _InventoryItemDetailsCard extends StatelessWidget {
                   child: _StockInfoCard(
                     title: 'Current Stock',
                     value: '${item.currentStock}${item.unit}',
-                    color: isLowStock ? Colors.red : Colors.green,
+                    color: isLowStock
+                        ? theme.colorScheme.error
+                        : theme.colorScheme.primary,
                     icon: isLowStock ? Icons.warning : Icons.check_circle,
                   ),
                 ),
@@ -313,7 +322,7 @@ class _InventoryItemDetailsCard extends StatelessWidget {
                   child: _StockInfoCard(
                     title: 'Unit Cost',
                     value: '₱${item.unitCost.toStringAsFixed(2)}',
-                    color: Colors.blue,
+                    color: theme.colorScheme.primary,
                     icon: Icons.attach_money,
                   ),
                 ),
@@ -326,7 +335,7 @@ class _InventoryItemDetailsCard extends StatelessWidget {
                   child: _StockInfoCard(
                     title: 'Min Stock',
                     value: '${item.minStock}${item.unit}',
-                    color: Colors.orange,
+                    color: theme.colorScheme.secondary,
                     icon: Icons.warning,
                   ),
                 ),
@@ -335,7 +344,7 @@ class _InventoryItemDetailsCard extends StatelessWidget {
                   child: _StockInfoCard(
                     title: 'Total Value',
                     value: '₱${item.totalValue.toStringAsFixed(2)}',
-                    color: Colors.indigo,
+                    color: theme.colorScheme.primaryContainer,
                     icon: Icons.account_balance_wallet_outlined,
                   ),
                 ),
@@ -347,13 +356,13 @@ class _InventoryItemDetailsCard extends StatelessWidget {
                 Icon(
                   Icons.event_available,
                   size: 16,
-                  color: Colors.grey.shade600,
+                  color: theme.colorScheme.onSurfaceVariant,
                 ),
                 const SizedBox(width: 6),
                 Expanded(
                   child: Text(
                     'Last restock: ${_fmtDateTime(item.updatedAt.toLocal())}',
-                    style: TextStyle(color: Colors.grey.shade700),
+                    style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
                   ),
                 ),
               ],
@@ -362,12 +371,12 @@ class _InventoryItemDetailsCard extends StatelessWidget {
               const SizedBox(height: 12),
               Row(
                 children: [
-                  Icon(Icons.business, size: 16, color: Colors.grey.shade600),
+                  Icon(Icons.business, size: 16, color: Theme.of(context).colorScheme.onSurfaceVariant),
                   const SizedBox(width: 4),
                   Expanded(
                     child: Text(
                       'Supplier: ${item.supplier}',
-                      style: TextStyle(color: Colors.grey.shade600),
+                      style: TextStyle(color: theme.colorScheme.onSurfaceVariant),
                     ),
                   ),
                 ],
@@ -428,10 +437,10 @@ class _CategoryCard extends StatelessWidget {
       borderRadius: BorderRadius.circular(16),
       child: Card(
         elevation: 0,
-        color: Colors.white,
+        color: theme.colorScheme.surface,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(16),
-          side: BorderSide(color: Colors.grey.shade200),
+          side: BorderSide(color: theme.colorScheme.outline),
         ),
         child: Padding(
           padding: const EdgeInsets.all(16),
@@ -446,7 +455,7 @@ class _CategoryCard extends StatelessWidget {
                     height: 44,
                     decoration: BoxDecoration(
                       color: (isWarning
-                              ? Colors.orange
+                              ? theme.colorScheme.error
                               : theme.colorScheme.primary)
                           .withOpacity(0.12),
                       borderRadius: BorderRadius.circular(12),
@@ -454,7 +463,7 @@ class _CategoryCard extends StatelessWidget {
                     child: Icon(
                       icon,
                       color: isWarning
-                          ? Colors.orange.shade700
+                          ? theme.colorScheme.error
                           : theme.colorScheme.primary,
                     ),
                   ),
@@ -462,7 +471,7 @@ class _CategoryCard extends StatelessWidget {
                   Icon(
                     Icons.arrow_forward_ios,
                     size: 16,
-                    color: Colors.grey.shade500,
+                    color: theme.colorScheme.onSurfaceVariant,
                   ),
                 ],
               ),
@@ -475,14 +484,14 @@ class _CategoryCard extends StatelessWidget {
               const SizedBox(height: 6),
               Text(
                 '$itemCount items',
-                style: TextStyle(color: Colors.grey.shade700),
+                style: TextStyle(color: theme.colorScheme.onSurfaceVariant),
               ),
               if (lowStockCount > 0) ...[
                 const SizedBox(height: 6),
                 Text(
                   '$lowStockCount low stock',
                   style: TextStyle(
-                    color: Colors.orange.shade800,
+                    color: theme.colorScheme.error,
                     fontWeight: FontWeight.w600,
                   ),
                 ),
@@ -520,10 +529,10 @@ class _StockStatusCard extends StatelessWidget {
       borderRadius: BorderRadius.circular(16),
       child: Card(
         elevation: 0,
-        color: Colors.white,
+        color: theme.colorScheme.surface,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(16),
-          side: BorderSide(color: Colors.grey.shade200),
+          side: BorderSide(color: theme.colorScheme.outline),
         ),
         child: Padding(
           padding: const EdgeInsets.all(16),
@@ -546,7 +555,7 @@ class _StockStatusCard extends StatelessWidget {
                   Icon(
                     Icons.arrow_forward_ios,
                     size: 16,
-                    color: Colors.grey.shade500,
+                    color: theme.colorScheme.onSurfaceVariant,
                   ),
                 ],
               ),
@@ -559,7 +568,7 @@ class _StockStatusCard extends StatelessWidget {
               const SizedBox(height: 6),
               Text(
                 '$itemCount items',
-                style: TextStyle(color: Colors.grey.shade700),
+                style: TextStyle(color: theme.colorScheme.onSurfaceVariant),
               ),
               if (itemCount > 0) ...[
                 const SizedBox(height: 6),
@@ -704,6 +713,7 @@ class InventoryScreenState extends State<InventoryScreen> {
   }
 
   Future<void> _confirmDeleteInventoryItem(InventoryItem item) async {
+    final theme = Theme.of(context);
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) {
@@ -717,7 +727,9 @@ class InventoryScreenState extends State<InventoryScreen> {
             ),
             TextButton(
               onPressed: () => Navigator.of(context).pop(true),
-              style: TextButton.styleFrom(foregroundColor: Colors.red),
+              style: TextButton.styleFrom(
+                foregroundColor: theme.colorScheme.error,
+              ),
               child: const Text('Delete'),
             ),
           ],
@@ -865,6 +877,7 @@ class InventoryScreenState extends State<InventoryScreen> {
   }
 
   Widget _buildCategoryEmptyState(BuildContext context) {
+    final theme = Theme.of(context);
     final helper = _categoryHelperText(_selectedCategory);
     final title = _searchQuery.trim().isNotEmpty
         ? 'No items match your search'
@@ -881,7 +894,7 @@ class InventoryScreenState extends State<InventoryScreen> {
               Icon(
                 Icons.inventory_2_outlined,
                 size: 56,
-                color: Colors.grey.shade400,
+                color: theme.colorScheme.onSurfaceVariant,
               ),
               const SizedBox(height: 12),
               Text(
@@ -900,7 +913,7 @@ class InventoryScreenState extends State<InventoryScreen> {
                   style: TextStyle(
                     fontSize: 13,
                     height: 1.35,
-                    color: Colors.grey.shade700,
+                    color: theme.colorScheme.onSurfaceVariant,
                   ),
                 ),
               ],
@@ -982,35 +995,7 @@ class InventoryScreenState extends State<InventoryScreen> {
     );
   }
 
-  Widget _buildLowStockAlert(BuildContext context) {
-    if (_lowStockItems.isEmpty) return const SizedBox.shrink();
-
-    return Container(
-      margin: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.red.shade50,
-        border: Border.all(color: Colors.red.shade200),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Row(
-        children: [
-          Icon(Icons.warning, color: Colors.red.shade700),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              '${_lowStockItems.length} items are low on stock',
-              style: TextStyle(color: Colors.red.shade700),
-            ),
-          ),
-          TextButton(
-            onPressed: _showLowStockDialog,
-            child: const Text('View'),
-          ),
-        ],
-      ),
-    );
-  }
+  
 
   Widget _buildCategoryGrid(BuildContext context) {
     final categories = _categories.where((c) => c != 'All').toList();
@@ -1049,7 +1034,7 @@ class InventoryScreenState extends State<InventoryScreen> {
               title: 'Low Stock',
               itemCount: _lowStockItems.length,
               icon: Icons.warning_amber_rounded,
-              accent: Colors.orange.shade800,
+              accent: Theme.of(context).colorScheme.secondary,
               onTap: () {
                 setState(() {
                   _selectedStockStatus = 'low';
@@ -1064,7 +1049,7 @@ class InventoryScreenState extends State<InventoryScreen> {
               title: 'Out of Stock',
               itemCount: _outOfStockItems.length,
               icon: Icons.error_outline,
-              accent: Colors.red.shade700,
+              accent: Theme.of(context).colorScheme.error,
               onTap: () {
                 setState(() {
                   _selectedStockStatus = 'out';
@@ -1115,7 +1100,7 @@ class InventoryScreenState extends State<InventoryScreen> {
                                 ],
                               ),
                         const SizedBox(height: 16),
-                        Divider(color: Colors.grey.shade300),
+                        Divider(color: Theme.of(context).colorScheme.outline),
                       ],
                     ),
                   ),
@@ -1215,9 +1200,9 @@ class InventoryScreenState extends State<InventoryScreen> {
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
           decoration: BoxDecoration(
-            color: Colors.white,
+            color: Theme.of(context).colorScheme.surface,
             border: Border(
-              bottom: BorderSide(color: Colors.grey.shade200),
+              bottom: BorderSide(color: Theme.of(context).colorScheme.outline),
             ),
           ),
           child: Row(
@@ -1226,7 +1211,7 @@ class InventoryScreenState extends State<InventoryScreen> {
                 onPressed: hasPrevious ? _goToPreviousCategory : null,
                 icon: Icon(
                   Icons.arrow_back_ios,
-                  color: hasPrevious ? Colors.blue : Colors.grey.shade300,
+                  color: hasPrevious ? Theme.of(context).colorScheme.primary : Theme.of(context).colorScheme.outline,
                 ),
                 tooltip: hasPrevious ? 'Previous category' : null,
               ),
@@ -1244,7 +1229,7 @@ class InventoryScreenState extends State<InventoryScreen> {
                 onPressed: hasNext ? _goToNextCategory : null,
                 icon: Icon(
                   Icons.arrow_forward_ios,
-                  color: hasNext ? Colors.blue : Colors.grey.shade300,
+                  color: hasNext ? Theme.of(context).colorScheme.primary : Theme.of(context).colorScheme.outline,
                 ),
                 tooltip: hasNext ? 'Next category' : null,
               ),
@@ -1258,7 +1243,7 @@ class InventoryScreenState extends State<InventoryScreen> {
             child: Text(
               'Showing ${_filteredItems.length} ${_filteredItems.length == 1 ? 'item' : 'items'}',
               style: TextStyle(
-                color: Colors.grey.shade700,
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
                 fontSize: 14,
               ),
             ),
@@ -1389,43 +1374,7 @@ class InventoryScreenState extends State<InventoryScreen> {
   }
 
 
-  void _showLowStockDialog() {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Low Stock Items'),
-        content: SizedBox(
-          width: double.maxFinite,
-          child: ListView.builder(
-            shrinkWrap: true,
-            itemCount: _lowStockItems.length,
-            itemBuilder: (context, index) {
-              final item = _lowStockItems[index];
-              return ListTile(
-                title: Text(item.name),
-                subtitle: Text(
-                  'Current: ${item.currentStock}${item.unit} | Min: ${item.minStock}${item.unit}',
-                ),
-                trailing: Text(
-                  '${item.currentStock - item.minStock}${item.unit}',
-                  style: TextStyle(
-                    color: Colors.red,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              );
-            },
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Close'),
-          ),
-        ],
-      ),
-    );
-  }
+  
 
   void _openDamagedItemsScreen() {
     Navigator.of(context).push(
@@ -1502,7 +1451,7 @@ class _InventoryItemCardState extends State<_InventoryItemCard> {
                               duration: const Duration(milliseconds: 180),
                               child: Icon(
                                 Icons.expand_more,
-                                color: Colors.grey.shade700,
+                                color: Theme.of(context).colorScheme.onSurfaceVariant,
                               ),
                             ),
                           ],
@@ -1511,7 +1460,7 @@ class _InventoryItemCardState extends State<_InventoryItemCard> {
                         Text(
                           item.category,
                           style: TextStyle(
-                            color: Colors.grey.shade600,
+                            color: Theme.of(context).colorScheme.onSurfaceVariant,
                             fontSize: 14,
                           ),
                         ),
@@ -1563,7 +1512,7 @@ class _InventoryItemCardState extends State<_InventoryItemCard> {
                     child: _StockInfoCard(
                       title: 'Unit Cost',
                       value: '₱${item.unitCost.toStringAsFixed(2)}',
-                      color: Colors.blue,
+                      color: Theme.of(context).colorScheme.primary,
                       icon: Icons.attach_money,
                     ),
                   ),
@@ -1580,7 +1529,7 @@ class _InventoryItemCardState extends State<_InventoryItemCard> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Divider(color: Colors.grey.shade200),
+                      Divider(color: Theme.of(context).colorScheme.outline),
                       const SizedBox(height: 12),
                       Row(
                         children: [
@@ -1588,7 +1537,7 @@ class _InventoryItemCardState extends State<_InventoryItemCard> {
                             child: _StockInfoCard(
                               title: 'Min Stock',
                               value: '${item.minStock}${item.unit}',
-                              color: Colors.orange,
+                              color: Theme.of(context).colorScheme.secondary,
                               icon: Icons.warning,
                             ),
                           ),
@@ -1597,7 +1546,7 @@ class _InventoryItemCardState extends State<_InventoryItemCard> {
                             child: _StockInfoCard(
                               title: 'Total Value',
                               value: '₱${item.totalValue.toStringAsFixed(2)}',
-                              color: Colors.indigo,
+                              color: Theme.of(context).colorScheme.tertiary,
                               icon: Icons.account_balance_wallet_outlined,
                             ),
                           ),
@@ -1609,13 +1558,13 @@ class _InventoryItemCardState extends State<_InventoryItemCard> {
                           Icon(
                             Icons.event_available,
                             size: 16,
-                            color: Colors.grey.shade600,
+                            color: Theme.of(context).colorScheme.onSurfaceVariant,
                           ),
                           const SizedBox(width: 6),
                           Expanded(
                             child: Text(
                               'Last restock: ${_fmtDateTime(item.updatedAt.toLocal())}',
-                              style: TextStyle(color: Colors.grey.shade700),
+                              style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
                             ),
                           ),
                         ],
@@ -1627,13 +1576,13 @@ class _InventoryItemCardState extends State<_InventoryItemCard> {
                             Icon(
                               Icons.business,
                               size: 16,
-                              color: Colors.grey.shade600,
+                              color: Theme.of(context).colorScheme.onSurfaceVariant,
                             ),
                             const SizedBox(width: 4),
                             Expanded(
                               child: Text(
                                 'Supplier: ${item.supplier}',
-                                style: TextStyle(color: Colors.grey.shade600),
+                                style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
                               ),
                             ),
                           ],
@@ -2369,7 +2318,7 @@ class _UpdateStockDialogState extends State<_UpdateStockDialog> {
                 alignment: Alignment.centerLeft,
                 child: Text(
                   'Maximum: ${widget.item.currentStock}${widget.item.unit}',
-                  style: TextStyle(color: Colors.grey.shade600, fontSize: 13),
+                  style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 13),
                 ),
               ),
             ],

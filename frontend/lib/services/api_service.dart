@@ -50,6 +50,8 @@ class ApiService {
     required int availableServings,
     String? description,
     String? imageUrl,
+    double? imageAlignmentX,
+    double? imageAlignmentY,
   }) async {
     final invLinked =
         inventoryItemId != null && inventoryItemId.trim().isNotEmpty;
@@ -66,6 +68,8 @@ class ApiService {
       'availableServings': availableServings,
       'description': description ?? '',
       'imageUrl': imageUrl ?? '',
+      if (imageAlignmentX != null) 'imageAlignmentX': imageAlignmentX,
+      if (imageAlignmentY != null) 'imageAlignmentY': imageAlignmentY,
       'isAvailable': initialAvailability,
     });
     return {'data': item};
@@ -83,6 +87,8 @@ class ApiService {
     String? description,
     bool? isAvailable,
     String? imageUrl,
+    double? imageAlignmentX,
+    double? imageAlignmentY,
   }) async {
     final Map<String, dynamic> updates = {};
     if (name != null) updates['name'] = name;
@@ -116,6 +122,8 @@ class ApiService {
     if (description != null) updates['description'] = description;
     if (isAvailable != null) updates['isAvailable'] = isAvailable;
     if (imageUrl != null) updates['imageUrl'] = imageUrl;
+    if (imageAlignmentX != null) updates['imageAlignmentX'] = imageAlignmentX;
+    if (imageAlignmentY != null) updates['imageAlignmentY'] = imageAlignmentY;
 
     final item = await FirebaseService.updateMenuItem(id, updates);
     return {'data': item};
@@ -821,6 +829,7 @@ class ApiService {
   static Future<Map<String, dynamic>> sendChatMessage({
     required String message,
     List<Map<String, dynamic>>? history,
+    String? context,
   }) async {
     final token = await _getAuthToken();
     final eateryId = await FirebaseService.getCurrentEateryId();
@@ -841,6 +850,7 @@ class ApiService {
         'message': message,
         'history': history ?? [],
         if (eateryId != null) 'eateryId': eateryId,
+        if (context != null) 'context': context,
       }),
     );
 

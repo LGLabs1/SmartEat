@@ -36,9 +36,9 @@ class _KpiMiniCard extends StatelessWidget {
       width: 210,
       padding: const EdgeInsets.all(8),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: Theme.of(context).colorScheme.surface,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.grey.shade200),
+        border: Border.all(color: Theme.of(context).colorScheme.outline),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -63,7 +63,7 @@ class _KpiMiniCard extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    color: Colors.grey.shade700,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
                     fontWeight: FontWeight.w700,
                     fontSize: 11,
                   ),
@@ -84,7 +84,7 @@ class _KpiMiniCard extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    color: Colors.grey.shade700,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
                     fontSize: 10,
                     fontWeight: FontWeight.w600,
                   ),
@@ -122,9 +122,9 @@ class _CompactKpiItem extends StatelessWidget {
       return Container(
         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: Theme.of(context).colorScheme.surface,
           borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: Colors.grey.shade200),
+          border: Border.all(color: Theme.of(context).colorScheme.outline),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
@@ -157,7 +157,7 @@ class _CompactKpiItem extends StatelessWidget {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                      color: Colors.grey.shade600,
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
                       fontSize: 9,
                     ),
                   ),
@@ -174,9 +174,9 @@ class _CompactKpiItem extends StatelessWidget {
       width: 160,
       padding: const EdgeInsets.all(8),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: Theme.of(context).colorScheme.surface,
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: Colors.grey.shade200),
+        border: Border.all(color: Theme.of(context).colorScheme.outline),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -201,7 +201,7 @@ class _CompactKpiItem extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    color: Colors.grey.shade700,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
                     fontWeight: FontWeight.w700,
                     fontSize: 10,
                   ),
@@ -221,7 +221,7 @@ class _CompactKpiItem extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    color: Colors.grey.shade600,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
                     fontSize: 9,
                     fontWeight: FontWeight.w500,
                   ),
@@ -784,7 +784,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                 _currency.format((today['revenue'] as num?)?.toDouble() ?? 0.0),
             subtitle: '${today['orders'] ?? 0} orders',
             icon: Icons.today,
-            color: Colors.blue,
+            color: Theme.of(context).colorScheme.primary,
             isNarrow: isNarrow,
           ),
           _CompactKpiItem(
@@ -793,7 +793,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                 _currency.format((week['revenue'] as num?)?.toDouble() ?? 0.0),
             subtitle: '${week['orders'] ?? 0} orders',
             icon: Icons.date_range,
-            color: Colors.green,
+            color: Theme.of(context).colorScheme.secondary,
             isNarrow: isNarrow,
           ),
           _CompactKpiItem(
@@ -802,7 +802,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                 _currency.format((month['revenue'] as num?)?.toDouble() ?? 0.0),
             subtitle: '${month['orders'] ?? 0} orders',
             icon: Icons.calendar_month,
-            color: Colors.orange,
+            color: Theme.of(context).colorScheme.secondary,
             isNarrow: isNarrow,
           ),
           _CompactKpiItem(
@@ -818,7 +818,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
             value: _currency.format(totalExpenses),
             subtitle: '${currentMonthExpenses.length} trans.',
             icon: Icons.account_balance_wallet,
-            color: Colors.red.shade400,
+            color: Theme.of(context).colorScheme.error,
             isNarrow: isNarrow,
           ),
           _CompactKpiItem(
@@ -826,7 +826,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
             value: _currency.format(totalPayables),
             subtitle: '${duePayables.length} pending',
             icon: Icons.payment,
-            color: Colors.orange.shade400,
+            color: Theme.of(context).colorScheme.secondary,
             isNarrow: isNarrow,
           ),
         ];
@@ -906,9 +906,9 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
 
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: Theme.of(context).colorScheme.surface,
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: Colors.grey.shade300),
+        border: Border.all(color: Theme.of(context).colorScheme.outline),
       ),
       child: Material(
         color: Colors.transparent,
@@ -981,7 +981,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                 Icon(
                   isForecastTab ? Icons.arrow_forward : Icons.calendar_today,
                   size: 16,
-                  color: Colors.grey.shade600,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
                 ),
                 const SizedBox(width: 8),
                 Text(
@@ -989,7 +989,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                   style: TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.w600,
-                    color: Colors.grey.shade800,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
                   ),
                 ),
                 const SizedBox(width: 8),

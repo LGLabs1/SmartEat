@@ -4,6 +4,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'dart:math';
 import '../services/api_service.dart';
 import '../services/auth_provider.dart';
+import '../services/ai_assistant_provider.dart';
 import '../widgets/skeleton_loaders.dart';
 import '../utils/haptic_feedback.dart';
 import '../utils/error_messages.dart';
@@ -79,6 +80,7 @@ class _POSScreenState extends State<POSScreen> {
     _targetPendingOrderId = widget.initialOrderId.trim();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _loadRole();
+      context.read<AIAssistantProvider>().setActivePage('orders');
       if (_addToExistingOrder && _targetPendingOrderId.isNotEmpty) {
         _prefillPendingOrderIntoCart(_targetPendingOrderId);
       }
@@ -593,21 +595,21 @@ class _POSScreenState extends State<POSScreen> {
     required double childAspectRatio,
   }) {
     Widget header(String title) {
+      final theme = Theme.of(context);
       return Padding(
         padding: const EdgeInsets.fromLTRB(12, 14, 12, 8),
         child: Row(
           children: [
             Text(
               title,
-              style: const TextStyle(
-                fontSize: 16,
+              style: theme.textTheme.titleMedium?.copyWith(
                 fontWeight: FontWeight.w800,
               ),
             ),
             const SizedBox(width: 10),
             Expanded(
               child: Divider(
-                color: Colors.grey.shade300,
+                color: theme.colorScheme.outline,
                 height: 1,
               ),
             ),
@@ -690,6 +692,7 @@ class _POSScreenState extends State<POSScreen> {
     final cats = _availableCategories();
     if (cats.length <= 1) return const SizedBox(height: 0);
 
+    final theme = Theme.of(context);
     return SizedBox(
       height: 44,
       child: ListView.separated(
@@ -705,9 +708,11 @@ class _POSScreenState extends State<POSScreen> {
               cat,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: TextStyle(
+              style: theme.textTheme.labelMedium?.copyWith(
                 fontWeight: FontWeight.w700,
-                color: selected ? Colors.white : Colors.black87,
+                color: selected
+                    ? theme.colorScheme.onPrimary
+                    : theme.colorScheme.onSurface,
               ),
             ),
             selected: selected,
@@ -716,9 +721,9 @@ class _POSScreenState extends State<POSScreen> {
                 _selectedCategory = cat;
               });
             },
-            selectedColor: Theme.of(context).colorScheme.primary,
-            backgroundColor: Colors.white,
-            side: BorderSide(color: Colors.grey.shade300),
+            selectedColor: theme.colorScheme.primary,
+            backgroundColor: theme.colorScheme.surface,
+            side: BorderSide(color: theme.colorScheme.outline),
           );
         },
       ),
@@ -755,7 +760,12 @@ class _POSScreenState extends State<POSScreen> {
   Future<void> _createOrder() async {
     if (_cartItems.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Cart is empty')),
+        SnackBar(
+          content: Text('Cart is empty', style: Theme.of(context).textTheme.bodyMedium),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          margin: const EdgeInsets.all(16),
+        ),
       );
       return;
     }
@@ -879,6 +889,7 @@ class _POSScreenState extends State<POSScreen> {
       }
 
       if (mounted) {
+        final theme = Theme.of(context);
         setState(() {
           _cartItems.clear();
           _baselineQtyByMenuId.clear();
@@ -900,16 +911,20 @@ class _POSScreenState extends State<POSScreen> {
           SnackBar(
             content: Row(
               children: [
-                const Icon(Icons.check_circle, color: Colors.white),
+                Icon(Icons.check_circle,
+                    color: theme.colorScheme.onSecondary),
                 const SizedBox(width: 8),
                 Text(
                   _addToExistingOrder
                       ? 'Items added to order!'
                       : 'Order created successfully!',
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: theme.colorScheme.onSecondary,
+                  ),
                 ),
               ],
             ),
-            backgroundColor: Colors.green.shade700,
+            backgroundColor: theme.colorScheme.secondary,
             behavior: SnackBarBehavior.floating,
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(12),
@@ -994,10 +1009,12 @@ class _POSScreenState extends State<POSScreen> {
                             ? 3
                             : 2;
                 final childAspectRatio = width < 520
-                    ? 0.7
+                    ? (isShortHeight ? 0.68 : 0.72)
                     : crossAxisCount == 2
-                        ? (isShortHeight ? 0.85 : 0.9)
-                        : (isShortHeight ? 0.8 : 0.85);
+                        ? (isShortHeight ? 0.72 : 0.76)
+                        : crossAxisCount == 3
+                            ? (isShortHeight ? 0.78 : 0.82)
+                            : (isShortHeight ? 0.86 : 0.90);
 
                 final filteredMenuItems = _selectedCategory == 'All'
                     ? _menuItems
@@ -1109,9 +1126,9 @@ class _POSScreenState extends State<POSScreen> {
                             constraints: const BoxConstraints(minHeight: 56),
                             padding: const EdgeInsets.fromLTRB(16, 8, 16, 6),
                             decoration: BoxDecoration(
-                              color: Colors.white,
+                              color: Theme.of(context).colorScheme.surface,
                               border: Border(
-                                top: BorderSide(color: Colors.grey.shade200),
+                                top: BorderSide(color: Theme.of(context).colorScheme.outline),
                               ),
                             ),
                             child: Row(
@@ -1125,21 +1142,27 @@ class _POSScreenState extends State<POSScreen> {
                                     children: [
                                       Text(
                                         '₱${_totalAmount.toStringAsFixed(2)}',
-                                        style: const TextStyle(
-                                          fontSize: 16,
-                                          fontWeight: FontWeight.w800,
-                                        ),
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .titleMedium
+                                            ?.copyWith(
+                                              fontWeight: FontWeight.w800,
+                                            ),
                                       ),
                                       const SizedBox(height: 2),
                                       Text(
                                         _cartItems.isEmpty
                                             ? 'No items'
                                             : '${_cartItems.length} item(s) in cart',
-                                        style: TextStyle(
-                                          color: Colors.grey.shade700,
-                                          fontWeight: FontWeight.w600,
-                                          fontSize: 12,
-                                        ),
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .bodySmall
+                                            ?.copyWith(
+                                              color: Theme.of(context)
+                                                  .colorScheme
+                                                  .onSurfaceVariant,
+                                              fontWeight: FontWeight.w600,
+                                            ),
                                       ),
                                     ],
                                   ),
@@ -1155,6 +1178,10 @@ class _POSScreenState extends State<POSScreen> {
                                                 ? _createOrder
                                                 : _openCartSheet)),
                                     style: FilledButton.styleFrom(
+                                      backgroundColor:
+                                          Theme.of(context).colorScheme.primary,
+                                      foregroundColor:
+                                          Theme.of(context).colorScheme.onPrimary,
                                       minimumSize: const Size(0, 36),
                                       padding: const EdgeInsets.symmetric(
                                         horizontal: 12,
@@ -1174,7 +1201,10 @@ class _POSScreenState extends State<POSScreen> {
                                           : _addToExistingOrder
                                               ? 'Add Items'
                                               : 'Checkout',
-                                      style: const TextStyle(fontSize: 12),
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .labelSmall
+                                          ?.copyWith(fontSize: 12),
                                     ),
                                   ),
                                 ),
@@ -1373,6 +1403,7 @@ class _CartPanel extends StatelessWidget {
   }
 
   Widget _buildAddToOrderSections(BuildContext context) {
+    final theme = Theme.of(context);
     final existingIndexes = <int>[];
     final newIndexes = <int>[];
 
@@ -1412,7 +1443,7 @@ class _CartPanel extends StatelessWidget {
       padding: const EdgeInsets.all(8),
       itemCount: rows.length,
       separatorBuilder: (_, __) =>
-          Divider(color: Colors.grey.shade200, height: 1),
+          Divider(color: Theme.of(context).dividerColor, height: 1),
       itemBuilder: (context, i) {
         final row = rows[i];
         switch (row.type) {
@@ -1421,7 +1452,10 @@ class _CartPanel extends StatelessWidget {
               padding: const EdgeInsets.fromLTRB(8, 10, 8, 10),
               child: Text(
                 row.label,
-                style: const TextStyle(fontWeight: FontWeight.w800),
+                style: theme.textTheme.bodySmall?.copyWith(
+                  fontWeight: FontWeight.w800,
+                  color: theme.colorScheme.onSurface,
+                ),
               ),
             );
           case _CartSectionRowType.note:
@@ -1429,7 +1463,9 @@ class _CartPanel extends StatelessWidget {
               padding: const EdgeInsets.fromLTRB(8, 10, 8, 10),
               child: Text(
                 row.label,
-                style: TextStyle(color: Colors.grey.shade700),
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
               ),
             );
           case _CartSectionRowType.existing:
@@ -1445,9 +1481,22 @@ class _CartPanel extends StatelessWidget {
             return ListTile(
               dense: true,
               contentPadding: const EdgeInsets.symmetric(horizontal: 8),
-              title: Text((cartItem['name'] ?? '').toString()),
-              subtitle: Text('Existing x$baseline'),
-              trailing: Text('₱${baselineSubtotal.toStringAsFixed(2)}'),
+              title: Text(
+                (cartItem['name'] ?? '').toString(),
+                style: theme.textTheme.bodyMedium,
+              ),
+              subtitle: Text(
+                'Existing x$baseline',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+              trailing: Text(
+                '₱${baselineSubtotal.toStringAsFixed(2)}',
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
             );
           case _CartSectionRowType.delta:
             final index = row.index;
@@ -1471,8 +1520,16 @@ class _CartPanel extends StatelessWidget {
             return ListTile(
               dense: true,
               contentPadding: const EdgeInsets.symmetric(horizontal: 8),
-              title: Text((cartItem['name'] ?? '').toString()),
-              subtitle: Text('New x$delta'),
+              title: Text(
+                (cartItem['name'] ?? '').toString(),
+                style: theme.textTheme.bodyMedium,
+              ),
+              subtitle: Text(
+                'New x$delta',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
               trailing: SingleChildScrollView(
                 scrollDirection: Axis.horizontal,
                 child: Row(
@@ -1481,21 +1538,31 @@ class _CartPanel extends StatelessWidget {
                     IconButton(
                       onPressed: delta <= 0 ? null : () => setDelta(delta - 1),
                       icon: const Icon(Icons.remove_circle_outline),
+                      color: theme.colorScheme.primary,
                     ),
                     Text(
                       delta.toString(),
-                      style: const TextStyle(fontWeight: FontWeight.w700),
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
                     IconButton(
                       onPressed: () => setDelta(delta + 1),
                       icon: const Icon(Icons.add_circle_outline),
+                      color: theme.colorScheme.primary,
                     ),
                     const SizedBox(width: 8),
-                    Text('₱${deltaSubtotal.toStringAsFixed(2)}'),
+                    Text(
+                      '₱${deltaSubtotal.toStringAsFixed(2)}',
+                      style: theme.textTheme.bodyMedium,
+                    ),
                     const SizedBox(width: 8),
                     IconButton(
                       onPressed: delta <= 0 ? null : () => setDelta(0),
-                      icon: const Icon(Icons.delete_outline, color: Colors.red),
+                      icon: Icon(
+                        Icons.delete_outline,
+                        color: theme.colorScheme.error,
+                      ),
                     ),
                   ],
                 ),
@@ -1508,12 +1575,15 @@ class _CartPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
     return Card(
+      color: theme.colorScheme.surfaceVariant,
       margin: EdgeInsets.zero,
       elevation: 0,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: BorderSide(color: Colors.grey.shade200),
+        borderRadius: BorderRadius.circular(16),
+        side: BorderSide(color: theme.colorScheme.outline),
       ),
       child: Column(
         children: [
@@ -1526,18 +1596,18 @@ class _CartPanel extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text(
+                      Text(
                         'Cart',
-                        style: TextStyle(
-                            fontSize: 18, fontWeight: FontWeight.bold),
+                        style: theme.textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
                       Padding(
                         padding: const EdgeInsets.only(top: 2),
                         child: Text(
                           _formatDateTime(DateTime.now()),
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Colors.grey.shade600,
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant,
                           ),
                         ),
                       ),
@@ -1549,10 +1619,10 @@ class _CartPanel extends StatelessWidget {
                             isNewOrder
                                 ? 'New Order #${_shortOrderId(orderId)}'
                                 : 'Order #${_shortOrderId(orderId)}',
-                            style: TextStyle(
+                            style: theme.textTheme.bodySmall?.copyWith(
                               color: isNewOrder
-                                  ? Colors.blue.shade700
-                                  : Colors.grey.shade700,
+                                  ? theme.colorScheme.primary
+                                  : theme.colorScheme.onSurfaceVariant,
                               fontWeight: FontWeight.w600,
                             ),
                           ),
@@ -1562,26 +1632,32 @@ class _CartPanel extends StatelessWidget {
                 ),
                 Text(
                   '₱${totalAmount.toStringAsFixed(2)}',
-                  style: const TextStyle(
-                    fontSize: 18,
+                  style: theme.textTheme.titleMedium?.copyWith(
                     fontWeight: FontWeight.bold,
-                    color: Colors.green,
+                    color: theme.colorScheme.primary,
                   ),
                 ),
               ],
             ),
           ),
-          const Divider(height: 1),
+          Divider(color: theme.dividerColor, height: 1),
           Expanded(
             child: cartItems.isEmpty
-                ? const Center(child: Text('No items in cart'))
+                ? Center(
+                    child: Text(
+                      'No items in cart',
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  )
                 : (isAddToExistingOrder
                     ? _buildAddToOrderSections(context)
                     : ListView.separated(
                         padding: const EdgeInsets.all(8),
                         itemCount: cartItems.length,
                         separatorBuilder: (_, __) =>
-                            Divider(color: Colors.grey.shade200, height: 1),
+                            Divider(color: theme.dividerColor, height: 1),
                         itemBuilder: (context, index) {
                           final cartItem = cartItems[index];
                           return _CartItemTile(
@@ -1602,21 +1678,28 @@ class _CartPanel extends StatelessWidget {
                     ? null
                     : (isLoading ? null : onCreateOrder),
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.green,
+                  backgroundColor: theme.colorScheme.primary,
+                  foregroundColor: theme.colorScheme.onPrimary,
                   padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
                 ),
                 child: isLoading
-                    ? const SizedBox(
+                    ? SizedBox(
                         width: 18,
                         height: 18,
                         child: CircularProgressIndicator(
-                          color: Colors.white,
+                          color: theme.colorScheme.onPrimary,
                           strokeWidth: 2,
                         ),
                       )
                     : Text(
                         actionLabel,
-                        style: TextStyle(color: Colors.white),
+                        style: theme.textTheme.labelLarge?.copyWith(
+                          color: theme.colorScheme.onPrimary,
+                          fontWeight: FontWeight.w700,
+                        ),
                       ),
               ),
             ),
@@ -1705,187 +1788,408 @@ class _MenuItemCard extends StatelessWidget {
 
     final category = (item['category'] ?? '').toString();
     final imageUrl = (item['imageUrl'] ?? '').toString().trim();
+    final rawImageAlignmentX = item['imageAlignmentX'] is num
+        ? (item['imageAlignmentX'] as num).toDouble()
+        : double.tryParse((item['imageAlignmentX'] ?? '').toString()) ?? 0.0;
+    final imageAlignmentX = rawImageAlignmentX < -1.0
+        ? -1.0
+        : rawImageAlignmentX > 1.0
+            ? 1.0
+            : rawImageAlignmentX;
+    final rawImageAlignmentY = item['imageAlignmentY'] is num
+        ? (item['imageAlignmentY'] as num).toDouble()
+        : double.tryParse((item['imageAlignmentY'] ?? '').toString()) ?? 0.0;
+    final imageAlignmentY = rawImageAlignmentY < -1.0
+        ? -1.0
+        : rawImageAlignmentY > 1.0
+            ? 1.0
+            : rawImageAlignmentY;
     final name = (item['name'] ?? '').toString();
+    final theme = Theme.of(context);
     final initials = _getInitials(name);
 
     return Card(
       elevation: 0,
-      color: isAvailable ? const Color(0xFFF6F8FF) : const Color(0xFFF2F2F2),
+      color: isAvailable
+          ? theme.colorScheme.surfaceVariant
+          : theme.colorScheme.surface,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(16),
       ),
       child: Padding(
         padding: EdgeInsets.all(isShortHeight ? 8 : 10),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  child: Text(
-                    (item['name'] ?? '').toString(),
-                    style: const TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w800,
-                    ),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: isAvailable
-                        ? Colors.green.withOpacity(0.10)
-                        : Colors.red.withOpacity(0.10),
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                  child: Text(
-                    isAvailable ? 'Available' : 'Unavailable',
-                    style: TextStyle(
-                      color: isAvailable ? Colors.green : Colors.red,
-                      fontWeight: FontWeight.w800,
-                      fontSize: 11,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            SizedBox(height: isShortHeight ? 4 : 6),
-            Row(
-              children: [
-                if (category.isNotEmpty)
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 3,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(999),
-                      border: Border.all(color: Colors.black12),
-                    ),
-                    child: Text(
-                      category,
-                      style: TextStyle(
-                        color: Colors.grey.shade700,
-                        fontWeight: FontWeight.w700,
-                        fontSize: 11,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                const Spacer(),
-                if (isInventoryLinked)
-                  Text(
-                    isUnlimited ? 'Left: —' : 'Left: $servings',
-                    style: TextStyle(
-                      color: Colors.grey.shade700,
-                      fontWeight: FontWeight.w700,
-                      fontSize: 11,
-                    ),
-                  ),
-              ],
-            ),
-            const Spacer(),
-            // Initials placeholder (vertically centered with equal spacing)
-            if (imageUrl.isEmpty && initials.isNotEmpty)
-              Expanded(
-                child: Center(
-                  child: FittedBox(
-                    fit: BoxFit.contain,
-                    child: ShaderMask(
-                      shaderCallback: (bounds) => LinearGradient(
-                        colors: [
-                          Colors.blue.shade400,
-                          Colors.blue.shade700,
-                        ],
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                      ).createShader(bounds),
-                      child: Text(
-                        initials,
-                        style: const TextStyle(
-                          fontSize: 56,
-                          fontWeight: FontWeight.w900,
-                          color: Colors.white,
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            if (imageUrl.isNotEmpty) const Spacer(),
-            Text(
-              '₱${price.toStringAsFixed(2)}',
-              style: const TextStyle(
-                fontSize: 15,
-                fontWeight: FontWeight.w900,
-                color: Colors.green,
-              ),
-            ),
-            SizedBox(height: isShortHeight ? 6 : 8),
-            if (isAvailable || quantityInCart > 0)
-              SizedBox(
-                width: double.infinity,
-                child: quantityInCart <= 0
-                    ? SizedBox(
-                        height: isShortHeight ? 28 : 30,
-                        child: FilledButton(
-                          onPressed: canAdd ? onIncrement : null,
-                          style: FilledButton.styleFrom(
-                            padding: EdgeInsets.zero,
-                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                            visualDensity: VisualDensity.compact,
+            Expanded(
+              child: AspectRatio(
+                aspectRatio: 0.92,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(16),
+                  child: Container(
+                    width: double.infinity,
+                    color: theme.colorScheme.surface,
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        if (imageUrl.isNotEmpty)
+                          Image.network(
+                            imageUrl,
+                            fit: BoxFit.cover,
+                            alignment: Alignment(imageAlignmentX, imageAlignmentY),
+                            errorBuilder: (context, error, stackTrace) => Container(
+                              color: theme.colorScheme.surfaceVariant,
+                              alignment: Alignment.center,
+                              child: Text(
+                                'Image not available',
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                  color: theme.colorScheme.onSurfaceVariant,
+                                ),
+                              ),
+                            ),
+                          )
+                        else
+                          Container(
+                            color: theme.colorScheme.surfaceVariant,
+                            alignment: Alignment.center,
+                            child: Text(
+                              initials,
+                              style: theme.textTheme.displaySmall?.copyWith(
+                                color: theme.colorScheme.primary,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
                           ),
-                          child: const Text(
-                            'Add to cart',
-                            style: TextStyle(
-                              fontSize: 12,
+                        Container(
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              colors: [
+                                Theme.of(context).colorScheme.onSurface.withOpacity(0.0),
+                                Theme.of(context).colorScheme.onSurface.withOpacity(0.55),
+                              ],
+                              begin: Alignment.topCenter,
+                              end: Alignment.bottomCenter,
+                            ),
+                          ),
+                        ),
+                        Positioned(
+                          top: 8,
+                          right: 12,
+                          child: Container(
+                            padding: const EdgeInsets.all(6),
+                            decoration: BoxDecoration(
+                              color: theme.colorScheme.onSurface.withOpacity(0.6),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Container(
+                              width: 10,
+                              height: 10,
+                              decoration: BoxDecoration(
+                                color: isAvailable
+                                    ? theme.colorScheme.secondary
+                                    : theme.colorScheme.error,
+                                shape: BoxShape.circle,
+                              ),
+                            ),
+                          ),
+                        ),
+                        Positioned(
+                          left: 0,
+                          right: 0,
+                          bottom: 0,
+                          child: Container(
+                            height: isShortHeight ? 44 : 52,
+                            padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+                            decoration: BoxDecoration(
+                              gradient: LinearGradient(
+                                colors: [
+                                  theme.colorScheme.onSurface.withOpacity(0.08),
+                                  theme.colorScheme.onSurface.withOpacity(0.75),
+                                ],
+                                begin: Alignment.topCenter,
+                                end: Alignment.bottomCenter,
+                              ),
+                            ),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              crossAxisAlignment: CrossAxisAlignment.center,
+                              children: [
+                                Expanded(
+                                  child: SizedBox(
+                                    height: double.infinity,
+                                    child: Align(
+                                      alignment: Alignment.centerLeft,
+                                      child: _MarqueeText(
+                                        text: name,
+                                        style: theme.textTheme.bodyLarge?.copyWith(
+                                          color: theme.colorScheme.onPrimary,
+                                          fontWeight: FontWeight.w800,
+                                        ) ?? TextStyle(
+                                          color: theme.colorScheme.onPrimary,
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w800,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Text(
+                                  '₱${price.toStringAsFixed(2)}',
+                                  style: theme.textTheme.bodyLarge?.copyWith(
+                                    color: theme.colorScheme.secondary,
+                                    fontWeight: FontWeight.w900,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            SizedBox(height: isShortHeight ? 8 : 10),
+            SizedBox(
+              width: double.infinity,
+              child: quantityInCart > 0
+                  ? Container(
+                      height: isShortHeight ? 28 : 30,
+                      decoration: BoxDecoration(
+                        color: theme.colorScheme.surface,
+                        borderRadius: BorderRadius.circular(999),
+                        border: Border.all(color: theme.colorScheme.outline),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          IconButton(
+                            visualDensity: VisualDensity.compact,
+                            padding: EdgeInsets.zero,
+                            onPressed: onDecrement,
+                            icon: const Icon(Icons.remove),
+                          ),
+                          Text(
+                            quantityInCart.toString(),
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                          IconButton(
+                            visualDensity: VisualDensity.compact,
+                            padding: EdgeInsets.zero,
+                            onPressed: canAdd ? onIncrement : null,
+                            icon: const Icon(Icons.add),
+                          ),
+                        ],
+                      ),
+                    )
+                  : isAvailable
+                      ? SizedBox(
+                          height: isShortHeight ? 28 : 30,
+                          child: FilledButton(
+                            onPressed: canAdd ? onIncrement : null,
+                            style: FilledButton.styleFrom(
+                              backgroundColor: theme.colorScheme.primary,
+                              foregroundColor: theme.colorScheme.onPrimary,
+                              minimumSize: Size.zero,
+                              padding: const EdgeInsets.symmetric(horizontal: 10),
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              visualDensity: VisualDensity.compact,
+                            ),
+                            child: const Text(
+                              'Add to cart',
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          ),
+                        )
+                      : Container(
+                          height: isShortHeight ? 28 : 30,
+                          decoration: BoxDecoration(
+                            color: theme.colorScheme.onSurface.withOpacity(0.08),
+                            borderRadius: BorderRadius.circular(999),
+                            border: Border.all(
+                              color: theme.colorScheme.onSurface.withOpacity(0.16),
+                            ),
+                          ),
+                          alignment: Alignment.center,
+                          child: Text(
+                            'Unavailable',
+                            style: theme.textTheme.labelSmall?.copyWith(
+                              color: theme.colorScheme.onSurfaceVariant,
                               fontWeight: FontWeight.w800,
                             ),
                           ),
                         ),
-                      )
-                    : Container(
-                        height: isShortHeight ? 28 : 30,
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(999),
-                          border: Border.all(color: Colors.black12),
-                        ),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            IconButton(
-                              visualDensity: VisualDensity.compact,
-                              padding: EdgeInsets.zero,
-                              onPressed: onDecrement,
-                              icon: const Icon(Icons.remove),
-                            ),
-                            Text(
-                              quantityInCart.toString(),
-                              style: const TextStyle(
-                                fontWeight: FontWeight.w900,
-                              ),
-                            ),
-                            IconButton(
-                              visualDensity: VisualDensity.compact,
-                              padding: EdgeInsets.zero,
-                              onPressed: canAdd ? onIncrement : null,
-                              icon: const Icon(Icons.add),
-                            ),
-                          ],
-                        ),
-                      ),
-              ),
+            ),
           ],
         ),
       ),
+    );
+  }
+}
+
+class _MarqueeText extends StatefulWidget {
+  final String text;
+  final TextStyle style;
+  final double velocity;
+  final double gap;
+
+  const _MarqueeText({
+    Key? key,
+    required this.text,
+    required this.style,
+    this.velocity = 40,
+    this.gap = 24,
+  }) : super(key: key);
+
+  @override
+  State<_MarqueeText> createState() => _MarqueeTextState();
+}
+
+class _MarqueeTextState extends State<_MarqueeText>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+  double _scrollWidth = 0;
+  bool _needsScroll = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(vsync: this);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _updateScroll(double textWidth, double maxWidth) {
+    final needsScroll = textWidth > maxWidth;
+    if (!needsScroll) {
+      if (_controller.isAnimating) {
+        _controller.stop();
+      }
+      if (_needsScroll) {
+        setState(() {
+          _needsScroll = false;
+        });
+      }
+      return;
+    }
+
+    final targetWidth = textWidth + widget.gap;
+    if (_scrollWidth == targetWidth && _needsScroll) return;
+
+    _scrollWidth = targetWidth;
+    _needsScroll = true;
+    _controller.duration = Duration(
+      milliseconds:
+          (_scrollWidth / widget.velocity * 1000).clamp(2500, 15000).toInt(),
+    );
+    _controller.repeat();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final textPainter = TextPainter(
+          text: TextSpan(text: widget.text, style: widget.style),
+          maxLines: 1,
+          textDirection: TextDirection.ltr,
+        )..layout();
+
+        final needsScroll = textPainter.width > constraints.maxWidth;
+        final textWidth = textPainter.width;
+        final targetWidth = textWidth + widget.gap;
+
+        if (needsScroll) {
+          if (_scrollWidth != targetWidth || !_needsScroll) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (!mounted) return;
+              setState(() {
+                _scrollWidth = targetWidth;
+                _needsScroll = true;
+                _controller.duration = Duration(
+                  milliseconds:
+                      (_scrollWidth / widget.velocity * 1000).clamp(2500, 15000).toInt(),
+                );
+                _controller.repeat();
+              });
+            });
+          }
+        } else if (_needsScroll) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted) return;
+            setState(() {
+              _needsScroll = false;
+              _controller.stop();
+            });
+          });
+        }
+
+        if (!needsScroll) {
+          return Text(
+            widget.text,
+            style: widget.style,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          );
+        }
+
+        return ClipRect(
+          child: SizedBox(
+            width: constraints.maxWidth,
+            child: OverflowBox(
+              maxWidth: double.infinity,
+              alignment: Alignment.centerLeft,
+              child: AnimatedBuilder(
+                animation: _controller,
+                builder: (context, child) {
+                  final offset = _controller.value * targetWidth;
+                  return Transform.translate(
+                    offset: Offset(-offset, 0),
+                    child: child,
+                  );
+                },
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    SizedBox(
+                      width: textWidth,
+                      child: Text(
+                        widget.text,
+                        style: widget.style,
+                        maxLines: 1,
+                        softWrap: false,
+                        overflow: TextOverflow.visible,
+                      ),
+                    ),
+                    SizedBox(width: widget.gap),
+                    SizedBox(
+                      width: textWidth,
+                      child: Text(
+                        widget.text,
+                        style: widget.style,
+                        maxLines: 1,
+                        softWrap: false,
+                        overflow: TextOverflow.visible,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 }
@@ -1904,6 +2208,7 @@ class _CartItemTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     final qty = (cartItem['quantity'] as int?) ??
         int.tryParse((cartItem['quantity'] ?? '').toString()) ??
         1;
@@ -1916,10 +2221,17 @@ class _CartItemTile extends StatelessWidget {
             (qty * price);
 
     return ListTile(
-      title: Text(cartItem['name'] ?? ''),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      title: Text(
+        cartItem['name'] ?? '',
+        style: theme.textTheme.bodyMedium,
+      ),
       subtitle: Text(
         '₱${subtotal.toStringAsFixed(2)}',
-        style: const TextStyle(fontWeight: FontWeight.bold),
+        style: theme.textTheme.bodySmall?.copyWith(
+          fontWeight: FontWeight.bold,
+          color: theme.colorScheme.onSurfaceVariant,
+        ),
       ),
       trailing: SingleChildScrollView(
         scrollDirection: Axis.horizontal,
@@ -1929,21 +2241,25 @@ class _CartItemTile extends StatelessWidget {
             IconButton(
               icon: const Icon(Icons.remove_circle_outline),
               onPressed: qty <= 1 ? null : () => onQuantityChanged(qty - 1),
+              color: theme.colorScheme.primary,
             ),
             SizedBox(
               width: 28,
               child: Text(
                 qty.toString(),
                 textAlign: TextAlign.center,
-                style: const TextStyle(fontWeight: FontWeight.w700),
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
               ),
             ),
             IconButton(
               icon: const Icon(Icons.add_circle_outline),
               onPressed: () => onQuantityChanged(qty + 1),
+              color: theme.colorScheme.primary,
             ),
             IconButton(
-              icon: const Icon(Icons.delete, color: Colors.red),
+              icon: Icon(Icons.delete, color: theme.colorScheme.error),
               onPressed: onRemove,
             ),
           ],

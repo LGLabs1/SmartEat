@@ -59,6 +59,7 @@ class _DamagedItemsScreenState extends State<DamagedItemsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     return Scaffold(
       appBar: AppBar(
         title: const Text('Damaged Items'),
@@ -110,7 +111,7 @@ class _DamagedItemsScreenState extends State<DamagedItemsScreen> {
                         elevation: 0,
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(16),
-                          side: BorderSide(color: Colors.grey.shade200),
+                          side: BorderSide(color: theme.colorScheme.outline),
                         ),
                         child: Padding(
                           padding: const EdgeInsets.all(16),
@@ -123,7 +124,7 @@ class _DamagedItemsScreenState extends State<DamagedItemsScreen> {
                                     Text(
                                       'Total Damaged Cost',
                                       style: TextStyle(
-                                        color: Colors.grey.shade600,
+                                        color: theme.colorScheme.onSurfaceVariant,
                                       ),
                                     ),
                                     const SizedBox(height: 6),
@@ -183,7 +184,7 @@ class _DamagedItemsScreenState extends State<DamagedItemsScreen> {
                                     Icon(
                                       Icons.inventory_2_outlined,
                                       size: 56,
-                                      color: Colors.grey.shade400,
+                                      color: theme.colorScheme.onSurfaceVariant,
                                     ),
                                     const SizedBox(height: 12),
                                     const Text(
@@ -218,9 +219,10 @@ class _DamagedItemsScreenState extends State<DamagedItemsScreen> {
 
                                   return Card(
                                     elevation: 0,
+                                    color: theme.colorScheme.surface,
                                     shape: RoundedRectangleBorder(
                                       borderRadius: BorderRadius.circular(16),
-                                      side: BorderSide(color: Colors.grey.shade200),
+                                      side: BorderSide(color: theme.colorScheme.outline),
                                     ),
                                     child: Padding(
                                       padding: const EdgeInsets.all(16),
@@ -245,7 +247,7 @@ class _DamagedItemsScreenState extends State<DamagedItemsScreen> {
                                                     Text(
                                                       'Quantity: $qty$unit',
                                                       style: TextStyle(
-                                                        color: Colors.grey.shade700,
+                                                        color: theme.colorScheme.onSurfaceVariant,
                                                       ),
                                                     ),
                                                   ],
@@ -263,14 +265,14 @@ class _DamagedItemsScreenState extends State<DamagedItemsScreen> {
                                           const SizedBox(height: 12),
                                           Text(
                                             'Reason: ${reason.isEmpty ? 'Damaged item' : reason}',
-                                            style: TextStyle(color: Colors.grey.shade700),
+                                            style: TextStyle(color: theme.colorScheme.onSurfaceVariant),
                                           ),
                                           if (dateLabel.isNotEmpty) ...[
                                             const SizedBox(height: 8),
                                             Text(
                                               'Recorded: $dateLabel',
                                               style: TextStyle(
-                                                color: Colors.grey.shade500,
+                                                color: theme.colorScheme.onSurfaceVariant,
                                                 fontSize: 12,
                                               ),
                                             ),

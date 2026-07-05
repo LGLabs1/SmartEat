@@ -161,7 +161,7 @@ CRITICAL RULES:
  */
 exports.chat = async (req, res) => {
   try {
-    const { message, history = [] } = req.body;
+    const { message, history = [], context } = req.body;
     const eateryId = await getEateryId(req);
 
     if (!message || typeof message !== 'string') {
@@ -184,12 +184,23 @@ exports.chat = async (req, res) => {
       }
     }
 
-    // Fetch context data
-    const contextData = await fetchRestaurantContext(eateryId);
+    // Fetch context data (use client-provided context if present, otherwise fetch from Firebase)
+    let contextData;
+    if (context && typeof context === 'string' && context.trim()) {
+      console.log('✓ Using client-provided business context');
+      contextData = context;
+    } else {
+      contextData = await fetchRestaurantContext(eateryId);
+    }
 
     // Build messages
+    const systemPromptWithContext = SYSTEM_PROMPT + 
+      (contextData.includes('--- RESTAURANT CURRENT DATA') 
+        ? contextData 
+        : `\n\n--- RESTAURANT CURRENT DATA ---\n${contextData}\n---------------------------------------------`);
+
     const messages = [
-      { role: 'system', content: SYSTEM_PROMPT + contextData }
+      { role: 'system', content: systemPromptWithContext }
     ];
 
     // Add limited history (last 5 turns for faster context)
