@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 
 import '../services/api_service.dart';
 import '../services/auth_provider.dart';
+import 'admin_tab_index.dart';
 
 class FinanceScreen extends StatefulWidget {
   const FinanceScreen({
@@ -37,7 +38,53 @@ class _FinanceScreenState extends State<FinanceScreen>
   List<Map<String, dynamic>> _expenses = const [];
   List<Map<String, dynamic>> _payables = const [];
 
+  // Expense origin filter: 'all', 'manual' or 'inventory_purchase'.
+  String _expenseSourceFilter = 'all';
+
+  static const String _manualSource = 'manual';
+  static const String _inventorySource = 'inventory_purchase';
+
+  String _expenseSource(Map<String, dynamic> e) {
+    final src = (e['source'] ?? '').toString().trim().toLowerCase();
+    if (src.isEmpty || src == _manualSource) return _manualSource;
+    return src;
+  }
+
+  bool _isLinkedPurchase(Map<String, dynamic> e) =>
+      _expenseSource(e) == _inventorySource;
+
   String? _eateryId;
+
+  // Memoized so rebuilds don't tear down and re-establish the Firestore
+  // listeners used by the payroll section.
+  Stream<QuerySnapshot<Map<String, dynamic>>>? _staffUsersStream;
+  String _staffUsersStreamKey = '';
+  Stream<QuerySnapshot<Map<String, dynamic>>>? _staffProfilesStream;
+  String _staffProfilesStreamKey = '';
+
+  Stream<QuerySnapshot<Map<String, dynamic>>> _staffUsersFor(String eateryId) {
+    if (_staffUsersStream == null || _staffUsersStreamKey != eateryId) {
+      _staffUsersStreamKey = eateryId;
+      _staffUsersStream = FirebaseFirestore.instance
+          .collection('users')
+          .where('eateryId', isEqualTo: eateryId)
+          .snapshots();
+    }
+    return _staffUsersStream!;
+  }
+
+  Stream<QuerySnapshot<Map<String, dynamic>>> _staffProfilesFor(
+      String eateryId) {
+    if (_staffProfilesStream == null || _staffProfilesStreamKey != eateryId) {
+      _staffProfilesStreamKey = eateryId;
+      _staffProfilesStream = FirebaseFirestore.instance
+          .collection('eateries')
+          .doc(eateryId)
+          .collection('staff_profiles')
+          .snapshots();
+    }
+    return _staffProfilesStream!;
+  }
 
   String _searchQuery = '';
   VoidCallback? _globalSearchListener;
@@ -219,6 +266,15 @@ class _FinanceScreenState extends State<FinanceScreen>
     'Other',
   ];
 
+  // Payment methods for finance entries (mirrors common business payment rails)
+  static const List<String> _paymentMethods = [
+    'Cash',
+    'Bank Transfer',
+    'Card',
+    'Mobile Money',
+    'Other',
+  ];
+
   // Predefined bill categories for payables
   static const List<String> _billCategories = [
     'Rent',
@@ -278,9 +334,11 @@ class _FinanceScreenState extends State<FinanceScreen>
     if (!_isAdmin) return;
 
     String selectedCategory = _expenseCategories[0];
+    String selectedPaymentMethod = _paymentMethods.first;
     final nameController = TextEditingController();
     final notesController = TextEditingController();
     final amountController = TextEditingController();
+    final supplierController = TextEditingController();
     DateTime selectedDate = DateTime.now();
 
     final created = await showDialog<bool>(
@@ -386,6 +444,40 @@ class _FinanceScreenState extends State<FinanceScreen>
                         ),
                       ),
                       const SizedBox(height: 12),
+                      // Supplier / vendor (optional)
+                      TextField(
+                        controller: supplierController,
+                        decoration: const InputDecoration(
+                          labelText: 'Supplier / Vendor (optional)',
+                          hintText: 'e.g., Local market',
+                          prefixIcon: Icon(Icons.storefront_outlined),
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      // Payment method
+                      DropdownButtonFormField<String>(
+                        value: selectedPaymentMethod,
+                        isExpanded: true,
+                        decoration: const InputDecoration(
+                          labelText: 'Payment Method',
+                          prefixIcon: Icon(Icons.payments_outlined),
+                          border: OutlineInputBorder(),
+                        ),
+                        items: _paymentMethods.map((method) {
+                          return DropdownMenuItem(
+                            value: method,
+                            child: Text(method),
+                          );
+                        }).toList(),
+                        onChanged: (v) {
+                          if (v == null) return;
+                          setLocalState(() {
+                            selectedPaymentMethod = v;
+                          });
+                        },
+                      ),
+                      const SizedBox(height: 12),
                       // Notes field
                       TextField(
                         controller: notesController,
@@ -448,6 +540,9 @@ class _FinanceScreenState extends State<FinanceScreen>
         amount: double.parse(amountController.text.trim()),
         date: selectedDate,
         notes: notesController.text.trim(),
+        supplierName: supplierController.text.trim(),
+        paymentMethod: selectedPaymentMethod,
+        paymentStatus: 'paid',
       );
 
       // Optimistic update - add to local list without full refresh
@@ -1657,10 +1752,30 @@ class _FinanceScreenState extends State<FinanceScreen>
   }
 
   Widget _buildExpensesTab() {
-    final items = _filterByQuery(
+    final searched = _filterByQuery(
       _expenses,
-      fields: const ['name', 'category', 'notes'],
+      fields: const [
+        'name',
+        'category',
+        'notes',
+        'supplierName',
+        'receiptNumber',
+      ],
     );
+
+    final manualCount = searched.where((e) => !_isLinkedPurchase(e)).length;
+    final linkedCount = searched.where(_isLinkedPurchase).length;
+
+    final items = searched.where((e) {
+      switch (_expenseSourceFilter) {
+        case _inventorySource:
+          return _isLinkedPurchase(e);
+        case _manualSource:
+          return !_isLinkedPurchase(e);
+        default:
+          return true;
+      }
+    }).toList();
 
     final total = items.fold<double>(
       0,
@@ -1672,27 +1787,80 @@ class _FinanceScreenState extends State<FinanceScreen>
       children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-          child: Row(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Expanded(
-                child: Text(
-                  'Total: ${_fmtMoney(total)}',
-                  style: const TextStyle(fontWeight: FontWeight.w700),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Total: ${_fmtMoney(total)}',
+                      style: const TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                  if (_isAdmin)
+                    FilledButton.icon(
+                      onPressed: _showAddExpenseDialog,
+                      icon: const Icon(Icons.add),
+                      label: const Text('Add'),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: ChoiceChip(
+                        label: Text('All (${searched.length})'),
+                        selected: _expenseSourceFilter == 'all',
+                        onSelected: (_) => setState(
+                          () => _expenseSourceFilter = 'all',
+                        ),
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: ChoiceChip(
+                        avatar: const Icon(Icons.edit_note, size: 16),
+                        label: Text('Manual ($manualCount)'),
+                        selected: _expenseSourceFilter == _manualSource,
+                        onSelected: (_) => setState(
+                          () => _expenseSourceFilter = _manualSource,
+                        ),
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: ChoiceChip(
+                        avatar: const Icon(Icons.inventory_2_outlined, size: 16),
+                        label: Text('Inventory ($linkedCount)'),
+                        selected: _expenseSourceFilter == _inventorySource,
+                        onSelected: (_) => setState(
+                          () => _expenseSourceFilter = _inventorySource,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
-              if (_isAdmin)
-                FilledButton.icon(
-                  onPressed: _showAddExpenseDialog,
-                  icon: const Icon(Icons.add),
-                  label: const Text('Add'),
-                ),
             ],
           ),
         ),
         const Divider(height: 1),
         Expanded(
           child: items.isEmpty
-              ? const Center(child: Text('No expenses yet'))
+              ? Center(
+                  child: Text(
+                    _expenseSourceFilter == _inventorySource
+                        ? 'No inventory purchases posted yet'
+                        : _expenseSourceFilter == _manualSource
+                            ? 'No manual expenses yet'
+                            : 'No expenses yet',
+                  ),
+                )
               : ListView.separated(
                   padding: const EdgeInsets.all(16),
                   itemCount: items.length,
@@ -1707,6 +1875,21 @@ class _FinanceScreenState extends State<FinanceScreen>
                         : 0.0;
                     final date = _asDate(e['date']) ?? _asDate(e['createdAt']);
                     final notes = (e['notes'] ?? '').toString();
+                    final supplier =
+                        (e['supplierName'] ?? '').toString().trim();
+                    final receiptNumber =
+                        (e['receiptNumber'] ?? '').toString().trim();
+                    final paymentMethod =
+                        (e['paymentMethod'] ?? '').toString().trim();
+                    final linked = _isLinkedPurchase(e);
+
+                    final details = <String>[
+                      if (date != null) _fmtDate(date),
+                      if (category.trim().isNotEmpty) category,
+                      if (supplier.isNotEmpty) 'Vendor: $supplier',
+                      if (receiptNumber.isNotEmpty) 'Ref: $receiptNumber',
+                      if (paymentMethod.isNotEmpty) paymentMethod,
+                    ].join(' • ');
 
                     return Card(
                       elevation: 0,
@@ -1715,13 +1898,56 @@ class _FinanceScreenState extends State<FinanceScreen>
                         side: BorderSide(color: Colors.grey.shade200),
                       ),
                       child: ListTile(
+                        leading: Icon(
+                          linked
+                              ? Icons.inventory_2_outlined
+                              : Icons.receipt_long_outlined,
+                          color: linked
+                              ? Colors.blue.shade600
+                              : Colors.grey.shade600,
+                        ),
+                        isThreeLine: linked || notes.trim().isNotEmpty,
                         title: Text(name.trim().isEmpty
                             ? (category.isEmpty ? 'Expense' : category)
                             : name),
-                        subtitle: Text(
-                          '${date == null ? '' : _fmtDate(date)}${category.trim().isEmpty ? '' : ' • $category'}${notes.trim().isEmpty ? '' : '\n$notes'}',
-                          maxLines: 3,
-                          overflow: TextOverflow.ellipsis,
+                        subtitle: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            if (details.isNotEmpty)
+                              Text(
+                                details,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            if (notes.trim().isNotEmpty)
+                              Text(
+                                notes,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            if (linked)
+                              Padding(
+                                padding: const EdgeInsets.only(top: 4),
+                                child: Row(
+                                  children: [
+                                    Icon(
+                                      Icons.link,
+                                      size: 12,
+                                      color: Colors.blue.shade600,
+                                    ),
+                                    const SizedBox(width: 4),
+                                    Text(
+                                      'Auto-posted from inventory purchase',
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        color: Colors.blue.shade700,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                          ],
                         ),
                         trailing: Row(
                           mainAxisSize: MainAxisSize.min,
@@ -1733,49 +1959,61 @@ class _FinanceScreenState extends State<FinanceScreen>
                             ),
                             if (_isAdmin && id.isNotEmpty) ...[
                               const SizedBox(width: 8),
-                              IconButton(
-                                tooltip: 'Delete',
-                                onPressed: () async {
-                                  final ok = await showDialog<bool>(
-                                    context: context,
-                                    builder: (context) {
-                                      return AlertDialog(
-                                        title: const Text('Delete expense?'),
-                                        content: const Text(
-                                            'This action cannot be undone.'),
-                                        actions: [
-                                          TextButton(
-                                            onPressed: () =>
-                                                Navigator.of(context)
-                                                    .pop(false),
-                                            child: const Text('Cancel'),
-                                          ),
-                                          FilledButton(
-                                            onPressed: () =>
-                                                Navigator.of(context).pop(true),
-                                            child: const Text('Delete'),
-                                          ),
-                                        ],
-                                      );
-                                    },
-                                  );
-                                  if (ok != true) return;
-                                  try {
-                                    await ApiService.deleteExpense(id);
-                                    // Optimistic update - remove from local list
-                                    _removeExpenseFromLocal(id);
-                                  } catch (err) {
-                                    if (!context.mounted) return;
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      SnackBar(
-                                        content: Text(
-                                            'Failed to delete expense: $err'),
-                                      ),
+                              if (linked)
+                                Tooltip(
+                                  message:
+                                      'Linked to an inventory purchase. Delete the purchase receipt instead to keep the books consistent.',
+                                  child: Icon(
+                                    Icons.lock_outline,
+                                    color: Colors.grey.shade500,
+                                  ),
+                                )
+                              else
+                                IconButton(
+                                  tooltip: 'Delete',
+                                  onPressed: () async {
+                                    final ok = await showDialog<bool>(
+                                      context: context,
+                                      builder: (context) {
+                                        return AlertDialog(
+                                          title: const Text('Delete expense?'),
+                                          content: const Text(
+                                              'This action cannot be undone.'),
+                                          actions: [
+                                            TextButton(
+                                              onPressed: () => Navigator.of(
+                                                      context)
+                                                  .pop(false),
+                                              child: const Text('Cancel'),
+                                            ),
+                                            FilledButton(
+                                              onPressed: () => Navigator.of(
+                                                      context)
+                                                  .pop(true),
+                                              child: const Text('Delete'),
+                                            ),
+                                          ],
+                                        );
+                                      },
                                     );
-                                  }
-                                },
-                                icon: const Icon(Icons.delete_outline),
-                              ),
+                                    if (ok != true) return;
+                                    try {
+                                      await ApiService.deleteExpense(id);
+                                      // Optimistic update - remove from local list
+                                      _removeExpenseFromLocal(id);
+                                    } catch (err) {
+                                      if (!context.mounted) return;
+                                      ScaffoldMessenger.of(context)
+                                          .showSnackBar(
+                                        SnackBar(
+                                          content: Text(
+                                              'Failed to delete expense: $err'),
+                                        ),
+                                      );
+                                    }
+                                  },
+                                  icon: const Icon(Icons.delete_outline),
+                                ),
                             ],
                           ],
                         ),
@@ -2280,7 +2518,7 @@ class _FinanceScreenState extends State<FinanceScreen>
           InkWell(
             onTap: () {
               // Navigate to Staff tab (index 5)
-              widget.onNavigate?.call(5);
+              widget.onNavigate?.call(AdminTabIndex.staff);
             },
             borderRadius: BorderRadius.circular(8),
             child: const Padding(
@@ -2311,10 +2549,7 @@ class _FinanceScreenState extends State<FinanceScreen>
             )
           else
             StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-              stream: FirebaseFirestore.instance
-                  .collection('users')
-                  .where('eateryId', isEqualTo: _eateryId)
-                  .snapshots(),
+              stream: _staffUsersFor(_eateryId!),
               builder: (context, usersSnap) {
                 if (usersSnap.connectionState == ConnectionState.waiting) {
                   return const Padding(
@@ -2360,11 +2595,7 @@ class _FinanceScreenState extends State<FinanceScreen>
                 };
 
                 return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-                  stream: FirebaseFirestore.instance
-                      .collection('eateries')
-                      .doc(_eateryId)
-                      .collection('staff_profiles')
-                      .snapshots(),
+                  stream: _staffProfilesFor(_eateryId!),
                   builder: (context, profilesSnap) {
                     if (profilesSnap.connectionState ==
                         ConnectionState.waiting) {
@@ -2423,7 +2654,7 @@ class _FinanceScreenState extends State<FinanceScreen>
                           child: InkWell(
                             onTap: () {
                               // Navigate to Staff tab (index 5)
-                              widget.onNavigate?.call(5);
+                              widget.onNavigate?.call(AdminTabIndex.staff);
                             },
                             borderRadius: BorderRadius.circular(12),
                             child: ListTile(

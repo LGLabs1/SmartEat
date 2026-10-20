@@ -33,7 +33,12 @@ service cloud.firestore {
     }
 
     function isApprovedStaff() {
-      return hasUserDoc() && (userDoc().approved == true || !(userDoc().approved is bool));
+      return hasUserDoc() && (
+        userDoc().approved == true
+        || userDoc().role == 'staff'
+        || userDoc().role == 'admin'
+        || userDoc().isAdmin == true
+      );
     }
 
     function canAccessEateryData(docEateryId) {
@@ -44,8 +49,54 @@ service cloud.firestore {
 
     function canAccessEatery(eateryId) {
       return hasUserDoc()
-        && eateryId == userEateryId()
+        && userDoc().eateryId == eateryId
         && (isAdmin() || isApprovedStaff());
+    }
+
+    function isValidSageBriefingCreate(eateryId) {
+      return isAdmin()
+        && eateryId == userEateryId()
+        && request.resource.data.eateryId == eateryId
+
+        && request.resource.data.keys().hasAll([
+          'eateryId',
+          'title',
+          'summary',
+          'recommendation',
+          'businessHealth',
+          'detailText',
+          'generatedAt',
+          'period',
+          'snapshot',
+          'schemaVersion'
+        ])
+
+        && request.resource.data.keys().hasOnly([
+          'eateryId',
+          'title',
+          'summary',
+          'recommendation',
+          'businessHealth',
+          'detailText',
+          'generatedAt',
+          'period',
+          'snapshot',
+          'schemaVersion'
+        ])
+
+        && request.resource.data.title is string
+        && request.resource.data.summary is string
+        && request.resource.data.recommendation is string
+        && request.resource.data.businessHealth is number
+        && request.resource.data.detailText is string
+        && request.resource.data.generatedAt is timestamp
+        && request.resource.data.snapshot is map
+        && request.resource.data.schemaVersion == 1
+        && request.resource.data.period in [
+          'morning',
+          'afternoon',
+          'evening'
+        ];
     }
 
     // NEW: Staff/admin can complete orders
@@ -172,11 +223,15 @@ service cloud.firestore {
     match /eateries/{eateryId}/orders/{docId} {
       allow read: if canAccessEatery(eateryId);
 
+      // An order may be created as 'pending' (POS "Open Tab") or created
+      // straight into 'completed' (POS "Complete"). Both are single writes that
+      // deduct stock in the same transaction, so allowing either here keeps
+      // that guarantee — completing an order afterwards would deduct twice.
       allow create: if canAccessEatery(eateryId)
         && request.resource.data.eateryId == eateryId
         && request.resource.data.createdBy == request.auth.uid
         && request.resource.data.createdByName is string
-        && request.resource.data.status == 'pending';
+        && request.resource.data.status in ['pending', 'completed'];
 
       allow update: if isAdmin()
         && eateryId == userEateryId();
@@ -210,6 +265,18 @@ service cloud.firestore {
       // Staff/admin stock-only updates
       allow update: if canAccessEatery(eateryId)
         && isInventoryStockOnlyUpdate(eateryId);
+    }
+
+    match /eateries/{eateryId}/damaged_items/{docId} {
+      allow read: if canAccessEatery(eateryId);
+      allow create: if canAccessEatery(eateryId)
+        && request.resource.data.eateryId == eateryId
+        && request.resource.data.inventoryItemId is string
+        && request.resource.data.quantity is number
+        && request.resource.data.reason is string;
+      allow update: if false;
+      allow delete: if isAdmin()
+        && eateryId == userEateryId();
     }
 
     match /eateries/{eateryId}/inventory_usage/{docId} {
@@ -254,6 +321,21 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    match /eateries/{eateryId}/sage_briefings/{docId} {
+      // Approved staff and admins can view briefing history
+      allow read: if canAccessEatery(eateryId);
+
+      // Only admins can generate/save Sage Briefings
+      allow create: if isValidSageBriefingCreate(eateryId);
+
+      // Briefings are historical records and should never be edited
+      allow update: if false;
+
+      // Only admins may delete briefing records
+      allow delete: if isAdmin()
+        && eateryId == userEateryId();
+    }
+
     match /eateries/{eateryId}/analytics_daily/{docId} {
       allow read: if canAccessEatery(eateryId);
       allow create, update, delete: if isAdmin() && eateryId == userEateryId();
@@ -266,10 +348,20 @@ service cloud.firestore {
 
     match /eateries/{eateryId}/expenses/{docId} {
       allow read: if canAccessEatery(eateryId);
+      // Admins may record any expense. Any eatery member may create the
+      // auto-posted expense that mirrors an inventory purchase (GRN) so that
+      // recording goods received always produces a matching cost entry.
       allow create: if isSignedIn()
-        && isAdmin()
         && eateryId == userEateryId()
-        && request.resource.data.eateryId == eateryId;
+        && request.resource.data.eateryId == eateryId
+        && (
+          isAdmin()
+          || (
+            request.resource.data.source == 'inventory_purchase'
+            && request.resource.data.linkedPurchaseId is string
+            && request.resource.data.amount > 0
+          )
+        );
       allow update, delete: if isSignedIn()
         && isAdmin()
         && eateryId == userEateryId()
@@ -322,11 +414,21 @@ service cloud.firestore {
     }
 
     match /orders/{docId} {
-      allow read, write: if false;
+      // Temporary read compatibility for records awaiting migration.
+      allow read: if canAccessEateryData(resource.data.eateryId);
+      allow write: if false;
     }
 
     match /inventory/{docId} {
-      allow read, write: if false;
+      // Temporary read compatibility for records awaiting migration.
+      allow read: if canAccessEateryData(resource.data.eateryId);
+      allow write: if false;
+    }
+
+    match /damaged_items/{docId} {
+      // Temporary read compatibility for records awaiting migration.
+      allow read: if canAccessEateryData(resource.data.eateryId);
+      allow write: if false;
     }
 
     match /inventory_usage/{docId} {
@@ -469,12 +571,36 @@ service cloud.firestore {
 
     match /user_preferences/{userId} {
       allow read: if isSignedIn() && request.auth.uid == userId;
+
       allow create: if isSignedIn()
         && request.auth.uid == userId
-        && request.resource.data.keys().hasAll(['notificationsEnabled', 'lowStockEnabled', 'billRemindersEnabled', 'orderAlertsEnabled']);
+        && (!('userId' in request.resource.data) || request.resource.data.userId == userId)
+        && request.resource.data.keys().hasOnly([
+          'userId',
+          'notificationsEnabled',
+          'lowStockEnabled',
+          'billRemindersEnabled',
+          'orderAlertsEnabled',
+          'billReminderDays',
+          'currencySymbol',
+          'updatedAt'
+        ]);
+
       allow update: if isSignedIn()
         && request.auth.uid == userId
-        && request.auth.uid == resource.data.userId;
+        && (!('userId' in request.resource.data) || request.resource.data.userId == userId)
+        && (!('userId' in resource.data) || resource.data.userId == userId)
+        && request.resource.data.keys().hasOnly([
+          'userId',
+          'notificationsEnabled',
+          'lowStockEnabled',
+          'billRemindersEnabled',
+          'orderAlertsEnabled',
+          'billReminderDays',
+          'currencySymbol',
+          'updatedAt'
+        ]);
+
       allow delete: if false;
     }
   }

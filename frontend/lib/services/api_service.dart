@@ -1,8 +1,24 @@
 import 'dart:convert';
+import 'dart:io';
 import 'package:http/http.dart' as http;
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'firebase_service.dart';
+
+class ChatApiException implements Exception {
+  final int? statusCode;
+  final String code;
+  final String message;
+
+  const ChatApiException({
+    required this.code,
+    required this.message,
+    this.statusCode,
+  });
+
+  @override
+  String toString() => message;
+}
 
 class ApiService {
   static const String _baseUrl = 'http://localhost:3000/api';
@@ -140,6 +156,7 @@ class ApiService {
     String paymentMethod = 'cash',
     String? notes,
     String? orderId,
+    bool completeNow = false,
   }) async {
     // Calculate total amount
     double totalAmount = 0;
@@ -154,13 +171,16 @@ class ApiService {
       totalAmount += price * qty;
     }
 
+    // `completeNow` is passed through rather than implemented by creating the
+    // order and then calling completeOrder: createOrder already deducts stock
+    // in its transaction, so completing afterwards would deduct it twice.
     final order = await FirebaseService.createOrder({
       'items': items,
       'totalAmount': totalAmount,
       'paymentMethod': paymentMethod,
       'notes': notes ?? '',
-      'status': 'pending',
-    }, orderId: orderId);
+      'status': completeNow ? 'completed' : 'pending',
+    }, orderId: orderId, status: completeNow ? 'completed' : 'pending');
     return {'data': order};
   }
 
@@ -175,6 +195,13 @@ class ApiService {
   }) async {
     final orders =
         await FirebaseService.getOrders(startDate: startDate, endDate: endDate);
+    return {'data': orders};
+  }
+
+  /// All orders for the current eatery. Shares the same de-duplicated query as
+  /// the summary/item-performance helpers so one screen load fetches once.
+  static Future<Map<String, dynamic>> getAllOrders() async {
+    final orders = await FirebaseService.getOrders();
     return {'data': orders};
   }
 
@@ -241,6 +268,7 @@ class ApiService {
     required double unitCost,
     double? sellingPrice,
     String? supplier,
+    Map<String, dynamic>? extra,
   }) async {
     final item = await FirebaseService.createInventoryItem({
       'name': name,
@@ -251,6 +279,7 @@ class ApiService {
       'unitCost': unitCost,
       if (sellingPrice != null) 'sellingPrice': sellingPrice,
       'supplier': supplier ?? '',
+      ...?extra,
     });
     return {'data': item};
   }
@@ -696,6 +725,12 @@ class ApiService {
     required double amount,
     DateTime? date,
     String? notes,
+    String? supplierName,
+    String? supplierId,
+    String? receiptNumber,
+    String? paymentMethod,
+    String? paymentStatus,
+    double? taxAmount,
   }) async {
     final item = await FirebaseService.createExpense({
       'name': name,
@@ -703,8 +738,56 @@ class ApiService {
       'amount': amount,
       if (date != null) 'date': date.toIso8601String(),
       if (notes != null && notes.trim().isNotEmpty) 'notes': notes.trim(),
+      if (supplierName != null && supplierName.trim().isNotEmpty)
+        'supplierName': supplierName.trim(),
+      if (supplierId != null && supplierId.trim().isNotEmpty)
+        'supplierId': supplierId.trim(),
+      if (receiptNumber != null && receiptNumber.trim().isNotEmpty)
+        'receiptNumber': receiptNumber.trim(),
+      if (paymentMethod != null && paymentMethod.trim().isNotEmpty)
+        'paymentMethod': paymentMethod.trim(),
+      if (paymentStatus != null && paymentStatus.trim().isNotEmpty)
+        'paymentStatus': paymentStatus.trim(),
+      if (taxAmount != null && taxAmount > 0) 'taxAmount': taxAmount,
     });
     return {'data': item};
+  }
+
+  /// Auto-posts a recorded inventory purchase to finance expenses. Idempotent:
+  /// if the receipt was already posted, the existing expense is returned.
+  static Future<Map<String, dynamic>> postInventoryPurchaseExpense({
+    required String purchaseReceiptId,
+    required String receiptNumber,
+    required double total,
+    required DateTime date,
+    String? supplierName,
+    String? supplierId,
+    String? notes,
+    String category = 'Ingredients',
+    String paymentStatus = 'paid',
+    String? paymentMethod,
+    String? createdBy,
+  }) async {
+    final item = await FirebaseService.createExpenseFromPurchase(
+      purchaseReceiptId: purchaseReceiptId,
+      receiptNumber: receiptNumber,
+      total: total,
+      date: date,
+      supplierName: supplierName,
+      supplierId: supplierId,
+      notes: notes,
+      category: category,
+      paymentStatus: paymentStatus,
+      paymentMethod: paymentMethod,
+      createdBy: createdBy,
+    );
+    return {'data': item};
+  }
+
+  static Future<Map<String, dynamic>?> findLinkedPurchaseExpense(
+    String purchaseReceiptId,
+  ) {
+    return FirebaseService.findExpenseByLinkedPurchase(purchaseReceiptId);
   }
 
   static Future<Map<String, dynamic>> deleteExpense(String id) async {
@@ -831,8 +914,13 @@ class ApiService {
     List<Map<String, dynamic>>? history,
     String? context,
   }) async {
-    final token = await _getAuthToken();
-    final eateryId = await FirebaseService.getCurrentEateryId();
+    // OPTIMIZATION: token refresh and the eatery lookup run concurrently.
+    final results = await Future.wait<Object?>([
+      _getAuthToken(),
+      FirebaseService.getCurrentEateryId(),
+    ]);
+    final token = results[0] as String?;
+    final eateryId = results[1] as String?;
     final Map<String, String> headers = {
       'Content-Type': 'application/json',
     };
@@ -843,27 +931,67 @@ class ApiService {
       headers['x-eatery-id'] = eateryId;
     }
 
-    final response = await http.post(
-      Uri.parse('$_baseUrl/chatbot/chat'),
-      headers: headers,
-      body: jsonEncode({
-        'message': message,
-        'history': history ?? [],
-        if (eateryId != null) 'eateryId': eateryId,
-        if (context != null) 'context': context,
-      }),
-    );
+    late http.Response response;
+    try {
+      response = await http.post(
+        Uri.parse('$_baseUrl/chatbot/chat'),
+        headers: headers,
+        body: jsonEncode({
+          'message': message,
+          'history': history ?? [],
+          if (eateryId != null) 'eateryId': eateryId,
+          if (context != null) 'context': context,
+        }),
+      );
+    } on http.ClientException catch (error) {
+      throw ChatApiException(
+        code: 'network_unavailable',
+        message: error.message,
+      );
+    } on SocketException catch (error) {
+      throw ChatApiException(
+        code: 'network_unavailable',
+        message: error.message,
+      );
+    }
+
+    Map<String, dynamic> payload = {};
+    try {
+      final decoded = jsonDecode(response.body);
+      if (decoded is Map<String, dynamic>) payload = decoded;
+    } catch (_) {
+      // Keep a typed error even when the server or proxy returns non-JSON text.
+    }
 
     if (response.statusCode == 200) {
-      return jsonDecode(response.body);
-    } else {
-      throw Exception('Failed to send message: ${response.body}');
+      if (payload['response'] is! String ||
+          (payload['response'] as String).trim().isEmpty) {
+        throw const ChatApiException(
+          code: 'empty_response',
+          message: 'Sage returned an empty response.',
+          statusCode: 502,
+        );
+      }
+      return payload;
     }
+
+    throw ChatApiException(
+      code: (payload['code'] ?? payload['error'] ?? 'server_error').toString(),
+      message: (payload['message'] ??
+              payload['error'] ??
+              'The Sage service returned an unexpected error.')
+          .toString(),
+      statusCode: response.statusCode,
+    );
   }
 
   static Future<Map<String, dynamic>> getChatbotStatus() async {
-    final token = await _getAuthToken();
-    final eateryId = await FirebaseService.getCurrentEateryId();
+    final results = await Future.wait<Object?>([
+      _getAuthToken(),
+      FirebaseService.getCurrentEateryId(),
+    ]);
+    final token = results[0] as String?;
+    final eateryId = results[1] as String?;
     final Map<String, String> headers = {};
     if (token != null) {
       headers['Authorization'] = 'Bearer $token';
@@ -877,16 +1005,30 @@ class ApiService {
       headers: headers,
     );
 
-    if (response.statusCode == 200) {
-      return jsonDecode(response.body);
-    } else {
-      throw Exception('Failed to get chatbot status: ${response.body}');
+    // Any JSON payload is useful: the backend reports ollamaRunning:false
+    // (with a reason code) on 503, which is a *different* cause than the
+    // backend being unreachable.
+    try {
+      final decoded = jsonDecode(response.body);
+      if (decoded is Map<String, dynamic>) return decoded;
+    } catch (_) {
+      // Non-JSON body — handled below as a typed error.
     }
+
+    throw ChatApiException(
+      code: 'status_unavailable',
+      message: 'Backend status endpoint returned HTTP ${response.statusCode}.',
+      statusCode: response.statusCode,
+    );
   }
 
   static Future<Map<String, dynamic>> getAIInsights() async {
-    final token = await _getAuthToken();
-    final eateryId = await FirebaseService.getCurrentEateryId();
+    final results = await Future.wait<Object?>([
+      _getAuthToken(),
+      FirebaseService.getCurrentEateryId(),
+    ]);
+    final token = results[0] as String?;
+    final eateryId = results[1] as String?;
     final Map<String, String> headers = {};
     if (token != null) {
       headers['Authorization'] = 'Bearer $token';
@@ -902,8 +1044,22 @@ class ApiService {
 
     if (response.statusCode == 200) {
       return jsonDecode(response.body);
-    } else {
-      throw Exception('Failed to get AI insights: ${response.body}');
     }
+
+    Map<String, dynamic> payload = {};
+    try {
+      final decoded = jsonDecode(response.body);
+      if (decoded is Map<String, dynamic>) payload = decoded;
+    } catch (_) {
+      // Keep a typed error even when the body is not JSON.
+    }
+
+    throw ChatApiException(
+      code: (payload['error'] ?? payload['code'] ?? 'server_error').toString(),
+      message: (payload['message'] ??
+              'The insights service returned an unexpected error.')
+          .toString(),
+      statusCode: response.statusCode,
+    );
   }
 }

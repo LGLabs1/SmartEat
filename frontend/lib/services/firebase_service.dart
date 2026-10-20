@@ -4,11 +4,52 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/foundation.dart';
 import 'dart:async';
 import 'dart:math';
+import '../utils/order_query_key.dart';
+import 'business_context_builder.dart';
 import 'notification_service.dart';
 
 class FirebaseService {
   static final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   static final FirebaseAuth _auth = FirebaseAuth.instance;
+
+  static void debugFirestoreRequest({
+    required String collection,
+    String? document,
+    required String operation,
+    String? eateryId,
+  }) {
+    final uid = _auth.currentUser?.uid;
+    print('===== FIRESTORE REQUEST =====');
+    print('Collection: $collection');
+    print('Document: ${document ?? 'N/A'}');
+    print('Operation: $operation');
+    print('Current UID: $uid');
+    print('Current eateryId: ${eateryId ?? 'N/A'}');
+    print('============================');
+  }
+
+  static void debugFirestoreError(
+    Object error,
+    StackTrace stackTrace, {
+    String? collection,
+    String? document,
+    String? operation,
+    String? eateryId,
+  }) {
+    final firebaseCode = error is FirebaseException ? error.code : 'N/A';
+    final firebaseMessage =
+        error is FirebaseException ? error.message ?? 'N/A' : error.toString();
+    print('===== FIRESTORE ERROR =====');
+    print('Collection: ${collection ?? 'N/A'}');
+    print('Document: ${document ?? 'N/A'}');
+    print('Operation: ${operation ?? 'N/A'}');
+    print('Current UID: ${_auth.currentUser?.uid ?? 'N/A'}');
+    print('Current eateryId: ${eateryId ?? 'N/A'}');
+    print('Code: $firebaseCode');
+    print('Message: $firebaseMessage');
+    print('Stack: $stackTrace');
+    print('==========================');
+  }
 
   static bool _looksLikeTransientFirestoreError(Object e) {
     dynamic current = e;
@@ -108,26 +149,108 @@ class FirebaseService {
     }
   }
 
+  static Future<Map<String, dynamic>> _writeExpense(
+    Map<String, dynamic> expenseData,
+  ) async {
+    final eateryId = await _requireCurrentEateryId();
+    final docRef = await _eaterySubcollection(eateryId, expensesCollection).add({
+      ...expenseData,
+      'eateryId': eateryId,
+      'createdAt': FieldValue.serverTimestamp(),
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+    final docSnapshot = await docRef.get();
+    return {
+      'id': docRef.id,
+      ...?docSnapshot.data(),
+    };
+  }
+
   static Future<Map<String, dynamic>> createExpense(
     Map<String, dynamic> expenseData,
   ) async {
     try {
       await _requireAdmin();
-      final eateryId = await _requireCurrentEateryId();
-      final docRef =
-          await _eaterySubcollection(eateryId, expensesCollection).add({
-        ...expenseData,
-        'eateryId': eateryId,
-        'createdAt': FieldValue.serverTimestamp(),
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
-      final docSnapshot = await docRef.get();
-      return {
-        'id': docRef.id,
-        ...?docSnapshot.data(),
-      };
+      return await _writeExpense(expenseData);
     } catch (e) {
       throw Exception('Failed to create expense: $e');
+    }
+  }
+
+  /// Finds the expense previously auto-posted for an inventory purchase
+  /// receipt. Returns null when none exists. Used to keep the automatic
+  /// finance posting idempotent (retrying never creates duplicates).
+  static Future<Map<String, dynamic>?> findExpenseByLinkedPurchase(
+    String purchaseReceiptId,
+  ) async {
+    final id = purchaseReceiptId.trim();
+    if (id.isEmpty) return null;
+    try {
+      final eateryId = await _requireCurrentEateryId();
+      final querySnapshot = await _withRetry(
+        () => _eaterySubcollection(eateryId, expensesCollection)
+            .where('linkedPurchaseId', isEqualTo: id)
+            .limit(1)
+            .get(),
+      );
+      if (querySnapshot.docs.isEmpty) return null;
+      final doc = querySnapshot.docs.first;
+      return {'id': doc.id, ...doc.data()};
+    } catch (e) {
+      throw Exception('Failed to look up linked expense: $e');
+    }
+  }
+
+  /// Auto-posts a recorded inventory purchase (GRN) to the finance ledger as
+  /// an expense. This is idempotent: if the receipt was already posted the
+  /// existing expense is returned. Unlike manual expense entry this is allowed
+  /// for any eatery member (enforced by Firestore rules) so staff recording
+  /// goods received always produce a matching cost entry.
+  static Future<Map<String, dynamic>> createExpenseFromPurchase({
+    required String purchaseReceiptId,
+    required String receiptNumber,
+    required double total,
+    required DateTime date,
+    String? supplierName,
+    String? supplierId,
+    String? notes,
+    String category = 'Ingredients',
+    String paymentStatus = 'paid',
+    String? paymentMethod,
+    double taxAmount = 0,
+    String? createdBy,
+  }) async {
+    try {
+      final existing = await findExpenseByLinkedPurchase(purchaseReceiptId);
+      if (existing != null) return existing;
+
+      final supplier = supplierName?.trim();
+      final label = (supplier != null && supplier.isNotEmpty)
+          ? supplier
+          : receiptNumber;
+
+      return await _writeExpense({
+        'name': 'Inventory purchase - $label',
+        'category': category,
+        'amount': total,
+        'date': date.toIso8601String(),
+        'source': 'inventory_purchase',
+        'linkedPurchaseId': purchaseReceiptId,
+        'purchaseReceiptId': purchaseReceiptId,
+        'receiptNumber': receiptNumber,
+        if (supplier != null && supplier.isNotEmpty) 'supplierName': supplier,
+        if (supplierId != null && supplierId.trim().isNotEmpty)
+          'supplierId': supplierId.trim(),
+        if (notes != null && notes.trim().isNotEmpty) 'notes': notes.trim(),
+        'paymentStatus': paymentStatus,
+        if (paymentMethod != null && paymentMethod.trim().isNotEmpty)
+          'paymentMethod': paymentMethod.trim(),
+        if (taxAmount > 0) 'taxAmount': taxAmount,
+        if (createdBy != null && createdBy.trim().isNotEmpty)
+          'createdBy': createdBy.trim(),
+      });
+    } catch (e) {
+      throw Exception('Failed to post purchase to expenses: $e');
     }
   }
 
@@ -186,11 +309,34 @@ class FirebaseService {
   static Future<List<Map<String, dynamic>>> getDamagedItems() async {
     try {
       final eateryId = await _requireCurrentEateryId();
-      final snapshot = await _withRetry(() =>
-          _eaterySubcollection(eateryId, damagedItemsCollection)
-              .orderBy('createdAt', descending: true)
-              .get());
-      return snapshot.docs.map((d) => {'id': d.id, ...d.data()!}).toList();
+      final subSnap = await _withRetry(() =>
+          _eaterySubcollection(eateryId, damagedItemsCollection).get());
+
+      final Map<String, Map<String, dynamic>> combined = {};
+      for (final d in subSnap.docs) {
+        combined[d.id] = {'id': d.id, ...d.data()};
+      }
+
+      final list = combined.values.toList();
+      list.sort((a, b) {
+        final aDate = a['createdAt'];
+        final bDate = b['createdAt'];
+        final aTs = aDate is Timestamp
+            ? aDate.toDate()
+            : aDate is DateTime
+                ? aDate
+                : DateTime.tryParse(aDate?.toString() ?? '');
+        final bTs = bDate is Timestamp
+            ? bDate.toDate()
+            : bDate is DateTime
+                ? bDate
+                : DateTime.tryParse(bDate?.toString() ?? '');
+        if (aTs == null && bTs == null) return 0;
+        if (aTs == null) return 1;
+        if (bTs == null) return -1;
+        return bTs.compareTo(aTs);
+      });
+      return list;
     } catch (e) {
       throw Exception('Failed to fetch damaged items: $e');
     }
@@ -405,6 +551,7 @@ class FirebaseService {
     });
 
     final docSnapshot = await docRef.get();
+    _invalidateProfileCache(ownerUid);
     return {
       'id': docSnapshot.id,
       ...docSnapshot.data()!,
@@ -437,32 +584,152 @@ class FirebaseService {
 
   static Future<String?> getCurrentEateryId() => _getCurrentEateryId();
 
-  static Future<String?> _getCurrentEateryId() async {
+  // OPTIMIZATION: the user→eatery mapping almost never changes, but it costs
+  // a Firestore round-trip that used to run before every chat message and
+  // every context build. Cache it briefly and share concurrent lookups.
+  static const Duration _eateryIdCacheTtl = Duration(seconds: 60);
+  static String? _cachedEateryId;
+  static String? _cachedEateryUid;
+  static DateTime? _cachedEateryAt;
+  static bool _cachedEateryValid = false;
+  static Future<String?>? _eateryIdInFlight;
+
+  static Future<String?> _getCurrentEateryId() {
     final uid = _auth.currentUser?.uid;
     if (uid == null || uid.isEmpty) {
-      return null;
+      return Future.value(null);
     }
 
-    final docSnapshot =
-        await _firestore.collection(usersCollection).doc(uid).get();
-    if (!docSnapshot.exists) {
-      return null;
+    final cachedAt = _cachedEateryAt;
+    if (_cachedEateryValid &&
+        _cachedEateryUid == uid &&
+        cachedAt != null &&
+        DateTime.now().difference(cachedAt) < _eateryIdCacheTtl) {
+      return Future.value(_cachedEateryId);
     }
 
-    final data = docSnapshot.data();
-    final eateryId = (data?['eateryId'] ?? '').toString().trim();
-    if (eateryId.isEmpty) {
-      return null;
+    return _eateryIdInFlight ??= _loadEateryId(uid);
+  }
+
+  static Future<String?> _loadEateryId(String uid) async {
+    try {
+      debugFirestoreRequest(
+        collection: usersCollection,
+        document: uid,
+        operation: 'get',
+        eateryId: null,
+      );
+
+      final docSnapshot =
+          await _firestore.collection(usersCollection).doc(uid).get();
+      if (!docSnapshot.exists) {
+        _storeEateryId(uid, null);
+        return null;
+      }
+
+      final data = docSnapshot.data();
+      final eateryId = (data?['eateryId'] ?? '').toString().trim();
+      _storeEateryId(uid, eateryId.isEmpty ? null : eateryId);
+      return eateryId.isEmpty ? null : eateryId;
+    } finally {
+      _eateryIdInFlight = null;
     }
-    return eateryId;
+  }
+
+  static void _storeEateryId(String uid, String? eateryId) {
+    _cachedEateryId = eateryId;
+    _cachedEateryUid = uid;
+    _cachedEateryAt = DateTime.now();
+    _cachedEateryValid = true;
   }
 
   static Future<String> _requireCurrentEateryId() async {
-    final eateryId = await _getCurrentEateryId();
-    if (eateryId == null || eateryId.isEmpty) {
-      throw Exception('Eatery is not set for this account');
+    final uid = _auth.currentUser?.uid;
+    final collection = '$usersCollection/$uid';
+    try {
+      final eateryId = await _getCurrentEateryId();
+      if (eateryId == null || eateryId.isEmpty) {
+        throw Exception('Eatery is not set for this account');
+      }
+      return eateryId;
+    } catch (error, stackTrace) {
+      debugFirestoreError(error, stackTrace,
+          collection: collection,
+          document: uid,
+          operation: 'get',
+          eateryId: null);
+      rethrow;
     }
-    return eateryId;
+  }
+
+  // OPTIMIZATION: the current user's profile is read repeatedly on load (role
+  // checks, display names, eatery association). Cache it briefly, de-duplicate
+  // concurrent reads, and invalidate on every profile write / sign-out.
+  static const Duration _profileCacheTtl = Duration(seconds: 60);
+  static final Map<String, Map<String, dynamic>> _profileCache = {};
+  static final Map<String, DateTime> _profileCachedAt = {};
+  static final Map<String, Future<Map<String, dynamic>?>> _profileInFlight = {};
+
+  static Map<String, dynamic>? _cachedProfileFor(String uid) {
+    final cachedAt = _profileCachedAt[uid];
+    if (cachedAt == null) return null;
+    if (DateTime.now().difference(cachedAt) >= _profileCacheTtl) return null;
+    final profile = _profileCache[uid];
+    return profile == null ? null : Map<String, dynamic>.from(profile);
+  }
+
+  static void _storeProfile(String uid, Map<String, dynamic>? profile) {
+    _profileCachedAt[uid] = DateTime.now();
+    if (profile == null) {
+      _profileCache.remove(uid);
+    } else {
+      _profileCache[uid] = profile;
+    }
+  }
+
+  static void _invalidateProfileCache([String? uid]) {
+    if (uid == null) {
+      _profileCache.clear();
+      _profileCachedAt.clear();
+    } else {
+      _profileCache.remove(uid);
+      _profileCachedAt.remove(uid);
+    }
+  }
+
+  static Future<Map<String, dynamic>?> _fetchUserProfile(String uid) async {
+    debugFirestoreRequest(
+      collection: usersCollection,
+      document: uid,
+      operation: 'get',
+      eateryId: null,
+    );
+    final doc = await _firestore.collection(usersCollection).doc(uid).get();
+    if (!doc.exists) return null;
+    final data = doc.data();
+    final profile = <String, dynamic>{
+      'id': doc.id,
+      ...(data ?? const <String, dynamic>{}),
+    };
+    _storeProfile(uid, profile);
+    return Map<String, dynamic>.from(profile);
+  }
+
+  static Future<Map<String, dynamic>?> _loadUserProfile(String uid) {
+    if (uid.isEmpty) return Future.value(null);
+    final cached = _cachedProfileFor(uid);
+    if (cached != null) return Future.value(cached);
+    final inFlight = _profileInFlight[uid];
+    if (inFlight != null) return inFlight;
+    final future = () async {
+      try {
+        return await _fetchUserProfile(uid);
+      } finally {
+        _profileInFlight.remove(uid);
+      }
+    }();
+    _profileInFlight[uid] = future;
+    return future;
   }
 
   static Future<Map<String, dynamic>> _requireCurrentUserProfile() async {
@@ -470,15 +737,20 @@ class FirebaseService {
     if (uid == null || uid.isEmpty) {
       throw Exception('Not authenticated');
     }
-
-    final docSnapshot =
-        await _firestore.collection(usersCollection).doc(uid).get();
-    if (!docSnapshot.exists) {
-      throw Exception('User profile not found');
+    try {
+      final profile = await _loadUserProfile(uid);
+      if (profile == null) {
+        throw Exception('User profile not found');
+      }
+      return profile;
+    } catch (error, stackTrace) {
+      debugFirestoreError(error, stackTrace,
+          collection: usersCollection,
+          document: uid,
+          operation: 'get',
+          eateryId: null);
+      rethrow;
     }
-
-    final data = docSnapshot.data();
-    return data == null ? <String, dynamic>{} : Map<String, dynamic>.from(data);
   }
 
   static Future<void> _requireAdmin() async {
@@ -712,6 +984,11 @@ class FirebaseService {
 
   static Future<void> signOut() async {
     await _auth.signOut();
+    _invalidateProfileCache();
+    _cachedEateryValid = false;
+    _cachedEateryId = null;
+    _cachedEateryUid = null;
+    _cachedEateryAt = null;
   }
 
   // Firestore methods
@@ -811,6 +1088,7 @@ class FirebaseService {
       });
 
       final docSnapshot = await docRef.get();
+      BusinessContextBuilder.invalidate();
       return {
         'id': docRef.id,
         ...docSnapshot.data()!,
@@ -844,6 +1122,7 @@ class FirebaseService {
 
       final docSnapshot =
           await _eaterySubcollection(eateryId, menuCollection).doc(id).get();
+      BusinessContextBuilder.invalidate();
       return {
         'id': docSnapshot.id,
         ...docSnapshot.data()!,
@@ -867,6 +1146,7 @@ class FirebaseService {
         throw Exception('Access denied');
       }
       await _eaterySubcollection(eateryId, menuCollection).doc(id).delete();
+      BusinessContextBuilder.invalidate();
     } catch (e) {
       throw Exception('Failed to delete menu item: $e');
     }
@@ -876,10 +1156,18 @@ class FirebaseService {
   static Future<Map<String, dynamic>> createOrder(
     Map<String, dynamic> orderData, {
     String? orderId,
+    String status = 'pending',
   }) async {
     try {
       final eateryId = await _requireCurrentEateryId();
       final ordersRef = _eaterySubcollection(eateryId, ordersCollection);
+
+      // Only the two statuses POS can produce are accepted, so a caller can
+      // never smuggle in a state the rest of the app doesn't expect.
+      final orderStatus = status.trim().toLowerCase() == 'completed'
+          ? 'completed'
+          : 'pending';
+      final isCompleted = orderStatus == 'completed';
 
       // Get items from orderData
       final items = (orderData['items'] as List?)?.cast<dynamic>() ?? const [];
@@ -1032,31 +1320,33 @@ class FirebaseService {
           }
         }
 
-        // Create the order inside the same transaction
-        final DocumentReference<Map<String, dynamic>> docRef;
-        if (orderId != null && orderId.trim().isNotEmpty) {
-          docRef = ordersRef.doc(orderId.trim());
-          tx.set(docRef, {
-            ...orderData,
-            'eateryId': eateryId,
-            'createdAt': FieldValue.serverTimestamp(),
-            'status': 'pending',
-            'createdBy': createdByUid,
-            'createdByName': createdByName,
-          });
-        } else {
-          docRef = ordersRef.doc();
-          tx.set(docRef, {
-            ...orderData,
-            'eateryId': eateryId,
-            'createdAt': FieldValue.serverTimestamp(),
-            'status': 'pending',
-            'createdBy': createdByUid,
-            'createdByName': createdByName,
-          });
+        // Create the order inside the same transaction. `status` is written
+        // here rather than hardcoded so an order created straight into
+        // 'completed' is a single atomic write: stock is deducted exactly once,
+        // below, and there is no second deduction from completeOrder.
+        final Map<String, dynamic> orderFields = {
+          ...orderData,
+          'eateryId': eateryId,
+          'createdAt': FieldValue.serverTimestamp(),
+          'status': orderStatus,
+          'createdBy': createdByUid,
+          'createdByName': createdByName,
+        };
+        if (isCompleted) {
+          orderFields['completedAt'] = FieldValue.serverTimestamp();
+          orderFields['updatedAt'] = FieldValue.serverTimestamp();
         }
 
         // Return both the docRef and low stock items
+        final DocumentReference<Map<String, dynamic>> docRef;
+        if (orderId != null && orderId.trim().isNotEmpty) {
+          docRef = ordersRef.doc(orderId.trim());
+          tx.set(docRef, orderFields);
+        } else {
+          docRef = ordersRef.doc();
+          tx.set(docRef, orderFields);
+        }
+
         return {'docRef': docRef, 'lowStockItems': lowStockItemsTx};
       });
 
@@ -1100,12 +1390,17 @@ class FirebaseService {
         // Notifications are not critical
       }
 
+      BusinessContextBuilder.invalidate();
       return orderResult;
     } on FirebaseException catch (e) {
       final msg = _extractErrorDetails(e);
       throw Exception(msg.isEmpty ? 'Failed to create order: ${e.code}' : msg);
     } catch (e) {
-      throw Exception('Failed to create order: $e');
+      // Unwrap boxed web errors (FirebaseError under a "Dart exception thrown
+      // from converted Future") so the real code/message reaches the user.
+      final msg = _extractErrorDetails(e);
+      throw Exception(
+          msg.isEmpty ? 'Failed to create order: $e' : 'Failed to create order: $msg');
     }
   }
 
@@ -1113,10 +1408,16 @@ class FirebaseService {
       {int limit = 20}) async {
     try {
       final eateryId = await _requireCurrentEateryId();
-      final querySnapshot =
-          await _eaterySubcollection(eateryId, ordersCollection)
-              .where('status', isEqualTo: 'pending')
-              .get();
+      if (limit <= 0) return const [];
+
+      // Single-field query: ordering by `status` + `createdAt` needs a
+      // composite index that is not provisioned, so run the equality query
+      // only and sort on the client.
+      final querySnapshot = await _withRetry(
+        () => _eaterySubcollection(eateryId, ordersCollection)
+            .where('status', isEqualTo: 'pending')
+            .get(),
+      );
 
       final orders = querySnapshot.docs.map((doc) {
         final Map<String, dynamic> result = {'id': doc.id};
@@ -1139,7 +1440,7 @@ class FirebaseService {
         return bDate.compareTo(aDate);
       });
 
-      if (limit > 0 && orders.length > limit) {
+      if (orders.length > limit) {
         return orders.take(limit).toList();
       }
       return orders;
@@ -1694,6 +1995,7 @@ class FirebaseService {
         }),
       );
 
+      BusinessContextBuilder.invalidate();
       return result;
     } on FirebaseException catch (e) {
       final msg = _extractErrorDetails(e);
@@ -1744,6 +2046,7 @@ class FirebaseService {
         'rejectReason': '',
         'updatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
+      BusinessContextBuilder.invalidate();
     } catch (e) {
       throw Exception('Failed to restore order: $e');
     }
@@ -1840,6 +2143,7 @@ class FirebaseService {
             },
             SetOptions(merge: true));
       });
+      BusinessContextBuilder.invalidate();
     } catch (e) {
       throw Exception('Failed to void order: $e');
     }
@@ -1985,53 +2289,180 @@ class FirebaseService {
             },
             SetOptions(merge: true));
       });
+      BusinessContextBuilder.invalidate();
     } catch (e) {
       throw Exception('Failed to void items: $e');
     }
   }
 
+  // De-duplicates concurrent identical order queries so one screen load that
+  // requests the same range from several helpers only hits Firestore once.
+  static final Map<String, Future<List<Map<String, dynamic>>>> _ordersInFlight =
+      {};
+
   static Future<List<Map<String, dynamic>>> getOrders({
     DateTime? startDate,
     DateTime? endDate,
   }) async {
+    final eateryId = await _requireCurrentEateryId();
+    final key = orderQueryKey(eateryId, startDate, endDate);
+    final inFlight = _ordersInFlight[key];
+    if (inFlight != null) return inFlight;
+
+    final future = _fetchOrders(eateryId, startDate, endDate);
+    _ordersInFlight[key] = future;
     try {
-      final eateryId = await _requireCurrentEateryId();
-      final querySnapshot = await _withRetry(
-        () => _eaterySubcollection(eateryId, ordersCollection).get(),
-      );
+      return await future;
+    } finally {
+      if (identical(_ordersInFlight[key], future)) {
+        _ordersInFlight.remove(key);
+      }
+    }
+  }
 
-      final orders = querySnapshot.docs.map((doc) {
-        final Map<String, dynamic> result = {'id': doc.id};
-        result.addAll(doc.data());
-        return result;
-      }).toList();
+  static List<Map<String, dynamic>> _filterOrdersByRange(
+    List<Map<String, dynamic>> orders,
+    DateTime? startDate,
+    DateTime? endDate,
+  ) {
+    DateTime? parseCreatedAt(dynamic createdAt) {
+      if (createdAt is Timestamp) return createdAt.toDate();
+      if (createdAt is DateTime) return createdAt;
+      if (createdAt is int) return DateTime.fromMillisecondsSinceEpoch(createdAt);
+      return DateTime.tryParse(createdAt?.toString() ?? '');
+    }
 
-      DateTime? parseCreatedAt(dynamic createdAt) {
-        if (createdAt is Timestamp) return createdAt.toDate();
-        if (createdAt is DateTime) return createdAt;
-        return DateTime.tryParse(createdAt?.toString() ?? '');
+    final filtered = orders.where((order) {
+      final date = parseCreatedAt(order['createdAt']);
+      if (date == null) return false;
+      if (startDate != null && date.isBefore(startDate)) return false;
+      if (endDate != null && !date.isBefore(endDate)) return false;
+      return true;
+    }).toList();
+
+    filtered.sort((a, b) {
+      final aDate = parseCreatedAt(a['createdAt']);
+      final bDate = parseCreatedAt(b['createdAt']);
+      if (aDate == null && bDate == null) return 0;
+      if (aDate == null) return 1;
+      if (bDate == null) return -1;
+      return bDate.compareTo(aDate);
+    });
+    return filtered;
+  }
+
+  static Future<List<Map<String, dynamic>>> _fetchOrders(
+    String eateryId,
+    DateTime? startDate,
+    DateTime? endDate,
+  ) async {
+    try {
+      CollectionReference<Map<String, dynamic>> collection =
+          _eaterySubcollection(eateryId, ordersCollection);
+
+      // Fast path: push the date window into Firestore (single-field
+      // `createdAt`) so ranged callers (analytics, forecasts, recommendations)
+      // don't download the whole orders collection.
+      //
+      // Best-effort: if the ranged query fails for ANY reason (missing index,
+      // environment quirk, SDK behaviour), fall back to the full collection and
+      // filter on the client, exactly as callers did before the ranged query
+      // was introduced. This guarantees analytics/reports still get data.
+      if (startDate != null || endDate != null) {
+        Query<Map<String, dynamic>> query = collection;
+        if (startDate != null) {
+          query = query.where('createdAt',
+              isGreaterThanOrEqualTo: Timestamp.fromDate(startDate));
+        }
+        if (endDate != null) {
+          query = query.where('createdAt',
+              isLessThan: Timestamp.fromDate(endDate));
+        }
+        query = query.orderBy('createdAt', descending: true);
+
+        try {
+          final subSnap = await _withRetry(() => query.get());
+          final ranged = subSnap.docs
+              .map((doc) => {'id': doc.id, ...doc.data()})
+              .toList();
+          return _filterOrdersByRange(ranged, null, null);
+        } catch (e) {
+          debugPrint(
+              'FirebaseService: ranged orders query failed, falling back to '
+              'full collection (${e.runtimeType}: $e)');
+        }
       }
 
-      final filtered = orders.where((o) {
-        final created = parseCreatedAt(o['createdAt']);
-        if (created == null) return true;
-        if (startDate != null && created.isBefore(startDate)) return false;
-        if (endDate != null && !created.isBefore(endDate)) return false;
-        return true;
-      }).toList();
-
-      filtered.sort((a, b) {
-        final aDate = parseCreatedAt(a['createdAt']);
-        final bDate = parseCreatedAt(b['createdAt']);
-        if (aDate == null && bDate == null) return 0;
-        if (aDate == null) return 1;
-        if (bDate == null) return -1;
-        return bDate.compareTo(aDate);
-      });
-
-      return filtered;
+      final allSnap = await _withRetry(() => collection.get());
+      final allOrders = allSnap.docs
+          .map((doc) => {'id': doc.id, ...doc.data()})
+          .toList();
+      return _filterOrdersByRange(allOrders, startDate, endDate);
     } catch (e) {
       throw Exception('Failed to fetch orders: $e');
+    }
+  }
+
+  /// Pending orders created before today — the ones that were opened on an
+/// earlier day and never completed.
+///
+/// Queries only on the `createdAt` range and filters `status` on the client, so
+/// it runs on the single-field index. Filtering `status` in the query instead
+/// would need a composite index that does not exist yet.
+static Future<List<Map<String, dynamic>>> getIncompleteOrders({
+  int limit = 200,
+}) async {
+  try {
+    final eateryId = await _requireCurrentEateryId();
+    final now = DateTime.now();
+    final startOfToday = DateTime(now.year, now.month, now.day);
+
+    final snap = await _withRetry(
+      () => _eaterySubcollection(eateryId, ordersCollection)
+          .where('createdAt', isLessThan: Timestamp.fromDate(startOfToday))
+          .orderBy('createdAt', descending: true)
+          .limit(limit)
+          .get(),
+    );
+
+    return snap.docs
+        .map((doc) => {'id': doc.id, ...doc.data()})
+        .where((o) =>
+            (o['status'] ?? '').toString().trim().toLowerCase() == 'pending')
+        .toList();
+  } catch (e) {
+    throw Exception('Failed to fetch incomplete orders: $e');
+  }
+}
+
+/// Orders created strictly before today, newest first.
+  ///
+  /// Uses a range query with an explicit [limit] rather than [getOrders], which
+  /// downloads the whole collection before filtering on the client. Only the
+  /// single-field descending index on `createdAt` is needed, so no composite
+  /// index has to be provisioned.
+  static Future<List<Map<String, dynamic>>> getOrderHistory({
+    int limit = 500,
+  }) async {
+    try {
+      final eateryId = await _requireCurrentEateryId();
+      final now = DateTime.now();
+      final startOfToday = DateTime(now.year, now.month, now.day);
+
+      final snap = await _withRetry(
+        () => _eaterySubcollection(eateryId, ordersCollection)
+            .where('createdAt',
+                isLessThan: Timestamp.fromDate(startOfToday))
+            .orderBy('createdAt', descending: true)
+            .limit(limit)
+            .get(),
+      );
+
+      return snap.docs
+          .map((doc) => {'id': doc.id, ...doc.data()})
+          .toList();
+    } catch (e) {
+      throw Exception('Failed to fetch order history: $e');
     }
   }
 
@@ -2039,7 +2470,6 @@ class FirebaseService {
     final now = DateTime.now();
     final startOfDay = DateTime(now.year, now.month, now.day);
     final endOfDay = startOfDay.add(const Duration(days: 1));
-
     return getOrders(startDate: startOfDay, endDate: endOfDay);
   }
 
@@ -2069,19 +2499,24 @@ class FirebaseService {
   }) async {
     try {
       final eateryId = await _requireCurrentEateryId();
-      final querySnapshot = await _withRetry(
+
+      final subSnap = await _withRetry(
         () => _eaterySubcollection(eateryId, inventoryCollection).get(),
       );
 
-      final items = querySnapshot.docs.map((doc) {
-        final Map<String, dynamic> result = {'id': doc.id};
-        result.addAll(doc.data());
-        return result;
-      }).toList();
+      final Map<String, Map<String, dynamic>> combined = {};
+
+      for (final doc in subSnap.docs) {
+        combined[doc.id] = {'id': doc.id, ...doc.data()};
+      }
+
+      final items = combined.values.toList();
 
       final filtered = (category != null && category.isNotEmpty)
           ? items
-              .where((i) => (i['category'] ?? '').toString() == category)
+              .where((i) =>
+                  (i['category'] ?? '').toString().toLowerCase().trim() ==
+                  category.toLowerCase().trim())
               .toList()
           : items;
 
@@ -2124,6 +2559,7 @@ class FirebaseService {
       });
 
       final docSnapshot = await docRef.get();
+      BusinessContextBuilder.invalidate();
       return {
         'id': docRef.id,
         ...docSnapshot.data()!,
@@ -2160,6 +2596,7 @@ class FirebaseService {
           await _eaterySubcollection(eateryId, inventoryCollection)
               .doc(id)
               .get();
+      BusinessContextBuilder.invalidate();
       return {
         'id': docSnapshot.id,
         ...docSnapshot.data()!,
@@ -2186,6 +2623,7 @@ class FirebaseService {
       await _eaterySubcollection(eateryId, inventoryCollection)
           .doc(id)
           .delete();
+      BusinessContextBuilder.invalidate();
     } catch (e) {
       throw Exception('Failed to delete inventory item: $e');
     }
@@ -2235,6 +2673,7 @@ class FirebaseService {
       });
 
       final updatedSnapshot = await docRef.get();
+      BusinessContextBuilder.invalidate();
       return {
         'id': updatedSnapshot.id,
         ...updatedSnapshot.data()!,
@@ -2423,6 +2862,7 @@ class FirebaseService {
         'updatedAt': FieldValue.serverTimestamp(),
       });
 
+      _invalidateProfileCache(uid);
       final docSnapshot =
           await _firestore.collection(usersCollection).doc(uid).get();
       return {
@@ -2436,19 +2876,16 @@ class FirebaseService {
 
   static Future<Map<String, dynamic>?> getUserProfile(String uid) async {
     try {
-      final docSnapshot =
-          await _firestore.collection(usersCollection).doc(uid).get();
-
-      if (docSnapshot.exists) {
-        return {
-          'id': docSnapshot.id,
-          ...docSnapshot.data()!,
-        };
-      }
-      return null;
+      return await _loadUserProfile(uid);
     } catch (e) {
       throw Exception('Failed to fetch user profile: $e');
     }
+  }
+
+  /// Drops the cached profile so the next read hits Firestore. Call after any
+  /// change that affects role, approval, or eatery association.
+  static void invalidateUserProfileCache([String? uid]) {
+    _invalidateProfileCache(uid);
   }
 
   // Mock data for testing - made public for ApiService
@@ -2598,6 +3035,7 @@ class FirebaseService {
         ...data,
         'updatedAt': DateTime.now().toIso8601String(),
       });
+      _invalidateProfileCache(uid);
     } catch (e) {
       throw Exception('Failed to update user: $e');
     }
