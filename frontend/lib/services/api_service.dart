@@ -22,8 +22,8 @@ class ChatApiException implements Exception {
 }
 
 class ApiService {
-  // Deployed demo backend (Render). Replace YOUR-RENDER-SERVICE with your real Render service name.
-  static const String _baseUrl = 'https://YOUR-RENDER-SERVICE.onrender.com/api';
+  // Deployed demo backend (Render).
+  static const String _baseUrl = 'https://smarteat-backend-n5ta.onrender.com/api';
 
   // A single keep-alive client reused across requests. Creating a new client
   // per call forced a fresh TCP connection every time, adding latency.
