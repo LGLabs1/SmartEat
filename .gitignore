@@ -29,6 +29,13 @@ frontend/ios/Pods/
 .DS_Store
 Thumbs.db
 
-# Secrets
+# Secrets / credentials (never commit)
 *.env
 *.env.*
+backend/.env
+backend/.env.*
+serviceAccount.json
+serviceAccount*.json
+**/serviceAccount.json
+**/serviceAccount*.json
+*-firebase-adminsdk-*.json

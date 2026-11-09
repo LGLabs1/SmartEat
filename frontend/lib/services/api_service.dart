@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 import 'package:http/http.dart' as http;
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -21,7 +22,12 @@ class ChatApiException implements Exception {
 }
 
 class ApiService {
-  static const String _baseUrl = 'http://localhost:3000/api';
+  // Deployed demo backend (Render). Replace YOUR-RENDER-SERVICE with your real Render service name.
+  static const String _baseUrl = 'https://YOUR-RENDER-SERVICE.onrender.com/api';
+
+  // A single keep-alive client reused across requests. Creating a new client
+  // per call forced a fresh TCP connection every time, adding latency.
+  static final http.Client _client = http.Client();
 
   static Future<String?> _getAuthToken() async {
     final user = FirebaseAuth.instance.currentUser;
@@ -339,10 +345,54 @@ class ApiService {
     return {'success': true};
   }
 
+  // Inventory audit trail (durable, Firestore-backed history).
+  static Future<Map<String, dynamic>> getStockMovements() async {
+    final items = await FirebaseService.getStockMovements();
+    return {'data': items};
+  }
+
+  static Future<Map<String, dynamic>> createStockMovement(
+    Map<String, dynamic> movement,
+  ) async {
+    final result = await FirebaseService.createStockMovement(movement);
+    return {'data': result};
+  }
+
+  static Future<Map<String, dynamic>> getPurchaseReceipts() async {
+    final items = await FirebaseService.getPurchaseReceipts();
+    return {'data': items};
+  }
+
+  static Future<Map<String, dynamic>> createPurchaseReceipt(
+    Map<String, dynamic> receipt,
+  ) async {
+    final result = await FirebaseService.createPurchaseReceipt(receipt);
+    return {'data': result};
+  }
+
+  static Future<Map<String, dynamic>> getStockAdjustments() async {
+    final items = await FirebaseService.getStockAdjustments();
+    return {'data': items};
+  }
+
+  static Future<Map<String, dynamic>> createStockAdjustment(
+    Map<String, dynamic> adjustment,
+  ) async {
+    final result = await FirebaseService.createStockAdjustment(adjustment);
+    return {'data': result};
+  }
+
   // Analytics endpoints
   static Future<Map<String, dynamic>> getDailySalesAnalytics(
       {int days = 30}) async {
     final data = await FirebaseService.getDailySalesAnalytics(days: days);
+    return {'data': data};
+  }
+
+  static Future<Map<String, dynamic>> getIngredientUsageByMenuItem(
+      {int days = 30}) async {
+    final data =
+        await FirebaseService.getIngredientUsageByMenuItem(days: days);
     return {'data': data};
   }
 
@@ -404,15 +454,28 @@ class ApiService {
         dayOfWeekOrderCounts[dayOfWeek]!.add(count);
       }
 
-      // Calculate average orders per day of week
+      // Calculate average orders per day of week (plus spread for confidence)
       final dayOfWeekAverages = <int, double>{};
+      final dayOfWeekStdDev = <int, double>{};
+      final dayOfWeekSamples = <int, int>{};
       for (int i = 1; i <= 7; i++) {
         final counts = dayOfWeekOrderCounts[i]!;
         if (counts.isNotEmpty) {
           final sum = counts.reduce((a, b) => a + b);
-          dayOfWeekAverages[i] = sum / counts.length;
+          final mean = sum / counts.length;
+          dayOfWeekAverages[i] = mean;
+          // Standard deviation of the observations for this weekday.
+          final variance = counts
+                  .map((c) => (c - mean) * (c - mean))
+                  .reduce((a, b) => a + b) /
+              counts.length;
+          dayOfWeekStdDev[i] = variance <= 0 ? 0.0 : math.sqrt(variance);
+          // Only count days that actually had orders as usable samples.
+          dayOfWeekSamples[i] = counts.where((c) => c > 0).length;
         } else {
           dayOfWeekAverages[i] = 0.0;
+          dayOfWeekStdDev[i] = 0.0;
+          dayOfWeekSamples[i] = 0;
         }
       }
 
@@ -421,13 +484,20 @@ class ApiService {
       for (var i = 1; i <= days; i++) {
         final date = endDate.add(Duration(days: i));
         final dayOfWeek = date.weekday;
-        final predictedOrders = dayOfWeekAverages[dayOfWeek]!.round();
+        final mean = dayOfWeekAverages[dayOfWeek]!;
+        final predictedOrders = mean.round();
+        final confidence = _forecastConfidence(
+          mean: mean,
+          stdDev: dayOfWeekStdDev[dayOfWeek]!,
+          sampleSize: dayOfWeekSamples[dayOfWeek]!,
+        );
 
         forecast.add({
           'day': i,
           'date': date.toIso8601String().split('T')[0],
           'predictedOrders': predictedOrders,
-          'confidence': 0.8,
+          'confidence': confidence,
+          'sampleSize': dayOfWeekSamples[dayOfWeek],
           'dayName': _getDayName(date.weekday),
           'isWeekend': date.weekday == 6 || date.weekday == 7,
         });
@@ -513,15 +583,26 @@ class ApiService {
         dayOfWeekRevenues[dayOfWeek]!.add(revenue);
       }
 
-      // Calculate average revenue per day of week
+      // Calculate average revenue per day of week (plus spread for confidence)
       final dayOfWeekAverages = <int, double>{};
+      final dayOfWeekStdDev = <int, double>{};
+      final dayOfWeekSamples = <int, int>{};
       for (int i = 1; i <= 7; i++) {
         final revenues = dayOfWeekRevenues[i]!;
         if (revenues.isNotEmpty) {
           final sum = revenues.reduce((a, b) => a + b);
-          dayOfWeekAverages[i] = sum / revenues.length;
+          final mean = sum / revenues.length;
+          dayOfWeekAverages[i] = mean;
+          final variance = revenues
+                  .map((r) => (r - mean) * (r - mean))
+                  .reduce((a, b) => a + b) /
+              revenues.length;
+          dayOfWeekStdDev[i] = variance <= 0 ? 0.0 : math.sqrt(variance);
+          dayOfWeekSamples[i] = revenues.where((r) => r > 0).length;
         } else {
           dayOfWeekAverages[i] = 0.0;
+          dayOfWeekStdDev[i] = 0.0;
+          dayOfWeekSamples[i] = 0;
         }
       }
 
@@ -530,13 +611,20 @@ class ApiService {
       for (var i = 1; i <= days; i++) {
         final date = endDate.add(Duration(days: i));
         final dayOfWeek = date.weekday;
-        final predictedRevenue = dayOfWeekAverages[dayOfWeek]!.round();
+        final mean = dayOfWeekAverages[dayOfWeek]!;
+        final predictedRevenue = mean.round();
+        final confidence = _forecastConfidence(
+          mean: mean,
+          stdDev: dayOfWeekStdDev[dayOfWeek]!,
+          sampleSize: dayOfWeekSamples[dayOfWeek]!,
+        );
 
         forecast.add({
           'day': i,
           'date': date.toIso8601String().split('T')[0],
           'predictedRevenue': predictedRevenue,
-          'confidence': 0.8,
+          'confidence': confidence,
+          'sampleSize': dayOfWeekSamples[dayOfWeek],
           'dayName': _getDayName(date.weekday),
           'isWeekend': date.weekday == 6 || date.weekday == 7,
         });
@@ -576,10 +664,10 @@ class ApiService {
 
   static Future<Map<String, dynamic>> getRecommendations() async {
     try {
-      // Fetch necessary data
+      // Fetch necessary data for the previous month.
       final now = DateTime.now();
       final lastMonthStart = DateTime(now.year, now.month - 1, 1);
-      final lastMonthEnd = DateTime(now.year, now.month, 0);
+      final lastMonthEnd = DateTime(now.year, now.month, 0, 23, 59, 59, 999);
 
       final ordersResult = await getOrdersByDateRange(
           startDate: lastMonthStart, endDate: lastMonthEnd);
@@ -588,117 +676,170 @@ class ApiService {
       final inventoryResult = await getInventoryItems();
       final inventory = inventoryResult['data'] as List<dynamic>? ?? [];
 
-      final menuResult = await getMenuItems();
-      final menuItems = menuResult['data'] as List<dynamic>? ?? [];
-
       final promoteItems = <Map<String, dynamic>>[];
       final removeItems = <Map<String, dynamic>>[];
       final optimizeInventory = <Map<String, dynamic>>[];
 
-      // Analyze item sales
+      // Analyze item sales for the period, tracking quantity, revenue and the
+      // most recent sale date so we can reason about staleness too.
       final itemSales = <String, Map<String, dynamic>>{};
       for (final order in orders) {
         if (order is Map) {
           final items = order['items'] as List<dynamic>? ?? [];
           final status = (order['status'] ?? '').toString().toLowerCase();
+          if (status != 'completed') continue;
 
-          if (status == 'completed') {
-            for (final item in items) {
-              if (item is Map) {
-                final name = (item['name'] ?? 'Unknown').toString();
-                final qty = (item['quantity'] as num?)?.toInt() ?? 1;
-                final price = (item['price'] as num?)?.toDouble() ?? 0.0;
+          DateTime? orderDate;
+          final createdAt = order['createdAt'] ?? order['completedAt'];
+          if (createdAt is Timestamp) {
+            orderDate = createdAt.toDate();
+          } else if (createdAt is DateTime) {
+            orderDate = createdAt;
+          } else if (createdAt is String) {
+            orderDate = DateTime.tryParse(createdAt);
+          }
 
-                if (!itemSales.containsKey(name)) {
-                  itemSales[name] = {
-                    'name': name,
-                    'totalSold': 0,
-                    'revenue': 0.0,
-                  };
-                }
-                itemSales[name]!['totalSold'] =
-                    (itemSales[name]!['totalSold'] as int) + qty;
-                itemSales[name]!['revenue'] =
-                    (itemSales[name]!['revenue'] as double) + (price * qty);
+          for (final item in items) {
+            if (item is! Map) continue;
+            final name = (item['name'] ?? 'Unknown').toString();
+            final qty = (item['quantity'] as num?)?.toInt() ?? 1;
+            final price = (item['price'] as num?)?.toDouble() ?? 0.0;
+
+            final entry = itemSales.putIfAbsent(
+              name,
+              () => {
+                'name': name,
+                'totalSold': 0,
+                'revenue': 0.0,
+                'lastSoldAt': null,
+              },
+            );
+            entry['totalSold'] = (entry['totalSold'] as int) + qty;
+            entry['revenue'] = (entry['revenue'] as double) + (price * qty);
+            if (orderDate != null) {
+              final prev = entry['lastSoldAt'] as DateTime?;
+              if (prev == null || orderDate.isAfter(prev)) {
+                entry['lastSoldAt'] = orderDate;
               }
             }
           }
         }
       }
 
-      // Sort by sales performance
+      // Sort by units sold (primary), then revenue.
       final sortedItems = itemSales.values.toList()
-        ..sort(
-            (a, b) => (b['totalSold'] as int).compareTo(a['totalSold'] as int));
+        ..sort((a, b) {
+          final bySold =
+              (b['totalSold'] as int).compareTo(a['totalSold'] as int);
+          if (bySold != 0) return bySold;
+          return (b['revenue'] as double).compareTo(a['revenue'] as double);
+        });
 
-      // Top performers to promote
-      if (sortedItems.isNotEmpty) {
-        final topItem = sortedItems.first;
-        if (topItem['totalSold'] > 10) {
-          promoteItems.add({
-            'name': topItem['name'],
-            'reason':
-                'High demand item - ${topItem['totalSold']} sold last month',
-            'expectedIncrease': '15-20%',
-          });
-        }
+      final totalSold =
+          sortedItems.fold<int>(0, (s, i) => s + (i['totalSold'] as int));
+
+      // Top performers to promote — up to 3, quantified with quantity + revenue.
+      final promoteCandidates = sortedItems
+          .where((item) => (item['totalSold'] as int) >= 5)
+          .take(3)
+          .toList();
+      for (final item in promoteCandidates) {
+        final sold = item['totalSold'] as int;
+        final revenue = item['revenue'] as double;
+        promoteItems.add({
+          'name': item['name'],
+          'reason':
+              'Strong seller — $sold sold last month (${_currencyShort(revenue)} revenue)',
+          'expectedIncrease': '15-20%',
+          'impact': '≈${_currencyShort(revenue * 0.15)} potential lift',
+          'severity': sold >= 20 ? 'high' : 'medium',
+        });
       }
 
-      // Low performers to consider removing
-      if (sortedItems.length > 5) {
-        final lowPerformers = sortedItems
-            .where((item) =>
-                (item['totalSold'] as int) < 3 &&
-                sortedItems.indexOf(item) > sortedItems.length - 3)
-            .toList();
+      // Low performers / dead stock to consider removing — up to 3.
+      if (sortedItems.length > 4 && totalSold > 0) {
+        final lowPerformers = sortedItems.where((item) {
+          final sold = item['totalSold'] as int;
+          final lastSold = item['lastSoldAt'] as DateTime?;
+          final stale = lastSold != null &&
+              now.difference(lastSold).inDays >= 21;
+          return sold < 3 || stale;
+        }).toList();
 
-        for (final item in lowPerformers.take(2)) {
+        for (final item in lowPerformers.take(3)) {
+          final sold = item['totalSold'] as int;
+          final lastSold = item['lastSoldAt'] as DateTime?;
+          final daysSince =
+              lastSold == null ? null : now.difference(lastSold).inDays;
           removeItems.add({
             'name': item['name'],
-            'reason':
-                'Very low sales - only ${item['totalSold']} sold last month',
+            'reason': daysSince != null && daysSince >= 21
+                ? 'No sales in $daysSince days — likely dead stock'
+                : 'Very low demand — only $sold sold last month',
             'wasteReduction': 'Reduce inventory costs',
+            'impact': daysSince != null && daysSince >= 21
+                ? 'Frees shelf space & stock capital'
+                : 'Cuts waste on slow movers',
+            'severity': (sold == 0 || (daysSince ?? 0) >= 30) ? 'high' : 'low',
           });
         }
       }
 
-      // Inventory optimization recommendations
+      // Inventory optimization — quantify the gap and flag severity.
       for (final invItem in inventory) {
-        if (invItem is Map) {
-          final currentStock =
-              (invItem['currentStock'] as num?)?.toDouble() ?? 0.0;
-          final minStock = (invItem['minStock'] as num?)?.toDouble() ?? 0.0;
-          final name = (invItem['name'] ?? '').toString();
+        if (invItem is! Map) continue;
+        final currentStock =
+            (invItem['currentStock'] as num?)?.toDouble() ?? 0.0;
+        final minStock = (invItem['minStock'] as num?)?.toDouble() ?? 0.0;
+        final name = (invItem['name'] ?? '').toString();
+        if (name.isEmpty) continue;
 
-          if (currentStock < minStock * 0.5) {
-            optimizeInventory.add({
-              'ingredient': name,
-              'reason':
-                  'Stock critically low (${currentStock.toStringAsFixed(1)} remaining)',
-              'action':
-                  'Order ${(minStock * 2).toStringAsFixed(0)} units immediately',
-            });
-          } else if (currentStock > minStock * 5) {
-            optimizeInventory.add({
-              'ingredient': name,
-              'reason':
-                  'Excess inventory (${currentStock.toStringAsFixed(1)} units)',
-              'action': 'Reduce orders or create promotions to use stock',
-            });
-          }
+        if (minStock > 0 && currentStock < minStock * 0.5) {
+          final shortfall = (minStock * 2) - currentStock;
+          optimizeInventory.add({
+            'ingredient': name,
+            'reason':
+                'Stock critically low (${currentStock.toStringAsFixed(1)} of ${minStock.toStringAsFixed(1)} min)',
+            'action':
+                'Order ${shortfall.toStringAsFixed(0)} units immediately',
+            'impact': 'Restock to 2× minimum',
+            'severity': currentStock <= 0 ? 'high' : 'medium',
+          });
+        } else if (minStock > 0 && currentStock > minStock * 5) {
+          final excess = currentStock - (minStock * 3);
+          optimizeInventory.add({
+            'ingredient': name,
+            'reason':
+                'Overstocked (${currentStock.toStringAsFixed(1)} units, ${(currentStock / minStock).toStringAsFixed(1)}× minimum)',
+            'action': 'Pause reordering or run a promo to use stock',
+            'impact': '${excess.toStringAsFixed(0)} units above target',
+            'severity': 'low',
+          });
         }
       }
 
+      // Sort inventory warnings so critical items surface first.
+      const severityRank = {'high': 0, 'medium': 1, 'low': 2};
+      optimizeInventory.sort((a, b) {
+        final sa = severityRank[a['severity']] ?? 3;
+        final sb = severityRank[b['severity']] ?? 3;
+        return sa.compareTo(sb);
+      });
+
       return {
+        'available': true,
         'data': {
           'promoteItems': promoteItems,
           'removeItems': removeItems,
-          'optimizeInventory': optimizeInventory.take(5).toList(),
+          'optimizeInventory': optimizeInventory.take(6).toList(),
         }
       };
     } catch (e) {
-      // Return basic recommendations if data fetch fails
+      // Distinguish a failed fetch from a genuinely empty result so the UI can
+      // show "couldn't load" instead of a misleading "All caught up!".
       return {
+        'available': false,
+        'error': e.toString(),
         'data': {
           'promoteItems': [],
           'removeItems': [],
@@ -708,9 +849,36 @@ class ApiService {
     }
   }
 
+  /// Compact peso formatter for recommendation copy (e.g. ₱12.5k).
+  static String _currencyShort(double value) {
+    if (value >= 1000000) return '₱${(value / 1000000).toStringAsFixed(1)}M';
+    if (value >= 1000) return '₱${(value / 1000).toStringAsFixed(1)}k';
+    return '₱${value.toStringAsFixed(0)}';
+  }
+
   static String _getDayName(int weekday) {
     const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
     return days[weekday - 1];
+  }
+
+  /// Derives a 0.5–0.95 confidence score for a weekday forecast from how
+  /// consistent that weekday's history has been (coefficient of variation),
+  /// with a small penalty for thin samples. Mirrors the server model so both
+  /// paths report comparable numbers.
+  static double _forecastConfidence({
+    required double mean,
+    required double stdDev,
+    required int sampleSize,
+  }) {
+    if (mean <= 0) return 0.0;
+    final cv = stdDev / mean;
+    var confidence = 1 - cv;
+    // Thin samples (few observed weeks) lower confidence.
+    if (sampleSize < 4) {
+      confidence -= (4 - sampleSize) * 0.05;
+    }
+    confidence = confidence.clamp(0.5, 0.95);
+    return (confidence * 100).round() / 100;
   }
 
   // Finance endpoints
@@ -810,6 +978,8 @@ class ApiService {
     int? dueDay,
     List<int>? dueDays,
     int? dueMonth,
+    bool isVariable = false,
+    double? estimateAmount,
   }) async {
     final item = await FirebaseService.createPayable({
       'name': name,
@@ -821,6 +991,9 @@ class ApiService {
       if (dueDay != null) 'dueDay': dueDay,
       if (dueDays != null) 'dueDays': dueDays,
       if (dueMonth != null) 'dueMonth': dueMonth,
+      'isVariable': isVariable,
+      if (isVariable && estimateAmount != null && estimateAmount > 0)
+        'estimateAmount': estimateAmount,
     });
     return {'data': item};
   }
@@ -844,6 +1017,8 @@ class ApiService {
     int? dueDay,
     List<int>? dueDays,
     int? dueMonth,
+    bool isVariable = false,
+    double? estimateAmount,
   }) async {
     final item = await FirebaseService.updatePayable(id, {
       'name': name,
@@ -855,8 +1030,44 @@ class ApiService {
       if (dueDay != null) 'dueDay': dueDay,
       if (dueDays != null) 'dueDays': dueDays,
       if (dueMonth != null) 'dueMonth': dueMonth,
+      'isVariable': isVariable,
+      'estimateAmount':
+          (isVariable && estimateAmount != null && estimateAmount > 0)
+              ? estimateAmount
+              : FieldValue.delete(),
     });
     return {'data': item};
+  }
+
+  /// Records an actual payment for a payable, mirroring it into expenses and
+  /// updating the bill's rolling amount history. Admin-only on the backend.
+  static Future<Map<String, dynamic>> recordPayablePayment({
+    required Map<String, dynamic> payable,
+    required double amount,
+    String category = 'Bills',
+    DateTime? date,
+  }) async {
+    final expense = await FirebaseService.recordPayablePayment(
+      payable: payable,
+      amount: amount,
+      category: category,
+      date: date,
+    );
+    return {'data': expense};
+  }
+
+  /// Removes the expense mirrored when a payable was marked paid.
+  static Future<Map<String, dynamic>> removePayablePaymentExpense(
+    String payableId,
+  ) async {
+    await FirebaseService.removePayablePaymentExpense(payableId);
+    return {'success': true};
+  }
+
+  static Future<Map<String, dynamic>?> findLinkedPayableExpense(
+    String payableId,
+  ) {
+    return FirebaseService.findExpenseByLinkedPayable(payableId);
   }
 
   static Future<Map<String, dynamic>> deletePayable(String id) async {
@@ -985,6 +1196,102 @@ class ApiService {
     );
   }
 
+  /// Streams Sage's reply token-by-token from `POST /chatbot/chat/stream`.
+  ///
+  /// Emits plain text deltas as they arrive so the UI can render progressively.
+  /// Throws [ChatApiException] on transport or server errors.
+  static Stream<String> sendChatMessageStream({
+    required String message,
+    List<Map<String, dynamic>>? history,
+    String? context,
+  }) async* {
+    final results = await Future.wait<Object?>([
+      _getAuthToken(),
+      FirebaseService.getCurrentEateryId(),
+    ]);
+    final token = results[0] as String?;
+    final eateryId = results[1] as String?;
+    final Map<String, String> headers = {'Content-Type': 'application/json'};
+    if (token != null) headers['Authorization'] = 'Bearer $token';
+    if (eateryId != null) headers['x-eatery-id'] = eateryId;
+
+    final request = http.Request(
+      'POST',
+      Uri.parse('$_baseUrl/chatbot/chat/stream'),
+    );
+    request.headers.addAll(headers);
+    request.body = jsonEncode({
+      'message': message,
+      'history': history ?? [],
+      if (eateryId != null) 'eateryId': eateryId,
+      if (context != null) 'context': context,
+    });
+
+    http.StreamedResponse streamed;
+    try {
+      streamed = await _client.send(request);
+    } on http.ClientException catch (error) {
+      throw ChatApiException(code: 'network_unavailable', message: error.message);
+    } on SocketException catch (error) {
+      throw ChatApiException(code: 'network_unavailable', message: error.message);
+    }
+
+    if (streamed.statusCode != 200) {
+      // Drain the body so the error message survives, then throw.
+      final body = await streamed.stream.bytesToString();
+      Map<String, dynamic> payload = {};
+      try {
+        final decoded = jsonDecode(body);
+        if (decoded is Map<String, dynamic>) payload = decoded;
+      } catch (_) {}
+      throw ChatApiException(
+        code: (payload['code'] ?? payload['error'] ?? 'server_error').toString(),
+        message: (payload['message'] ??
+                payload['error'] ??
+                'The Sage service returned an unexpected error.')
+            .toString(),
+        statusCode: streamed.statusCode,
+      );
+    }
+
+    // Parse the SSE stream: events are `data: {json}\n\n`. Buffer partial
+    // lines across chunk boundaries.
+    var buffer = '';
+    await for (final chunk in streamed.stream.transform(utf8.decoder)) {
+      buffer += chunk;
+      final lines = buffer.split('\n');
+      buffer = lines.removeLast();
+      for (final line in lines) {
+        final trimmed = line.trim();
+        if (!trimmed.startsWith('data:')) continue;
+        final raw = trimmed.substring(5).trim();
+        if (raw.isEmpty) continue;
+        Map<String, dynamic> event;
+        try {
+          final decoded = jsonDecode(raw);
+          if (decoded is! Map<String, dynamic>) continue;
+          event = decoded;
+        } catch (_) {
+          continue;
+        }
+        switch (event['type']) {
+          case 'token':
+            final text = event['text'];
+            if (text is String && text.isNotEmpty) yield text;
+            break;
+          case 'error':
+            throw ChatApiException(
+              code: (event['error'] ?? 'server_error').toString(),
+              message: (event['message'] ?? 'Sage could not complete the request.')
+                  .toString(),
+            );
+          case 'done':
+            return;
+        }
+      }
+    }
+  }
+
   static Future<Map<String, dynamic>> getChatbotStatus() async {
     final results = await Future.wait<Object?>([
       _getAuthToken(),
@@ -993,12 +1300,8 @@ class ApiService {
     final token = results[0] as String?;
     final eateryId = results[1] as String?;
     final Map<String, String> headers = {};
-    if (token != null) {
-      headers['Authorization'] = 'Bearer $token';
-    }
-    if (eateryId != null) {
-      headers['x-eatery-id'] = eateryId;
-    }
+    if (token != null) headers['Authorization'] = 'Bearer $token';
+    if (eateryId != null) headers['x-eatery-id'] = eateryId;
 
     final response = await http.get(
       Uri.parse('$_baseUrl/chatbot/status'),
