@@ -4,7 +4,9 @@ const { db } = require('../config/firebase');
 // Google AI Studio (Gemini) configuration. The API key lives only in the
 // backend environment (GEMINI_API_KEY) - never in client code or git.
 const GEMINI_API_KEY = (process.env.GEMINI_API_KEY || '').trim();
-const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+// gemini-2.5-flash is deprecated for new API keys ("no longer available to
+// new users"); 3.5-flash is a currently available, fast chat model.
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.5-flash';
 const GEMINI_BASE_URL =
   process.env.GEMINI_BASE_URL || 'https://generativelanguage.googleapis.com/v1beta';
 
@@ -24,7 +26,9 @@ function sageDisabledResponse(streaming = false) {
 
 // Tunable inference settings. Defaults preserve Sage's behaviour; tuning
 // needs only an env change (e.g. GEMINI_MAX_OUTPUT_TOKENS=1200) and no edit.
-const MAX_OUTPUT_TOKENS = parseInt(process.env.GEMINI_MAX_OUTPUT_TOKENS, 10) || 800;
+// Note: newer Gemini models are "thinking" models - reasoning consumes
+// tokens first, so the budget must leave room for both thoughts and answer.
+const MAX_OUTPUT_TOKENS = parseInt(process.env.GEMINI_MAX_OUTPUT_TOKENS, 10) || 2000;
 const GEMINI_TIMEOUT = parseInt(process.env.GEMINI_TIMEOUT_MS, 10) || 60000;
 
 // ---------------------------------------------------------------------------
