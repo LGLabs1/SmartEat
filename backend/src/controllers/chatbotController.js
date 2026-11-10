@@ -302,6 +302,37 @@ const mapGeminiError = (error) => {
   return { status: 500, error: 'server_error', message: error.message || 'Sage could not complete the request.' };
 };
 
+// Transient Gemini failures (capacity 503/5xx, dropped connections) usually
+// clear within seconds, so retry transparently before surfacing an error.
+const GEMINI_RETRY_ATTEMPTS = parseInt(process.env.GEMINI_RETRY_ATTEMPTS, 10) || 2;
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const isRetryableGeminiError = (error) => {
+  const httpStatus = error.response?.status;
+  if (httpStatus >= 500 && httpStatus < 600) return true;
+  return ['ECONNRESET', 'EPIPE', 'EAI_AGAIN'].includes(error.code);
+};
+
+const postGeminiWithRetry = async (url, body, config) => {
+  let lastError;
+  for (let attempt = 0; attempt <= GEMINI_RETRY_ATTEMPTS; attempt++) {
+    try {
+      return await axios.post(url, body, config);
+    } catch (error) {
+      lastError = error;
+      if (attempt === GEMINI_RETRY_ATTEMPTS || !isRetryableGeminiError(error)) {
+        throw error;
+      }
+      const backoffMs = 800 * Math.pow(2, attempt);
+      console.warn(
+        `[Sage] Gemini transient failure (HTTP ${error.response?.status || error.code}) — retrying in ${backoffMs}ms (attempt ${attempt + 1}/${GEMINI_RETRY_ATTEMPTS})`
+      );
+      await sleep(backoffMs);
+    }
+  }
+  throw lastError;
+};
+
 // ---------------------------------------------------------------------------
 // POST /api/chatbot/chat  (blocking; kept for compatibility)
 // ---------------------------------------------------------------------------
@@ -335,7 +366,7 @@ exports.chat = async (req, res) => {
 
     console.log(`[Sage] Sending ${messages.length} messages to Gemini (model: ${GEMINI_MODEL})`);
 
-    const geminiRes = await axios.post(
+    const geminiRes = await postGeminiWithRetry(
       geminiEndpoint('generateContent'),
       buildGeminiBody(messages),
       { headers: geminiHeaders(), timeout: GEMINI_TIMEOUT }
@@ -420,7 +451,7 @@ exports.chatStream = async (req, res) => {
 
     console.log(`[Sage] Streaming ${messages.length} messages from Gemini (model: ${GEMINI_MODEL})`);
 
-    const geminiRes = await axios.post(
+    const geminiRes = await postGeminiWithRetry(
       `${geminiEndpoint('streamGenerateContent')}?alt=sse`,
       buildGeminiBody(messages),
       { headers: geminiHeaders(), timeout: GEMINI_TIMEOUT, responseType: 'stream' }
@@ -624,7 +655,7 @@ Data:
 
 STRICT RULE: Use ONLY the exact numbers provided above. Never invent sales numbers or dish names.`;
 
-      const aiRes = await axios.post(
+      const aiRes = await postGeminiWithRetry(
         geminiEndpoint('generateContent'),
         {
           contents: [{ role: 'user', parts: [{ text: prompt }] }],
