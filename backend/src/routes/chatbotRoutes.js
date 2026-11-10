@@ -7,6 +7,8 @@ const router = express.Router();
 // Public/optional-auth routes
 router.get('/status', chatbotController.getStatus);
 router.post('/chat', optionalAuth, chatbotController.chat);
+// SSE streaming variant — returns tokens progressively for a faster UI.
+router.post('/chat/stream', optionalAuth, chatbotController.chatStream);
 router.get('/insights', optionalAuth, chatbotController.getInsights);
 
 module.exports = router;
