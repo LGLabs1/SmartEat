@@ -34,6 +34,39 @@ class ApiService {
     return user?.getIdToken();
   }
 
+  // SMS (proxied via backend to avoid browser CORS and keep provider token server-side)
+  static Future<Map<String, dynamic>> sendSmsMessage({
+    required String phoneNumber,
+    required String message,
+  }) async {
+    final token = await _getAuthToken();
+    final headers = <String, String>{
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+    };
+    if (token != null) headers['Authorization'] = 'Bearer $token';
+    final response = await http
+        .post(
+          Uri.parse('$_baseUrl/sms/send'),
+          headers: headers,
+          body: jsonEncode({'phone_number': phoneNumber, 'message': message}),
+        )
+        .timeout(const Duration(seconds: 60));
+    dynamic data;
+    try {
+      data = jsonDecode(response.body);
+    } catch (_) {
+      data = {'message': response.body};
+    }
+    if (response.statusCode >= 200 && response.statusCode < 300) {
+      return data is Map<String, dynamic> ? data : {'data': data};
+    }
+    final err = data is Map ? (data['message'] ?? data['error']) : null;
+    throw Exception(err?.toString().isNotEmpty == true
+        ? err.toString()
+        : 'SMS send failed (HTTP ${response.statusCode})');
+  }
+
   // Menu endpoints - using Firebase
   static Future<Map<String, dynamic>> getMenuItems() async {
     final items = await FirebaseService.getMenuItems();

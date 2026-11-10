@@ -1,4 +1,4 @@
-const express = require('express');
+﻿const express = require('express');
 const cors = require('cors');
 const dotenv = require('dotenv');
 
@@ -22,6 +22,7 @@ app.use((req, res, next) => {
 app.use('/api/analytics', require('./routes/analyticsRoutes'));
 app.use('/api/inventory', require('./routes/inventoryRoutes'));
 app.use('/api/chatbot', require('./routes/chatbotRoutes'));
+app.use('/api/sms', require('./routes/smsRoutes'));
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
@@ -47,6 +48,14 @@ const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
   console.log(`✓ Smart Eat Backend running on port ${PORT}`);
+
+  // Best-effort: pre-load the Sage model so the first question is not slowed
+  // by Ollama's cold-start. Failures are logged and ignored.
+  try {
+    require('./controllers/chatbotController').warmUpModel();
+  } catch (err) {
+    console.warn('[Sage] Warm-up could not start:', err.message);
+  }
 });
 
 module.exports = app;
