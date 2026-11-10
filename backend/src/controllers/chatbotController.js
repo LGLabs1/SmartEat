@@ -1,10 +1,14 @@
 const axios = require('axios');
 const { db } = require('../config/firebase');
 
-const OLLAMA_BASE_URL = process.env.OLLAMA_URL || 'http://localhost:11434';
-const MODEL_NAME = process.env.OLLAMA_MODEL || 'llama3.2';
+// Google AI Studio (Gemini) configuration. The API key lives only in the
+// backend environment (GEMINI_API_KEY) - never in client code or git.
+const GEMINI_API_KEY = (process.env.GEMINI_API_KEY || '').trim();
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+const GEMINI_BASE_URL =
+  process.env.GEMINI_BASE_URL || 'https://generativelanguage.googleapis.com/v1beta';
 
-// Live demo mode: disable Sage/Ollama-backed chatbot without changing other backend features.
+// Live demo mode: disable Sage without changing other backend features.
 const SAGE_DISABLED =
   String(process.env.SAGE_DISABLED || process.env.SAGE_DEMO_DISABLED || 'false').toLowerCase() === 'true';
 const SAGE_DISABLED_MESSAGE =
@@ -18,24 +22,54 @@ function sageDisabledResponse(streaming = false) {
   return { success: false, error: 'sage_disabled', message: SAGE_DISABLED_MESSAGE, demoDisabled: true };
 }
 
-// Tunable inference settings. Defaults preserve current behaviour, so tuning
-// needs only an env change (e.g. OLLAMA_NUM_PREDICT=120) and no code edit.
-const NUM_PREDICT = parseInt(process.env.OLLAMA_NUM_PREDICT, 10) || 250;
-const NUM_CTX = parseInt(process.env.OLLAMA_NUM_CTX, 10) || 4096;
-// Keep the model resident between questions so repeat asks skip cold-start.
-const KEEP_ALIVE = process.env.OLLAMA_KEEP_ALIVE || '30m';
-const OLLAMA_TIMEOUT = parseInt(process.env.OLLAMA_TIMEOUT_MS, 10) || 120000;
+// Tunable inference settings. Defaults preserve Sage's behaviour; tuning
+// needs only an env change (e.g. GEMINI_MAX_OUTPUT_TOKENS=1200) and no edit.
+const MAX_OUTPUT_TOKENS = parseInt(process.env.GEMINI_MAX_OUTPUT_TOKENS, 10) || 800;
+const GEMINI_TIMEOUT = parseInt(process.env.GEMINI_TIMEOUT_MS, 10) || 60000;
 
-// Shared Ollama request options (used by both the blocking and streaming paths).
-const ollamaOptions = () => ({
-  temperature: 0.3,
-  num_predict: NUM_PREDICT,
-  // Ollama defaults to 2048 context tokens; the business snapshot plus history
-  // can exceed that, which makes the model fail or stall.
-  num_ctx: NUM_CTX,
-  top_p: 0.9,
-  top_k: 40,
+// ---------------------------------------------------------------------------
+// Gemini request helpers (used by both the blocking and streaming paths)
+// ---------------------------------------------------------------------------
+const geminiEndpoint = (method) =>
+  `${GEMINI_BASE_URL}/models/${GEMINI_MODEL}:${method}`;
+
+const geminiHeaders = () => ({
+  'Content-Type': 'application/json',
+  'x-goog-api-key': GEMINI_API_KEY,
 });
+
+const generationConfig = () => ({
+  temperature: 0.3,
+  topP: 0.9,
+  topK: 40,
+  maxOutputTokens: MAX_OUTPUT_TOKENS,
+});
+
+// Map OpenAI-style chat messages ({role, content}) to Gemini's shape.
+// Gemini calls the assistant role 'model' and takes the system prompt
+// separately as systemInstruction.
+const toGeminiRole = (role) => (role === 'assistant' ? 'model' : 'user');
+
+const buildGeminiBody = (messages) => {
+  const systemMessage = messages.find((m) => m.role === 'system');
+  const turns = messages.filter((m) => m.role !== 'system');
+  return {
+    systemInstruction: {
+      parts: [{ text: systemMessage ? systemMessage.content : '' }],
+    },
+    contents: turns.map((m) => ({
+      role: toGeminiRole(m.role),
+      parts: [{ text: String(m.content || '') }],
+    })),
+    generationConfig: generationConfig(),
+  };
+};
+
+// Joins the text parts of a GenerateContentResponse (or a streamed chunk).
+const extractGeminiText = (data) => {
+  const parts = data?.candidates?.[0]?.content?.parts || [];
+  return parts.map((p) => p.text || '').join('');
+};
 
 // ---------------------------------------------------------------------------
 // Cache  (5-minute TTL, keyed by eateryId + intent + contextSnippet + message)
@@ -167,7 +201,7 @@ HOW YOU FORMAT (the chat styles this markup automatically — it never shows raw
 2. Start a line with ## for a short section heading (only in replies with more than a few lines).
 3. Start lines with - for a bullet list (3-5 items) when comparing options or listing steps.
 4. Start a line with > for a callout box — use it for the single most important takeaway or next action.
-5. *Single asterisks* give light emphasis to a contrast word; backticks wrap commands like \`ollama serve\`.
+5. *Single asterisks* give light emphasis to a contrast word; backticks wrap commands like \`npm start\`.
 6. Leave most of a reply as plain flowing prose — markup only where it genuinely helps the eye scan faster.
 7. Never show markdown tables or raw HTML.
 
@@ -240,19 +274,25 @@ const buildMessages = (snapshotBlock, history, message) => [
   { role: 'user', content: message },
 ];
 
-// Map a low-level Ollama/axios failure to a {status, error, message} triple so
-// both handlers report the actual cause instead of one generic apology.
-const mapOllamaError = (error) => {
-  if (error.code === 'ECONNREFUSED')
-    return { status: 503, error: 'ollama_unavailable', message: 'Ollama is not running. Start it with: ollama serve' };
-  if (error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT')
+// Map a Gemini/axios failure to a {status, error, message} triple so both
+// handlers report the actual cause instead of one generic apology.
+const mapGeminiError = (error) => {
+  const httpStatus = error.response?.status;
+  const code = error.code;
+  if (httpStatus === 401 || httpStatus === 403)
+    return { status: 500, error: 'gemini_invalid_key', message: 'The Gemini API key is missing or invalid. Set GEMINI_API_KEY on the server.' };
+  if (httpStatus === 429)
+    return { status: 429, error: 'gemini_quota', message: 'The Gemini API rate/quota limit was hit. Please try again shortly.' };
+  if (httpStatus === 404)
+    return { status: 502, error: 'gemini_error', message: `Gemini model "${GEMINI_MODEL}" was not found. Check GEMINI_MODEL.` };
+  if (httpStatus && httpStatus >= 400)
+    return { status: 502, error: 'gemini_error', message: `Gemini returned HTTP ${httpStatus}.` };
+  if (code === 'ECONNABORTED' || code === 'ETIMEDOUT')
     return { status: 504, error: 'ai_timeout', message: 'The AI model is responding slowly. Please try again.' };
-  if (error.code === 'ECONNRESET' || error.code === 'EPIPE')
-    return { status: 502, error: 'ollama_connection_lost', message: 'The connection to Ollama dropped mid-request.' };
-  if (error.code === 'ENOTFOUND' || error.code === 'EAI_AGAIN' || error.code === 'EHOSTUNREACH' || error.code === 'ENETUNREACH')
-    return { status: 503, error: 'ollama_host_unreachable', message: `Cannot resolve Ollama host at ${OLLAMA_BASE_URL}. Check OLLAMA_URL.` };
-  if (error.response && error.response.status)
-    return { status: 502, error: 'ollama_error', message: `Ollama returned HTTP ${error.response.status}.` };
+  if (code === 'ECONNRESET' || code === 'EPIPE')
+    return { status: 502, error: 'gemini_connection_lost', message: 'The connection to the Gemini API dropped mid-request.' };
+  if (code === 'ENOTFOUND' || code === 'EAI_AGAIN' || code === 'EHOSTUNREACH' || code === 'ENETUNREACH')
+    return { status: 503, error: 'gemini_unreachable', message: `Cannot reach the Gemini API at ${GEMINI_BASE_URL}.` };
   if (error.request && !error.response)
     return { status: 504, error: 'ai_timeout', message: 'No response received from the AI model in time.' };
   return { status: 500, error: 'server_error', message: error.message || 'Sage could not complete the request.' };
@@ -275,26 +315,29 @@ exports.chat = async (req, res) => {
       const cached = getFromCache(getCacheKey(eateryId, message, context));
       if (cached) {
         console.log(`[Sage] ✓ Cache hit for: "${message.substring(0, 50)}"`);
-        return res.json({ success: true, response: cached, cached: true, model: MODEL_NAME, timestamp: new Date().toISOString() });
+        return res.json({ success: true, response: cached, cached: true, model: GEMINI_MODEL, timestamp: new Date().toISOString() });
       }
+    }
+
+    if (!GEMINI_API_KEY) {
+      return res.status(500).json({
+        error: 'gemini_not_configured',
+        message: 'Sage is not configured with a Gemini API key. Set GEMINI_API_KEY on the server.',
+      });
     }
 
     const snapshotBlock = await resolveSnapshotBlock(context, eateryId);
     const messages = buildMessages(snapshotBlock, history, message);
 
-    console.log(`[Sage] Sending ${messages.length} messages to Ollama (model: ${MODEL_NAME})`);
+    console.log(`[Sage] Sending ${messages.length} messages to Gemini (model: ${GEMINI_MODEL})`);
 
-    const ollamaRes = await axios.post(`${OLLAMA_BASE_URL}/api/chat`, {
-      model: MODEL_NAME,
-      messages,
-      stream: false,
-      keep_alive: KEEP_ALIVE,
-      options: ollamaOptions(),
-      // Slow CPU inference needs headroom — a tighter limit was turning
-      // slow-but-working replies into 504 errors. Client waits 125s.
-    }, { timeout: OLLAMA_TIMEOUT });
+    const geminiRes = await axios.post(
+      geminiEndpoint('generateContent'),
+      buildGeminiBody(messages),
+      { headers: geminiHeaders(), timeout: GEMINI_TIMEOUT }
+    );
 
-    const reply = (ollamaRes.data.message?.content || '').trim();
+    const reply = extractGeminiText(geminiRes.data).trim();
     if (!reply) {
       return res.status(502).json({
         error: 'empty_response',
@@ -304,11 +347,11 @@ exports.chat = async (req, res) => {
 
     if (eateryId) setCache(getCacheKey(eateryId, message, context), reply);
 
-    res.json({ success: true, response: reply, model: MODEL_NAME, cached: false, timestamp: new Date().toISOString() });
+    res.json({ success: true, response: reply, model: GEMINI_MODEL, cached: false, timestamp: new Date().toISOString() });
 
   } catch (error) {
     console.error('[Sage] Chat error:', error.code || error.message);
-    const mapped = mapOllamaError(error);
+    const mapped = mapGeminiError(error);
     res.status(mapped.status).json({ error: mapped.error, message: mapped.message });
   }
 };
@@ -316,8 +359,8 @@ exports.chat = async (req, res) => {
 // ---------------------------------------------------------------------------
 // POST /api/chatbot/chat/stream  (Server-Sent Events)
 //
-// Streams tokens from Ollama's NDJSON output as SSE `data:` events so the UI
-// can render progressively. Event shapes:
+// Streams tokens from Gemini's `streamGenerateContent?alt=sse` endpoint as SSE
+// `data:` events so the UI can render progressively. Event shapes:
 //   { type: 'token', text }                       — a content delta
 //   { type: 'done', cached, model, timestamp }    — success terminator
 //   { type: 'error', error, message }             — failure (stream then ends)
@@ -348,13 +391,22 @@ exports.chatStream = async (req, res) => {
       return res.end();
     }
 
+    if (!GEMINI_API_KEY) {
+      send({
+        type: 'error',
+        error: 'gemini_not_configured',
+        message: 'Sage is not configured with a Gemini API key. Set GEMINI_API_KEY on the server.',
+      });
+      return res.end();
+    }
+
     // Serve a cached reply as a single token so the client path is identical.
     if (eateryId) {
       const cached = getFromCache(getCacheKey(eateryId, message, context));
       if (cached) {
         console.log(`[Sage] ✓ Cache hit (stream) for: "${message.substring(0, 50)}"`);
         send({ type: 'token', text: cached });
-        send({ type: 'done', cached: true, model: MODEL_NAME, timestamp: new Date().toISOString() });
+        send({ type: 'done', cached: true, model: GEMINI_MODEL, timestamp: new Date().toISOString() });
         return res.end();
       }
     }
@@ -362,65 +414,62 @@ exports.chatStream = async (req, res) => {
     const snapshotBlock = await resolveSnapshotBlock(context, eateryId);
     const messages = buildMessages(snapshotBlock, history, message);
 
-    console.log(`[Sage] Streaming ${messages.length} messages from Ollama (model: ${MODEL_NAME})`);
+    console.log(`[Sage] Streaming ${messages.length} messages from Gemini (model: ${GEMINI_MODEL})`);
 
-    const ollamaRes = await axios.post(`${OLLAMA_BASE_URL}/api/chat`, {
-      model: MODEL_NAME,
-      messages,
-      stream: true,
-      keep_alive: KEEP_ALIVE,
-      options: ollamaOptions(),
-    }, { timeout: OLLAMA_TIMEOUT, responseType: 'stream' });
+    const geminiRes = await axios.post(
+      `${geminiEndpoint('streamGenerateContent')}?alt=sse`,
+      buildGeminiBody(messages),
+      { headers: geminiHeaders(), timeout: GEMINI_TIMEOUT, responseType: 'stream' }
+    );
 
     let full = '';
-    // Ollama emits newline-delimited JSON, not standard SSE. Buffer partial
-    // lines across chunk boundaries before parsing.
+    // Gemini (alt=sse) emits standard SSE lines: `data: {json}` separated by
+    // blank lines. Buffer partial lines across chunk boundaries before parsing.
     let buffer = '';
-    ollamaRes.data.on('data', (chunk) => {
+    geminiRes.data.on('data', (chunk) => {
       buffer += chunk.toString('utf8');
       const lines = buffer.split('\n');
       buffer = lines.pop() || '';
       for (const line of lines) {
         const trimmed = line.trim();
-        if (!trimmed) continue;
+        if (!trimmed.startsWith('data:')) continue;
+        const payload = trimmed.slice(5).trim();
+        if (!payload || payload === '[DONE]') continue;
         let parsed;
         try {
-          parsed = JSON.parse(trimmed);
+          parsed = JSON.parse(payload);
         } catch (_) {
           continue; // ignore malformed partials
         }
-        const token = parsed.message?.content || '';
+        const token = extractGeminiText(parsed);
         if (token) {
           full += token;
           send({ type: 'token', text: token });
         }
-        if (parsed.done) {
-          // handled after stream end for cache correctness
-        }
       }
     });
 
-    ollamaRes.data.on('error', (err) => {
+    geminiRes.data.on('error', (err) => {
       console.error('[Sage] Stream error:', err.message);
-      const mapped = mapOllamaError(err);
+      const mapped = mapGeminiError(err);
       send({ type: 'error', error: mapped.error, message: mapped.message });
       res.end();
     });
 
-    ollamaRes.data.on('end', () => {
+    geminiRes.data.on('end', () => {
       const reply = full.trim();
       if (!reply) {
         send({ type: 'error', error: 'empty_response', message: 'Sage could not form a reliable response from the AI service.' });
         return res.end();
       }
       if (eateryId) setCache(getCacheKey(eateryId, message, context), reply);
-      send({ type: 'done', cached: false, model: MODEL_NAME, timestamp: new Date().toISOString() });
+      send({ type: 'done', cached: false, model: GEMINI_MODEL, timestamp: new Date().toISOString() });
       res.end();
     });
 
   } catch (error) {
     console.error('[Sage] Chat stream error:', error.code || error.message);
-    const mapped = mapOllamaError(error);
+    const mapped = mapGeminiError(error);
     // Headers are already sent, so report the failure as an SSE error event.
     send({ type: 'error', error: mapped.error, message: mapped.message });
     res.end();
@@ -429,44 +478,78 @@ exports.chatStream = async (req, res) => {
 
 // ---------------------------------------------------------------------------
 // GET /api/chatbot/status
+//
+// Checks the Gemini API with a lightweight model-list call. `ollamaRunning` is
+// kept (mapped to the Gemini result) so older frontends keep working; the new
+// neutral field is `online`.
 // ---------------------------------------------------------------------------
 exports.getStatus = async (req, res) => {
   if (SAGE_DISABLED) {
     return res.json({
       status: 'disabled',
       ollamaRunning: false,
+      online: false,
+      provider: 'gemini',
+      model: GEMINI_MODEL,
       hasModel: false,
       demoDisabled: true,
       message: SAGE_DISABLED_MESSAGE,
     });
   }
+  if (!GEMINI_API_KEY) {
+    return res.status(503).json({
+      status: 'not_configured',
+      ollamaRunning: false,
+      online: false,
+      provider: 'gemini',
+      model: GEMINI_MODEL,
+      hasModel: false,
+      error: 'gemini_not_configured',
+      message: 'The Gemini API key is not set. Set GEMINI_API_KEY on the server.',
+    });
+  }
   try {
-    const response = await axios.get(`${OLLAMA_BASE_URL}/api/tags`, { timeout: 5000 });
-    const models = response.data.models || [];
+    const response = await axios.get(`${GEMINI_BASE_URL}/models`, {
+      headers: geminiHeaders(),
+      timeout: 5000,
+    });
+    const models = Array.isArray(response.data?.models) ? response.data.models : [];
+    const names = models.map((m) => String(m.name || '').replace(/^models\//, '')).filter(Boolean);
     res.json({
       status: 'online',
       ollamaRunning: true,
-      hasModel: models.length > 0,
-      availableModels: models.map(m => m.name),
-      baseUrl: OLLAMA_BASE_URL,
+      online: true,
+      provider: 'gemini',
+      model: GEMINI_MODEL,
+      hasModel: names.includes(GEMINI_MODEL),
+      availableModels: names,
+      baseUrl: GEMINI_BASE_URL,
     });
   } catch (error) {
-    // Distinguish "not running" from "not answering" so the client can show
-    // the right fix instead of one blanket "start ollama serve" message.
-    const refused = error.code === 'ECONNREFUSED';
+    // Distinguish "bad key" from "quota" from "unreachable" so the client can
+    // show the right fix instead of one blanket message.
+    const httpStatus = error.response?.status;
+    const invalidKey = httpStatus === 401 || httpStatus === 403;
+    const quota = httpStatus === 429;
     const timedOut = error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT';
     res.status(503).json({
-      status: 'offline',
+      status: invalidKey ? 'invalid_key' : quota ? 'quota' : timedOut ? 'timeout' : 'unreachable',
       ollamaRunning: false,
+      online: false,
+      provider: 'gemini',
+      model: GEMINI_MODEL,
       hasModel: false,
-      error: refused ? 'ollama_unavailable'
-           : timedOut ? 'ollama_timeout'
-           : 'ollama_unreachable',
-      message: refused
-        ? 'Ollama is not running. Start it with: ollama serve'
-        : timedOut
-          ? 'Ollama is running but did not respond in time.'
-          : `Cannot reach Ollama at ${OLLAMA_BASE_URL}.`,
+      error: invalidKey ? 'gemini_invalid_key'
+           : quota ? 'gemini_quota'
+           : timedOut ? 'ai_timeout'
+           : 'gemini_unreachable',
+      message: invalidKey
+        ? 'The Gemini API key is missing or invalid.'
+        : quota
+          ? 'The Gemini API rate/quota limit was hit.'
+          : timedOut
+            ? 'The Gemini API did not respond in time.'
+            : `Cannot reach the Gemini API at ${GEMINI_BASE_URL}.`,
       detail: error.message,
     });
   }
@@ -524,6 +607,7 @@ exports.getInsights = async (req, res) => {
     // Ask AI for a short narrative summary
     let aiSummary = '';
     try {
+      if (!GEMINI_API_KEY) throw new Error('GEMINI_API_KEY not set');
       const prompt = `You are Sage, a warm restaurant business consultant. Write a short, human summary of this week's performance for the restaurant owner in 2-3 sentences: open with the most important insight, sound genuinely encouraging when things went well, empathetic when they didn't, and finish with one simple suggested action. Use contractions and natural language — not a robotic data readout.
 
 Data:
@@ -536,14 +620,16 @@ Data:
 
 STRICT RULE: Use ONLY the exact numbers provided above. Never invent sales numbers or dish names.`;
 
-      const aiRes = await axios.post(`${OLLAMA_BASE_URL}/api/generate`, {
-        model: MODEL_NAME,
-        prompt,
-        stream: false,
-        options: { temperature: 0.5, num_predict: 120, num_ctx: 4096 },
-      }, { timeout: 60000 });
+      const aiRes = await axios.post(
+        geminiEndpoint('generateContent'),
+        {
+          contents: [{ role: 'user', parts: [{ text: prompt }] }],
+          generationConfig: { temperature: 0.5, maxOutputTokens: 300 },
+        },
+        { headers: geminiHeaders(), timeout: 60000 }
+      );
 
-      aiSummary = (aiRes.data.response || '').trim();
+      aiSummary = extractGeminiText(aiRes.data).trim();
     } catch (_) {
       aiSummary = `Revenue this week: ₱${totalRevenue.toFixed(2)} across ${totalOrders} orders. Top item: ${topSeller}.`;
     }
@@ -643,26 +729,17 @@ Menu Items: ${menuSample}
 // ---------------------------------------------------------------------------
 // Warm-up  (called on server start; non-blocking, best-effort)
 //
-// Loads the model into memory so the first real question skips cold-start,
-// then keeps it resident via `keep_alive`.
+// Gemini is a hosted API - there is no local model to pre-load. Kept as a
+// no-op so the server startup wiring remains unchanged.
 // ---------------------------------------------------------------------------
 exports.warmUpModel = async () => {
   if (SAGE_DISABLED) {
     console.log('[Sage] Demo mode: warm-up skipped (SAGE_DISABLED=true).');
     return;
   }
-  const started = Date.now();
-  try {
-    await axios.post(`${OLLAMA_BASE_URL}/api/chat`, {
-      model: MODEL_NAME,
-      messages: [{ role: 'user', content: 'ping' }],
-      stream: false,
-      keep_alive: KEEP_ALIVE,
-      options: { num_predict: 1, num_ctx: 512 },
-    }, { timeout: OLLAMA_TIMEOUT });
-    console.log(`[Sage] Model "${MODEL_NAME}" warmed in ${Date.now() - started}ms (keep_alive: ${KEEP_ALIVE}).`);
-  } catch (error) {
-    // Never fatal: Sage will warm lazily on the first real request instead.
-    console.warn(`[Sage] Warm-up skipped (${error.code || error.message}). Sage will load on first use.`);
+  if (!GEMINI_API_KEY) {
+    console.warn('[Sage] GEMINI_API_KEY is not set - Sage will report a configuration error until it is.');
+    return;
   }
+  console.log(`[Sage] Using Gemini model "${GEMINI_MODEL}" via ${GEMINI_BASE_URL} (hosted API - no warm-up needed).`);
 };

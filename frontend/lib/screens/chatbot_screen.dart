@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import '../services/chat_provider.dart';
+import '../widgets/sage_markdown.dart';
 
 class ChatbotScreen extends StatefulWidget {
   const ChatbotScreen({super.key});
@@ -103,7 +104,7 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
                 color: primary.withValues(alpha: 0.12),
                 borderRadius: BorderRadius.circular(10),
               ),
-              child: Icon(Icons.smart_toy_outlined, color: primary, size: 20),
+              child: Icon(Icons.assistant_outlined, color: primary, size: 20),
             ),
             const SizedBox(width: 10),
             Column(
@@ -111,7 +112,7 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 const Text(
-                  'SmartBot',
+                  'Sage',
                   style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
                 ),
                 Row(
@@ -123,7 +124,7 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
                         shape: BoxShape.circle,
                         color: chatProvider.isCheckingStatus
                             ? Colors.orange
-                            : chatProvider.ollamaOnline
+                            : chatProvider.sageOnline
                                 ? Colors.green.shade500
                                 : Colors.red.shade400,
                       ),
@@ -132,7 +133,7 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
                     Text(
                       chatProvider.isCheckingStatus
                           ? 'Checking...'
-                          : chatProvider.ollamaOnline
+                          : chatProvider.sageOnline
                               ? 'Online'
                               : 'Offline',
                       style: TextStyle(
@@ -164,7 +165,7 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
       body: Column(
         children: [
           // Subtle offline notice
-          if (!chatProvider.ollamaOnline && !chatProvider.isCheckingStatus)
+          if (!chatProvider.sageOnline && !chatProvider.isCheckingStatus)
             Container(
               width: double.infinity,
               color: Colors.amber.shade50,
@@ -176,7 +177,7 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      'AI is offline. Run: ollama serve',
+                      'Sage\'s AI service is offline — see the message below for why.',
                       style: TextStyle(
                         fontSize: 12,
                         color: Colors.amber.shade900,
@@ -188,26 +189,34 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
               ),
             ),
 
-          // Messages list
+          // Messages list — wrapped in SelectionArea so the whole
+          // conversation can be drag-selected and copied in one gesture.
           Expanded(
-            child: ListView.builder(
-              controller: _scrollController,
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              itemCount: chatProvider.messages.length,
-              itemBuilder: (context, index) {
-                final message = chatProvider.messages[index];
-                final isUser = message.role == 'user';
-                final isFirst =
-                    index == 0 || chatProvider.messages[index - 1].role != message.role;
-                final timeStr = DateFormat('h:mm a').format(message.timestamp);
+            child: SelectionArea(
+              child: ListView.builder(
+                controller: _scrollController,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                // Keep more messages mounted so a selection can span
+                // further back into the conversation.
+                cacheExtent: 4000,
+                itemCount: chatProvider.messages.length,
+                itemBuilder: (context, index) {
+                  final message = chatProvider.messages[index];
+                  final isUser = message.role == 'user';
+                  final isFirst = index == 0 ||
+                      chatProvider.messages[index - 1].role != message.role;
+                  final timeStr =
+                      DateFormat('h:mm a').format(message.timestamp);
 
-                return _MessageBubble(
-                  content: message.content,
-                  isUser: isUser,
-                  isFirst: isFirst,
-                  time: timeStr,
-                );
-              },
+                  return _MessageBubble(
+                    content: message.content,
+                    isUser: isUser,
+                    isFirst: isFirst,
+                    time: timeStr,
+                  );
+                },
+              ),
             ),
           ),
 
@@ -285,7 +294,7 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
                         _TypingDots(color: primary),
                         const SizedBox(width: 8),
                         Text(
-                          'SmartBot is thinking',
+                          'Sage is thinking',
                           style: TextStyle(
                             color: Colors.grey.shade600,
                             fontSize: 12,
@@ -316,7 +325,7 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
                       child: TextField(
                         controller: _messageController,
                         decoration: InputDecoration(
-                          hintText: 'Ask SmartBot...',
+                          hintText: 'Ask Sage...',
                           hintStyle: TextStyle(
                             color: Colors.grey.shade500,
                             fontSize: 14,
@@ -369,41 +378,6 @@ class _MessageBubble extends StatelessWidget {
     required this.time,
   });
 
-  Widget _buildParsedContent(BuildContext context, String content, TextStyle baseStyle) {
-    final primary = Theme.of(context).colorScheme.primary;
-    final List<TextSpan> spans = [];
-    final RegExp regExp = RegExp(r'\*\*(.*?)\*\*');
-    int lastMatchEnd = 0;
-
-    for (final Match match in regExp.allMatches(content)) {
-      if (match.start > lastMatchEnd) {
-        spans.add(TextSpan(
-          text: content.substring(lastMatchEnd, match.start),
-          style: baseStyle,
-        ));
-      }
-      spans.add(TextSpan(
-        text: match.group(1),
-        style: baseStyle.copyWith(
-          fontWeight: FontWeight.bold,
-          color: isUser ? Colors.white : primary,
-        ),
-      ));
-      lastMatchEnd = match.end;
-    }
-
-    if (lastMatchEnd < content.length) {
-      spans.add(TextSpan(
-        text: content.substring(lastMatchEnd),
-        style: baseStyle,
-      ));
-    }
-
-    return RichText(
-      text: TextSpan(children: spans),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final primary = Theme.of(context).colorScheme.primary;
@@ -452,15 +426,29 @@ class _MessageBubble extends StatelessWidget {
                         ? Border.all(color: Colors.grey.shade200)
                         : null,
                   ),
-                  child: _buildParsedContent(
-                    context,
-                    content,
-                    TextStyle(
-                      color: isUser ? Colors.white : Colors.grey.shade800,
-                      fontSize: 13.5,
-                      height: 1.4,
-                    ),
-                  ),
+                  child: isUser
+                      ? SageMarkdown(
+                          content,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 13.5,
+                            height: 1.4,
+                          ),
+                          highlightColor: Colors.white,
+                        )
+                      : SageMarkdown(
+                          content,
+                          style: TextStyle(
+                            color: Colors.grey.shade800,
+                            fontSize: 13.5,
+                            height: 1.4,
+                          ),
+                          highlightColor: primary,
+                          bulletColor: primary,
+                          calloutBackground: primary.withValues(alpha: 0.07),
+                          calloutBorder: primary.withValues(alpha: 0.45),
+                          codeColor: Colors.blueGrey.shade700,
+                        ),
                 ),
                 const SizedBox(height: 2),
                 Row(
@@ -665,3 +653,4 @@ class _ActionChip extends StatelessWidget {
     );
   }
 }
+ 

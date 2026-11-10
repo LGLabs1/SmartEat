@@ -49,8 +49,8 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`✓ Smart Eat Backend running on port ${PORT}`);
 
-  // Best-effort: pre-load the Sage model so the first question is not slowed
-  // by Ollama's cold-start. Failures are logged and ignored.
+  // Best-effort: verify Sage's AI configuration at startup. Failures are
+  // logged and ignored.
   try {
     require('./controllers/chatbotController').warmUpModel();
   } catch (err) {
