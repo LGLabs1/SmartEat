@@ -7,6 +7,7 @@ import 'dart:math';
 import '../utils/order_query_key.dart';
 import 'business_context_builder.dart';
 import 'notification_service.dart';
+import 'sms_service.dart';
 
 class FirebaseService {
   static final FirebaseFirestore _firestore = FirebaseFirestore.instance;
@@ -109,6 +110,9 @@ class FirebaseService {
   static const String expensesCollection = 'expenses';
   static const String payablesCollection = 'payables';
   static const String staffMealsCollection = 'staff_meals';
+  static const String stockMovementsCollection = 'stock_movements';
+  static const String purchaseReceiptsCollection = 'purchase_receipts';
+  static const String stockAdjustmentsCollection = 'stock_adjustments';
 
   static CollectionReference<Map<String, dynamic>> _eaterySubcollection(
     String eateryId,
@@ -342,6 +346,132 @@ class FirebaseService {
     }
   }
 
+  // Inventory audit trail (movements, purchase receipts, adjustments).
+  //
+  // These records were previously kept only in device SharedPreferences, so
+  // they were lost on reinstall/new devices. They now live in Firestore under
+  // the eatery so history is durable and shared across the team.
+  static Future<List<Map<String, dynamic>>> getStockMovements() async {
+    try {
+      final eateryId = await _requireCurrentEateryId();
+      final snap = await _withRetry(
+        () => _eaterySubcollection(eateryId, stockMovementsCollection).get(),
+      );
+      return snap.docs.map((d) {
+        final Map<String, dynamic> result = {'id': d.id};
+        result.addAll(d.data());
+        return result;
+      }).toList();
+    } catch (e) {
+      throw Exception('Failed to fetch stock movements: $e');
+    }
+  }
+
+  /// Appends a stock movement. [data] may provide an explicit `id`; when it
+  /// does the document uses that id so re-writes are idempotent.
+  static Future<Map<String, dynamic>> createStockMovement(
+    Map<String, dynamic> data,
+  ) async {
+    try {
+      final eateryId = await _requireCurrentEateryId();
+      final id = (data['id'] ?? '').toString().trim();
+      final payload = <String, dynamic>{
+        ...data,
+        'eateryId': eateryId,
+        'createdAt': FieldValue.serverTimestamp(),
+      };
+      final collection = _eaterySubcollection(eateryId, stockMovementsCollection);
+      if (id.isEmpty) {
+        final ref = await _withRetry(() => collection.add(payload));
+        return {'id': ref.id, ...payload};
+      }
+      await _withRetry(() => collection.doc(id).set(payload));
+      return {'id': id, ...payload};
+    } catch (e) {
+      throw Exception('Failed to record stock movement: $e');
+    }
+  }
+
+  static Future<List<Map<String, dynamic>>> getPurchaseReceipts() async {
+    try {
+      final eateryId = await _requireCurrentEateryId();
+      final snap = await _withRetry(
+        () => _eaterySubcollection(eateryId, purchaseReceiptsCollection).get(),
+      );
+      return snap.docs.map((d) {
+        final Map<String, dynamic> result = {'id': d.id};
+        result.addAll(d.data());
+        return result;
+      }).toList();
+    } catch (e) {
+      throw Exception('Failed to fetch purchase receipts: $e');
+    }
+  }
+
+  static Future<Map<String, dynamic>> createPurchaseReceipt(
+    Map<String, dynamic> data,
+  ) async {
+    try {
+      final eateryId = await _requireCurrentEateryId();
+      final id = (data['id'] ?? '').toString().trim();
+      final payload = <String, dynamic>{
+        ...data,
+        'eateryId': eateryId,
+        'createdAt': FieldValue.serverTimestamp(),
+      };
+      final collection =
+          _eaterySubcollection(eateryId, purchaseReceiptsCollection);
+      if (id.isEmpty) {
+        final ref = await _withRetry(() => collection.add(payload));
+        return {'id': ref.id, ...payload};
+      }
+      await _withRetry(() => collection.doc(id).set(payload));
+      return {'id': id, ...payload};
+    } catch (e) {
+      throw Exception('Failed to record purchase receipt: $e');
+    }
+  }
+
+  static Future<List<Map<String, dynamic>>> getStockAdjustments() async {
+    try {
+      final eateryId = await _requireCurrentEateryId();
+      final snap = await _withRetry(
+        () => _eaterySubcollection(eateryId, stockAdjustmentsCollection).get(),
+      );
+      return snap.docs.map((d) {
+        final Map<String, dynamic> result = {'id': d.id};
+        result.addAll(d.data());
+        return result;
+      }).toList();
+    } catch (e) {
+      throw Exception('Failed to fetch stock adjustments: $e');
+    }
+  }
+
+  static Future<Map<String, dynamic>> createStockAdjustment(
+    Map<String, dynamic> data,
+  ) async {
+    try {
+      final eateryId = await _requireCurrentEateryId();
+      final id = (data['id'] ?? '').toString().trim();
+      final payload = <String, dynamic>{
+        ...data,
+        'eateryId': eateryId,
+        'createdAt': FieldValue.serverTimestamp(),
+      };
+      final collection =
+          _eaterySubcollection(eateryId, stockAdjustmentsCollection);
+      if (id.isEmpty) {
+        final ref = await _withRetry(() => collection.add(payload));
+        return {'id': ref.id, ...payload};
+      }
+      await _withRetry(() => collection.doc(id).set(payload));
+      return {'id': id, ...payload};
+    } catch (e) {
+      throw Exception('Failed to record stock adjustment: $e');
+    }
+  }
+
   static Future<void> deleteExpense(String id) async {
     try {
       await _requireAdmin();
@@ -356,19 +486,37 @@ class FirebaseService {
   static Future<List<Map<String, dynamic>>> getPayables() async {
     try {
       final eateryId = await _requireCurrentEateryId();
+      // Fetch without a server-side orderBy: Firestore silently omits any
+      // document missing the ordered field, so ordering by createdAt would
+      // hide bills created outside this helper. Sort client-side instead.
       final querySnapshot = await _withRetry(
-        () => _eaterySubcollection(eateryId, payablesCollection)
-            .orderBy('createdAt', descending: true)
-            .get(),
+        () => _eaterySubcollection(eateryId, payablesCollection).get(),
       );
-      return querySnapshot.docs.map((doc) {
+      final items = querySnapshot.docs.map((doc) {
         final Map<String, dynamic> result = {'id': doc.id};
         result.addAll(doc.data());
         return result;
       }).toList();
+      items.sort((a, b) {
+        final ad = _asDateTime(a['createdAt']);
+        final bd = _asDateTime(b['createdAt']);
+        if (ad == null && bd == null) return 0;
+        if (ad == null) return 1;
+        if (bd == null) return -1;
+        return bd.compareTo(ad);
+      });
+      return items;
     } catch (e) {
       throw Exception('Failed to fetch payables: $e');
     }
+  }
+
+  static DateTime? _asDateTime(dynamic value) {
+    if (value == null) return null;
+    if (value is DateTime) return value;
+    if (value is Timestamp) return value.toDate();
+    if (value is String) return DateTime.tryParse(value);
+    return null;
   }
 
   static Future<Map<String, dynamic>> createPayable(
@@ -443,6 +591,120 @@ class FirebaseService {
     }
   }
 
+  /// Finds the expense auto-posted when a bill was marked paid. Returns null
+  /// when none exists so posting a payment stays idempotent.
+  static Future<Map<String, dynamic>?> findExpenseByLinkedPayable(
+    String payableId,
+  ) async {
+    final id = payableId.trim();
+    if (id.isEmpty) return null;
+    try {
+      final eateryId = await _requireCurrentEateryId();
+      final querySnapshot = await _withRetry(
+        () => _eaterySubcollection(eateryId, expensesCollection)
+            .where('linkedPayableId', isEqualTo: id)
+            .limit(1)
+            .get(),
+      );
+      if (querySnapshot.docs.isEmpty) return null;
+      final doc = querySnapshot.docs.first;
+      return {'id': doc.id, ...doc.data()};
+    } catch (e) {
+      throw Exception('Failed to look up linked payable expense: $e');
+    }
+  }
+
+  /// Records an actual payment against a payable: mirrors it into the expense
+  /// ledger and stores the actual amount on the payable (rolling history +
+  /// average) so variable bills keep useful estimates. Idempotent per payable:
+  /// any previously posted expense for this bill is removed first.
+  static Future<Map<String, dynamic>> recordPayablePayment({
+    required Map<String, dynamic> payable,
+    required double amount,
+    required String category,
+    DateTime? date,
+  }) async {
+    final id = (payable['id'] ?? '').toString();
+    if (id.isEmpty) throw Exception('Missing payable id');
+    if (amount <= 0) throw Exception('Payment amount must be greater than 0');
+
+    await _requireAdmin();
+    final eateryId = await _requireCurrentEateryId();
+    final paidOn = date ?? DateTime.now();
+
+    // Remove any stale mirror before re-posting so retries never duplicate.
+    final existing = await findExpenseByLinkedPayable(id);
+    if (existing != null) {
+      final existingId = (existing['id'] ?? '').toString();
+      if (existingId.isNotEmpty) {
+        await _eaterySubcollection(eateryId, expensesCollection)
+            .doc(existingId)
+            .delete();
+      }
+    }
+
+    final vendor = (payable['vendor'] ?? '').toString().trim();
+    final name = (payable['name'] ?? 'Bill').toString();
+    final expense = await _writeExpense({
+      'name': name,
+      'category': category,
+      'amount': amount,
+      'date': paidOn.toIso8601String(),
+      'source': 'payable_payment',
+      'linkedPayableId': id,
+      'paymentStatus': 'paid',
+      'notes': 'Bill payment${vendor.isNotEmpty ? ' - $vendor' : ''}',
+    });
+
+    // Append to bounded history and recompute the rolling average.
+    final history = <Map<String, dynamic>>[];
+    final rawHistory = payable['amountHistory'];
+    if (rawHistory is List) {
+      for (final item in rawHistory) {
+        if (item is Map) {
+          history.add(Map<String, dynamic>.from(item));
+        }
+      }
+    }
+    history.add({'amount': amount, 'date': paidOn.toIso8601String()});
+    const maxEntries = 12;
+    final trimmed = history.length > maxEntries
+        ? history.sublist(history.length - maxEntries)
+        : history;
+    final total = trimmed.fold<double>(0, (sum, e) {
+      final v = e['amount'];
+      return sum + (v is num ? v.toDouble() : 0.0);
+    });
+    final average = trimmed.isEmpty ? amount : total / trimmed.length;
+
+    await _eaterySubcollection(eateryId, payablesCollection).doc(id).update({
+      'lastAmount': amount,
+      'lastPaidAt': FieldValue.serverTimestamp(),
+      'amountHistory': trimmed,
+      'averageAmount': double.parse(average.toStringAsFixed(2)),
+      'status': 'paid',
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+
+    return {'data': expense};
+  }
+
+  /// Removes the expense mirrored when a bill was marked paid. No-op when no
+  /// linked expense exists. Used when a payment is undone.
+  static Future<void> removePayablePaymentExpense(String payableId) async {
+    final id = payableId.trim();
+    if (id.isEmpty) return;
+    await _requireAdmin();
+    final eateryId = await _requireCurrentEateryId();
+    final existing = await findExpenseByLinkedPayable(id);
+    if (existing == null) return;
+    final existingId = (existing['id'] ?? '').toString();
+    if (existingId.isEmpty) return;
+    await _eaterySubcollection(eateryId, expensesCollection)
+        .doc(existingId)
+        .delete();
+  }
+
   // Recipe methods (retained for compatibility)
   static Future<List<Map<String, dynamic>>> getRecipes() async {
     try {
@@ -474,15 +736,12 @@ class FirebaseService {
     try {
       await _requireAdmin();
       final eateryId = await _requireCurrentEateryId();
-
+      final data = Map<String, dynamic>.from(recipeData);
+      data['eateryId'] = eateryId;
+      data['createdAt'] = FieldValue.serverTimestamp();
+      data['updatedAt'] = FieldValue.serverTimestamp();
       final docRef =
-          await _eaterySubcollection(eateryId, recipesCollection).add({
-        ...recipeData,
-        'eateryId': eateryId,
-        'createdAt': FieldValue.serverTimestamp(),
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
-
+          await _eaterySubcollection(eateryId, recipesCollection).add(data);
       final docSnapshot = await docRef.get();
       return {
         'id': docRef.id,
@@ -490,6 +749,173 @@ class FirebaseService {
       };
     } catch (e) {
       throw Exception('Failed to create recipe: $e');
+    }
+  }
+
+  static Future<void> updateRecipe(
+      String recipeId, Map<String, dynamic> updates) async {
+    try {
+      await _requireAdmin();
+      final eateryId = await _requireCurrentEateryId();
+      final data = Map<String, dynamic>.from(updates);
+      data['updatedAt'] = FieldValue.serverTimestamp();
+      await _eaterySubcollection(eateryId, recipesCollection)
+          .doc(recipeId)
+          .update(data);
+    } catch (e) {
+      throw Exception('Failed to update recipe: $e');
+    }
+  }
+
+  static Future<void> deleteRecipe(String recipeId) async {
+    try {
+      await _requireAdmin();
+      final eateryId = await _requireCurrentEateryId();
+      await _eaterySubcollection(eateryId, recipesCollection)
+          .doc(recipeId)
+          .delete();
+    } catch (e) {
+      throw Exception('Failed to delete recipe: $e');
+    }
+  }
+
+  static Future<Map<String, dynamic>?> getRecipeById(String recipeId) async {
+    try {
+      final eateryId = await _requireCurrentEateryId();
+      final doc = await _eaterySubcollection(eateryId, recipesCollection)
+          .doc(recipeId)
+          .get();
+      if (!doc.exists) return null;
+      return {'id': doc.id, ...?doc.data()};
+    } catch (e) {
+      return null;
+    }
+  }
+
+  static Map<String, dynamic> computeRecipeCostTotals(
+      Map<String, dynamic> recipeData) {
+    final data = Map<String, dynamic>.from(recipeData);
+    final ingredients = data['ingredients'];
+    double batchCost = 0.0;
+    if (ingredients is List) {
+      final updatedIngredients = <Map<String, dynamic>>[];
+      for (final ing in ingredients) {
+        if (ing is Map) {
+          final ingCopy = Map<String, dynamic>.from(ing);
+          final qty = (ingCopy['quantity'] is num)
+              ? (ingCopy['quantity'] as num).toDouble()
+              : 0.0;
+          final unitCost = (ingCopy['unitCost'] is num)
+              ? (ingCopy['unitCost'] as num).toDouble()
+              : 0.0;
+          final totalCost = qty * unitCost;
+          ingCopy['totalCost'] = totalCost;
+          batchCost += totalCost;
+          updatedIngredients.add(ingCopy);
+        }
+      }
+      data['ingredients'] = updatedIngredients;
+    }
+    data['batchCost'] = batchCost;
+    final batchYield = (data['batchYield'] is num)
+        ? (data['batchYield'] as num).toDouble()
+        : ((data['baseServings'] is num)
+            ? (data['baseServings'] as num).toDouble()
+            : 1.0);
+    final yieldSafe = batchYield <= 0 ? 1.0 : batchYield;
+    data['costPerServing'] = batchCost / yieldSafe;
+    data['batchYield'] = yieldSafe;
+    data['costingMethod'] = data['costingMethod'] ?? 'recipe';
+    data['costSource'] = data['costSource'] ?? 'recipe_calculated';
+    data['costingUpdatedAt'] = FieldValue.serverTimestamp();
+    return data;
+  }
+
+  static Future<Map<String, dynamic>> createInventoryItemFromRecipe({
+    required String name,
+    required String category,
+    required String unit,
+    required double unitCost,
+    double initialStock = 0.0,
+    String? notes,
+  }) async {
+    try {
+      await _requireAdmin();
+      final eateryId = await _requireCurrentEateryId();
+      final normalized = name.trim().toLowerCase();
+      final existing =
+          await _eaterySubcollection(eateryId, inventoryCollection).get();
+      for (final doc in existing.docs) {
+        final data = doc.data();
+        final existingName = (data['name'] ?? '').toString().trim().toLowerCase();
+        if (existingName == normalized) {
+          return {'id': doc.id, ...data, 'linkedExisting': true};
+        }
+      }
+      final itemData = {
+        'name': name.trim(),
+        'category': category.trim(),
+        'unit': unit.trim(),
+        'unitCost': unitCost,
+        'lastPurchaseCost': unitCost,
+        'avgCost': unitCost,
+        'currentStock': initialStock,
+        'minStock': 0.0,
+        'reorderPoint': 0.0,
+        'maxStock': 0.0,
+        'safetyStock': 0.0,
+        'isActive': true,
+        'consumptionMode': 'recipePending',
+        'source': 'menu_recipe',
+        'createdBy': 'recipe_auto_create',
+        'isAutoCreated': true,
+        'notes': notes ?? '',
+        'eateryId': eateryId,
+        'createdAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      };
+      final docRef =
+          await _eaterySubcollection(eateryId, inventoryCollection).add(itemData);
+      final doc = await docRef.get();
+      return {'id': docRef.id, ...?doc.data()};
+    } catch (e) {
+      throw Exception('Failed to create inventory item from recipe: $e');
+    }
+  }
+
+  static Future<void> linkRecipeToMenuItems({
+    required String recipeId,
+    required List<String> menuItemIds,
+    Map<String, dynamic>? recipeCostData,
+  }) async {
+    try {
+      await _requireAdmin();
+      final eateryId = await _requireCurrentEateryId();
+      final batch = _firestore.batch();
+      for (final menuItemId in menuItemIds) {
+        final updates = <String, dynamic>{
+          'recipeId': recipeId,
+          'updatedAt': FieldValue.serverTimestamp(),
+        };
+        if (recipeCostData != null) {
+          if (recipeCostData['costPerServing'] != null) {
+            updates['costPerServing'] = recipeCostData['costPerServing'];
+          }
+          if (recipeCostData['batchCost'] != null) {
+            updates['batchCost'] = recipeCostData['batchCost'];
+          }
+          updates['costingSource'] = 'recipe';
+        }
+        batch.update(
+            _eaterySubcollection(eateryId, menuCollection).doc(menuItemId),
+            updates);
+      }
+      await batch.commit();
+      await updateRecipe(recipeId, {
+        'linkedMenuItemIds': menuItemIds,
+      });
+    } catch (e) {
+      throw Exception('Failed to link recipe to menu items: $e');
     }
   }
 
@@ -571,6 +997,19 @@ class FirebaseService {
           messagingSenderId: "362576674400",
           appId: "1:362576674400:web:1ef49ac6e0d384f4eecd05",
           measurementId: "G-630LE42NK7",
+        ),
+      );
+    } else if (defaultTargetPlatform == TargetPlatform.windows) {
+      // FlutterFire desktop has no native config file, so pass the existing
+      // Android app's Firebase options explicitly.
+      await Firebase.initializeApp(
+        options: const FirebaseOptions(
+          apiKey: "AIzaSyAFb3IRH3lxjmhrp_0LPZRU5dyLWXq7KWM",
+          authDomain: "smart-eat-2eaf7.firebaseapp.com",
+          projectId: "smart-eat-2eaf7",
+          storageBucket: "smart-eat-2eaf7.firebasestorage.app",
+          messagingSenderId: "362576674400",
+          appId: "1:362576674400:android:f9965ac89a4b5557eecd05",
         ),
       );
     } else {
@@ -1373,6 +1812,19 @@ class FirebaseService {
             currentStock: lowStock['currentStock'] as double,
             minStock: lowStock['minStock'] as double,
           );
+          // Send SMS for low stock (order-only trigger)
+          try {
+            await SmsService.sendLowStock(
+              eateryId: eateryId,
+              itemId: (lowStock['id'] ?? '').toString().isNotEmpty
+                  ? (lowStock['id'] ?? '').toString()
+                  : (lowStock['name'] ?? '').toString(),
+              itemName: lowStock['name'] as String,
+              currentStock: (lowStock['currentStock'] as num).toDouble(),
+              unit: (lowStock['unit'] ?? '').toString(),
+              threshold: (lowStock['minStock'] as num).toDouble(),
+            );
+          } catch (_) {}
         }
       } catch (_) {
         // Notifications are not critical
@@ -1621,8 +2073,27 @@ class FirebaseService {
     }
   }
 
-  static Future<Map<String, dynamic>> completeOrder(String orderId) async {
+  static Future<Map<String, dynamic>> completeOrder(
+    String orderId, {
+    String? paymentMethod,
+    double? amountReceived,
+    double? change,
+    String? referenceNumber,
+    String? paymentStatus,
+  }) async {
     String eateryId = '';
+    // Payment details captured at checkout, if any. Only provided keys are
+    // written so legacy callers keep the old document shape.
+    final paymentFields = <String, dynamic>{
+      if (paymentMethod != null && paymentMethod.isNotEmpty)
+        'paymentMethod': paymentMethod,
+      if (amountReceived != null) 'amountReceived': amountReceived,
+      if (change != null) 'change': change,
+      if (referenceNumber != null && referenceNumber.isNotEmpty)
+        'referenceNumber': referenceNumber,
+      if (paymentStatus != null && paymentStatus.isNotEmpty)
+        'paymentStatus': paymentStatus,
+    };
     try {
       await _requireStaffOrAdmin();
       eateryId = await _requireCurrentEateryId();
@@ -1693,6 +2164,7 @@ class FirebaseService {
                   'status': 'completed',
                   'completedAt': FieldValue.serverTimestamp(),
                   'updatedAt': FieldValue.serverTimestamp(),
+                  ...paymentFields,
                 },
                 SetOptions(merge: true));
             return {'ok': true, 'status': 'completed'};
@@ -1988,6 +2460,7 @@ class FirebaseService {
                 'status': 'completed',
                 'completedAt': FieldValue.serverTimestamp(),
                 'updatedAt': FieldValue.serverTimestamp(),
+                ...paymentFields,
               },
               SetOptions(merge: true));
 
@@ -2699,6 +3172,150 @@ static Future<List<Map<String, dynamic>>> getIncompleteOrders({
   }
 
   // Analytics methods
+  /// Best-effort ingredient usage derived from completed orders and recipes.
+  /// This is read-only and separate from Actual COGS (stock movements).
+  static Future<Map<String, dynamic>> getIngredientUsageByMenuItem({
+    int days = 30,
+  }) async {
+    try {
+      final orders = await getOrders();
+      final menuItems = await getMenuItems();
+      final recipes = await getRecipes();
+      final inventory = await getInventoryItems();
+      final menuById = <String, Map<String, dynamic>>{
+        for (final m in menuItems)
+          if ((m['id'] ?? '').toString().isNotEmpty) (m['id'] as String): m,
+      };
+      final recipeById = <String, Map<String, dynamic>>{
+        for (final r in recipes)
+          if ((r['id'] ?? '').toString().isNotEmpty) (r['id'] as String): r,
+      };
+      final invByNormName = <String, Map<String, dynamic>>{};
+      for (final i in inventory) {
+        final k = _norm((i['name'] ?? '').toString());
+        if (k.isNotEmpty) invByNormName[k] = i;
+      }
+      final cutoff = DateTime.now().subtract(Duration(days: days));
+      DateTime? parseDate(dynamic v) {
+        if (v is Timestamp) return v.toDate();
+        if (v is DateTime) return v;
+        return DateTime.tryParse(v?.toString() ?? '');
+      }
+
+      final byIngredient = <String, Map<String, dynamic>>{};
+      final byMenu = <String, Map<String, dynamic>>{};
+
+      for (final order in orders) {
+        final status = (order['status'] ?? '').toString().toLowerCase();
+        if (status != 'completed') continue;
+        final when = parseDate(order['completedAt']) ??
+            parseDate(order['updatedAt']) ??
+            parseDate(order['createdAt']);
+        if (when != null && when.isBefore(cutoff)) continue;
+        final items = order['items'] as List<dynamic>? ?? const [];
+        for (final raw in items) {
+          final it = raw as Map? ?? const {};
+          final menuItemId = (it['menuItemId'] ?? it['id'] ?? '').toString();
+          final qtySold = (it['quantity'] as num?)?.toDouble() ?? 0;
+          if (menuItemId.isEmpty || qtySold <= 0) continue;
+          final menu = menuById[menuItemId];
+          if (menu == null) continue;
+          final menuName = (menu['name'] ?? 'Menu item').toString();
+          final recipeId = (menu['recipeId'] ?? '').toString();
+          final recipe = recipeById[recipeId];
+          if (recipe == null) continue;
+          final baseServingsRaw = recipe['baseServings'] ?? recipe['batchYield'];
+          final baseServings = baseServingsRaw is num
+              ? baseServingsRaw.toDouble()
+              : double.tryParse(baseServingsRaw?.toString() ?? '') ?? 1.0;
+          final factor = baseServings > 0 ? qtySold / baseServings : qtySold;
+          final ingredients = recipe['ingredients'] as List<dynamic>? ?? const [];
+          final menuAgg = byMenu.putIfAbsent(menuItemId, () => {
+                'menuItemId': menuItemId,
+                'menuItemName': menuName,
+                'recipeId': recipeId,
+                'recipeName': (recipe['name'] ?? '').toString(),
+                'quantitySold': 0.0,
+                'estimatedIngredientCost': 0.0,
+                'ingredients': <Map<String, dynamic>>[],
+              });
+          menuAgg['quantitySold'] =
+              (menuAgg['quantitySold'] as double) + qtySold;
+          double menuCost = 0;
+          final menuIngAgg = <String, Map<String, dynamic>>{};
+          for (final ingRaw in ingredients) {
+            final ing = ingRaw as Map? ?? const {};
+            final ingName = (ing['name'] ?? '').toString().trim();
+            if (ingName.isEmpty) continue;
+            final perBatch = (ing['quantity'] as num?)?.toDouble() ?? 0;
+            if (perBatch <= 0) continue;
+            final usedQty = perBatch * factor;
+            final unitCost = (ing['unitCost'] as num?)?.toDouble() ?? 0;
+            final usedCost = usedQty * unitCost;
+            final inv = invByNormName[_norm(ingName)];
+            final invId = inv?['id']?.toString() ?? '';
+            final key = invId.isNotEmpty ? invId : _norm(ingName);
+            final agg = byIngredient.putIfAbsent(key, () => {
+                  'ingredientKey': key,
+                  'inventoryItemId': invId,
+                  'name': ingName,
+                  'unit': (ing['unit'] ?? inv?['unit'] ?? '').toString(),
+                  'usedQty': 0.0,
+                  'estimatedCost': 0.0,
+                  'menuItems': <String, double>{},
+                });
+            agg['usedQty'] = (agg['usedQty'] as double) + usedQty;
+            agg['estimatedCost'] = (agg['estimatedCost'] as double) + usedCost;
+            final mm = (agg['menuItems'] as Map<String, double>);
+            mm[menuName] = (mm[menuName] ?? 0) + usedQty;
+            menuCost += usedCost;
+            final mi = menuIngAgg.putIfAbsent(key, () => {
+                  'name': ingName,
+                  'unit': (ing['unit'] ?? '').toString(),
+                  'usedQty': 0.0,
+                  'estimatedCost': 0.0,
+                });
+            mi['usedQty'] = (mi['usedQty'] as double) + usedQty;
+            mi['estimatedCost'] = (mi['estimatedCost'] as double) + usedCost;
+          }
+          menuAgg['estimatedIngredientCost'] =
+              (menuAgg['estimatedIngredientCost'] as double) + menuCost;
+          (menuAgg['ingredients'] as List<Map<String, dynamic>>)
+            ..clear()
+            ..addAll(menuIngAgg.values);
+        }
+      }
+
+      List<Map<String, dynamic>> ingredientList =
+          byIngredient.values.map((e) {
+        final m = Map<String, dynamic>.from(e);
+        final menuItems = (e['menuItems'] as Map<String, double>)
+            .entries
+            .map((x) => {'name': x.key, 'usedQty': x.value})
+            .toList()
+          ..sort((a, b) =>
+              ((b['usedQty'] as double)).compareTo((a['usedQty'] as double)));
+        m['menuItems'] = menuItems;
+        return m;
+      }).toList()
+            ..sort((a, b) => ((b['usedQty'] as num?)?.toDouble() ?? 0)
+                .compareTo((a['usedQty'] as num?)?.toDouble() ?? 0));
+
+      final menuList = byMenu.values.toList()
+        ..sort((a, b) => ((b['quantitySold'] as num?)?.toDouble() ?? 0)
+            .compareTo((a['quantitySold'] as num?)?.toDouble() ?? 0));
+
+      return {
+        'ingredients': ingredientList,
+        'menuItems': menuList,
+        'days': days,
+      };
+    } catch (e) {
+      throw Exception('Failed to compute ingredient usage: $e');
+    }
+  }
+
+
   static Future<Map<String, dynamic>> getDailySalesAnalytics({
     int days = 30,
   }) async {
@@ -2779,6 +3396,32 @@ static Future<List<Map<String, dynamic>>> getIncompleteOrders({
           }
         }
       }
+
+      // Merge recipe/menu costing fields for "Gross Margin (by Menu Costing)".
+      // This is additive and does not affect Actual COGS (movement-based).
+      try {
+        final menuItems = await getMenuItems();
+        final menuById = <String, Map<String, dynamic>>{
+          for (final m in menuItems)
+            if ((m['id'] ?? '').toString().isNotEmpty)
+              (m['id'] as String): m,
+        };
+        for (final stat in itemStats.values) {
+          final menu = menuById[stat['id']?.toString()];
+          if (menu == null) continue;
+          if (menu['costPerServing'] != null) {
+            stat['costPerServing'] = menu['costPerServing'];
+          }
+          if (menu['costPerUnit'] != null) {
+            stat['costPerUnit'] = menu['costPerUnit'];
+          }
+          if (menu['price'] != null) stat['price'] = menu['price'];
+          if (menu['recipeId'] != null) stat['recipeId'] = menu['recipeId'];
+          if (menu['costingSource'] != null) {
+            stat['costingSource'] = menu['costingSource'];
+          }
+        }
+      } catch (_) {}
 
       return {
         'items': itemStats.values.toList()
@@ -3056,6 +3699,7 @@ static Future<List<Map<String, dynamic>>> getIncompleteOrders({
       await _eaterySubcollection(eateryId, 'admin_profiles').doc(uid).set({
         ...data,
         'uid': uid,
+        'eateryId': eateryId,
         'createdAt': DateTime.now().toIso8601String(),
         'updatedAt': DateTime.now().toIso8601String(),
       });
@@ -3077,6 +3721,7 @@ static Future<List<Map<String, dynamic>>> getIncompleteOrders({
       await _eaterySubcollection(eateryId, 'staff_profiles').doc(uid).set({
         ...data,
         'uid': uid,
+        'eateryId': eateryId,
         'createdAt': DateTime.now().toIso8601String(),
         'updatedAt': DateTime.now().toIso8601String(),
       });

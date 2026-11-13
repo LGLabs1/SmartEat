@@ -1,6 +1,9 @@
 import 'dart:async';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'notification_service.dart';
 import '../services/api_service.dart';
+import 'sms_service.dart';
 
 /// Handles periodic notification checks for various system events
 class NotificationTriggerManager {
@@ -16,15 +19,23 @@ class NotificationTriggerManager {
   final Map<String, DateTime> _lastNotifications = {};
   final Map<String, List<String>> _notifiedItemIds = {};
 
-  /// Start periodic checks (runs every 15 minutes when app is active)
+  /// Start periodic checks (runs every 30 minutes when app is active)
   void startPeriodicChecks() {
+    if (FirebaseAuth.instance.currentUser == null) {
+      print('===== FIRESTORE STARTUP GUARD =====');
+      print('Notification triggers skipped because auth user is null.');
+      print('Current UID: ${FirebaseAuth.instance.currentUser?.uid ?? 'N/A'}');
+      print('===================================');
+      return;
+    }
+
     // Initial check
     _runAllChecks();
 
-    // Periodic check every 15 minutes
+    // Periodic check every 30 minutes
     _periodicCheckTimer?.cancel();
     _periodicCheckTimer = Timer.periodic(
-      const Duration(minutes: 15),
+      const Duration(minutes: 30),
       (_) => _runAllChecks(),
     );
   }
@@ -37,13 +48,97 @@ class NotificationTriggerManager {
 
   /// Run all notification checks
   Future<void> _runAllChecks() async {
-    if (!_notificationService.notificationsEnabled) return;
+    if (_notificationService.notificationsEnabled) {
+      await Future.wait([
+        _checkLowStock(),
+        _checkUpcomingBills(),
+        _checkPendingOrders(),
+      ]);
+    }
+    // SMS app-open catch-up (independent of local notification settings)
+    try {
+      await _checkSmsDailyCatchUp();
+    } catch (_) {}
+    // In-app pending staff approval feed (independent of local settings)
+    try {
+      await _checkPendingStaffApprovals();
+    } catch (_) {}
+  }
 
-    await Future.wait([
-      _checkLowStock(),
-      _checkUpcomingBills(),
-      _checkPendingOrders(),
-    ]);
+  /// Create one in-app notification per unapproved staff member in the
+  /// admin's eatery. Existing notifications keep their read state.
+  Future<void> _checkPendingStaffApprovals() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+    try {
+      final userSnap = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .get();
+      final profile = userSnap.data();
+      final role = (profile?['role'] ?? '').toString().toLowerCase();
+      final isAdmin = profile?['isAdmin'] == true || role == 'admin';
+      if (!isAdmin) return;
+      final eateryId = (profile?['eateryId'] ?? '').toString().trim();
+      if (eateryId.isEmpty) return;
+
+      final pendingSnap = await FirebaseFirestore.instance
+          .collection('users')
+          .where('eateryId', isEqualTo: eateryId)
+          .get();
+
+      for (final doc in pendingSnap.docs) {
+        final data = doc.data();
+        final staffRole = (data['role'] ?? '').toString().toLowerCase();
+        final staffIsAdmin = data['isAdmin'] == true || staffRole == 'admin';
+        if (staffIsAdmin || data['approved'] != false) continue;
+        final name = _displayName(data);
+        await _notificationService.persistFeedNotification(
+          title: 'New staff awaiting approval',
+          body: '$name has joined your eatery and needs approval.',
+          type: 'staff_approval',
+          source: 'staff',
+          eateryId: eateryId,
+          dedupeKey: 'pending_staff_${doc.id}',
+          preserveReadState: true,
+          data: {
+            'staffUid': doc.id,
+            'staffName': name,
+            'target': 'staff',
+          },
+        );
+      }
+    } catch (_) {}
+  }
+
+  String _displayName(Map<String, dynamic> data) {
+    final first = (data['firstName'] ?? '').toString().trim();
+    final last = (data['lastName'] ?? '').toString().trim();
+    final full = '$first $last'.trim();
+    if (full.isNotEmpty) return full;
+    final name = (data['name'] ?? data['displayName'] ?? '').toString().trim();
+    if (name.isNotEmpty) return name;
+    final email = (data['email'] ?? '').toString().trim();
+    return email.isNotEmpty ? email : 'A new staff member';
+  }
+
+  Future<void> _checkSmsDailyCatchUp() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+    try {
+      final userSnap = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .get();
+      final profile = userSnap.data();
+      final role = (profile?['role'] ?? '').toString().toLowerCase();
+      final isAdmin = profile?['isAdmin'] == true || role == 'admin';
+      if (!isAdmin) return;
+      final eateryId = (profile?['eateryId'] ?? '').toString().trim();
+      if (eateryId.isEmpty) return;
+      await SmsService.sendBillReminders(eateryId: eateryId);
+      await SmsService.sendDailySummary(eateryId: eateryId);
+    } catch (_) {}
   }
 
   /// Check for low stock items and notify
@@ -308,6 +403,9 @@ class NotificationTriggerManager {
         break;
       case 'pending_orders':
         await _checkPendingOrders();
+        break;
+      case 'pending_staff':
+        await _checkPendingStaffApprovals();
         break;
       default:
         await _runAllChecks();

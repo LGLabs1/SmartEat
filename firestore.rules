@@ -35,9 +35,10 @@ service cloud.firestore {
     function isApprovedStaff() {
       return hasUserDoc() && (
         userDoc().approved == true
-        || userDoc().role == 'staff'
         || userDoc().role == 'admin'
         || userDoc().isAdmin == true
+        // Legacy accounts predate the approval flag and are treated as approved.
+        || !('approved' in userDoc())
       );
     }
 
@@ -108,7 +109,12 @@ service cloud.firestore {
         && request.resource.data.diff(resource.data).changedKeys().hasOnly([
           'status',
           'completedAt',
-          'updatedAt'
+          'updatedAt',
+          'paymentMethod',
+          'amountReceived',
+          'change',
+          'referenceNumber',
+          'paymentStatus'
         ]);
     }
 
@@ -177,7 +183,24 @@ service cloud.firestore {
 
       allow create: if isSignedIn()
         && request.auth.uid == userId
-        && request.resource.data.isAdmin is bool;
+        && request.resource.data.isAdmin is bool
+        && request.resource.data.role is string
+        && request.resource.data.eateryId is string
+        && (
+          // Joining an existing eatery: unapproved staff only.
+          (
+            request.resource.data.isAdmin == false
+            && request.resource.data.role != 'admin'
+            && request.resource.data.approved == false
+          )
+          // Creating a new eatery: must be its owner, and it must exist.
+          || (
+            request.resource.data.isAdmin == true
+            && request.resource.data.role == 'admin'
+            && exists(/databases/$(database)/documents/eateries/$(request.resource.data.eateryId))
+            && get(/databases/$(database)/documents/eateries/$(request.resource.data.eateryId)).data.ownerUid == request.auth.uid
+          )
+        );
 
       allow update: if isSignedIn()
         && request.auth.uid == userId
@@ -299,6 +322,37 @@ service cloud.firestore {
         && resource.data.eateryId == eateryId;
     }
 
+    // Inventory audit trail. Any eatery member (staff included) may append a
+    // movement/receipt/adjustment since recording goods received and stock
+    // changes is part of daily operations. Records are immutable once written;
+    // only admins may remove them.
+    match /eateries/{eateryId}/stock_movements/{docId} {
+      allow read: if canAccessEatery(eateryId);
+      allow create: if canAccessEatery(eateryId)
+        && request.resource.data.eateryId == eateryId;
+      allow update: if false;
+      allow delete: if isAdmin()
+        && eateryId == userEateryId();
+    }
+
+    match /eateries/{eateryId}/purchase_receipts/{docId} {
+      allow read: if canAccessEatery(eateryId);
+      allow create: if canAccessEatery(eateryId)
+        && request.resource.data.eateryId == eateryId;
+      allow update: if false;
+      allow delete: if isAdmin()
+        && eateryId == userEateryId();
+    }
+
+    match /eateries/{eateryId}/stock_adjustments/{docId} {
+      allow read: if canAccessEatery(eateryId);
+      allow create: if canAccessEatery(eateryId)
+        && request.resource.data.eateryId == eateryId;
+      allow update: if false;
+      allow delete: if isAdmin()
+        && eateryId == userEateryId();
+    }
+
     match /eateries/{eateryId}/staff_profiles/{uid} {
       allow read: if canAccessEatery(eateryId);
       allow create: if isAdmin()
@@ -398,15 +452,36 @@ service cloud.firestore {
     }
 
     match /eateries/{eateryId}/settings/{docId} {
-      allow read: if canAccessEatery(eateryId);
+      // SMS settings contain the alert configuration and are admin-only.
+      allow read: if canAccessEatery(eateryId)
+        && (docId != 'sms' || isAdmin());
       allow create: if canAccessEatery(eateryId)
+        && (docId != 'sms' || isAdmin())
         && request.resource.data.eateryId == eateryId;
       allow update: if canAccessEatery(eateryId)
+        && (docId != 'sms' || isAdmin())
         && resource.data.eateryId == eateryId
         && request.resource.data.eateryId == eateryId;
       allow delete: if isAdmin()
         && eateryId == userEateryId()
+        && (docId != 'sms' || isAdmin())
         && resource.data.eateryId == eateryId;
+    }
+
+    match /eateries/{eateryId}/sms_logs/{docId} {
+      allow read: if isAdmin() && eateryId == userEateryId();
+      allow create: if isAdmin() && eateryId == userEateryId();
+      allow update: if isAdmin() && eateryId == userEateryId();
+      allow set: if isAdmin() && eateryId == userEateryId();
+      allow delete: if false;
+    }
+
+    match /eateries/{eateryId}/sms_alert_state/{docId} {
+      allow read: if isAdmin() && eateryId == userEateryId();
+      allow create: if isAdmin() && eateryId == userEateryId();
+      allow update: if isAdmin() && eateryId == userEateryId();
+      allow set: if isAdmin() && eateryId == userEateryId();
+      allow delete: if false;
     }
 
     match /menu/{docId} {
@@ -450,38 +525,59 @@ service cloud.firestore {
     match /eateries/{eateryId}/staff_attendance/{docId} {
       allow read: if canAccessEatery(eateryId);
 
-      // Staff can create their own attendance record for self check-in
+      // Staff can create their own attendance record for self check-in.
+      // Admins can encode attendance on behalf of any staff member.
       allow create: if canAccessEatery(eateryId)
         && request.resource.data.eateryId == eateryId
-        && request.resource.data.uid == request.auth.uid
-        && request.resource.data.date is string
         && request.resource.data.uid is string
+        && request.resource.data.date is string
         && (
-          // Self check-in: has morning or afternoon check-in timestamps
-          ('morningCheckIn' in request.resource.data
-            || 'afternoonCheckIn' in request.resource.data)
-          // Admin manual encoding: has present and workUnit
-          || (request.resource.data.present is bool
-              && (!('workUnit' in request.resource.data)
-                || request.resource.data.workUnit is number))
+          (
+            request.resource.data.uid == request.auth.uid
+            && (
+              ('morningCheckIn' in request.resource.data
+                && request.resource.data.morningCheckIn is string)
+              || ('afternoonCheckIn' in request.resource.data
+                && request.resource.data.afternoonCheckIn is string)
+            )
+            && (!('workUnit' in request.resource.data)
+              || request.resource.data.workUnit == 0.5
+              || request.resource.data.workUnit == 1.0)
+          )
+          || (
+            isAdmin()
+            && request.resource.data.present is bool
+            && (!('workUnit' in request.resource.data)
+              || request.resource.data.workUnit is number)
+          )
         );
 
-      // Staff can update their own record for check-ins (morning/afternoon)
+      // Staff may only add their own check-in timestamps (and the derived
+      // present/workUnit/status values). Admins may edit the attendance record.
       allow update: if canAccessEatery(eateryId)
         && resource.data.eateryId == eateryId
         && request.resource.data.eateryId == resource.data.eateryId
         && request.resource.data.uid == resource.data.uid
         && request.resource.data.date == resource.data.date
-        // Only allow adding check-in timestamps (self check-in)
         && (
-          request.resource.data.diff(resource.data).changedKeys().hasOnly([
-            'morningCheckIn',
-            'afternoonCheckIn',
-            'updatedAt'
-          ])
-          // Or admin updating present/workUnit/status
+          (
+            request.resource.data.uid == request.auth.uid
+            && request.resource.data.diff(resource.data).changedKeys().hasOnly([
+              'morningCheckIn',
+              'afternoonCheckIn',
+              'present',
+              'workUnit',
+              'status',
+              'updatedAt',
+              'createdAt'
+            ])
+            && (!('workUnit' in request.resource.data)
+              || request.resource.data.workUnit == 0.5
+              || request.resource.data.workUnit == 1.0)
+          )
           || (
-            request.resource.data.present is bool
+            isAdmin()
+            && request.resource.data.present is bool
             && request.resource.data.diff(resource.data).changedKeys().hasOnly([
               'present',
               'workUnit',
@@ -489,7 +585,8 @@ service cloud.firestore {
               'notes',
               'updatedAt',
               'morningCheckIn',
-              'afternoonCheckIn'
+              'afternoonCheckIn',
+              'createdAt'
             ])
           )
         );
@@ -519,27 +616,40 @@ service cloud.firestore {
 
     match /eateries/{eateryId}/staff_meals/{docId} {
       allow read: if canAccessEatery(eateryId);
+      // Staff may only order meals for themselves; admins may order on behalf.
       allow create: if canAccessEatery(eateryId)
         && request.resource.data.eateryId == eateryId
         && request.resource.data.staffId is string
+        && (request.resource.data.staffId == request.auth.uid || isAdmin())
         && request.resource.data.items is list
+        && request.resource.data.items.size() > 0
+        && request.resource.data.items.size() <= 50
         && request.resource.data.status in ['pending', 'completed'];
-      allow update: if canAccessEatery(eateryId)
+      // Only admins may change the fulfilment status of a meal order.
+      allow update: if isAdmin()
+        && eateryId == userEateryId()
         && resource.data.eateryId == eateryId
         && request.resource.data.eateryId == resource.data.eateryId
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt']);
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt'])
+        && request.resource.data.status in ['pending', 'completed', 'cancelled'];
       allow delete: if isAdmin()
         && eateryId == userEateryId()
         && resource.data.eateryId == eateryId;
     }
 
     match /eateries/{eateryId}/payroll_payouts/{docId} {
-      allow read: if canAccessEatery(eateryId);
-      allow create: if canAccessEatery(eateryId)
+      // Admins see all payouts; staff may only read their own history.
+      allow read: if (isAdmin() && eateryId == userEateryId())
+        || (canAccessEatery(eateryId) && resource.data.uid == request.auth.uid);
+      // Only admins may record payouts, and only on their own behalf.
+      allow create: if isAdmin()
+        && eateryId == userEateryId()
         && request.resource.data.eateryId == eateryId
         && request.resource.data.uid is string
         && request.resource.data.weekStart is string
         && request.resource.data.amount is number
+        && request.resource.data.amount >= 0
+        && request.resource.data.paidByUid == request.auth.uid
         && (!('type' in request.resource.data)
           || request.resource.data.type in ['weekly', 'advance']);
       allow update: if isAdmin()
@@ -549,7 +659,9 @@ service cloud.firestore {
         && request.resource.data.uid == resource.data.uid
         && request.resource.data.weekStart == resource.data.weekStart
         && request.resource.data.amount is number
+        && request.resource.data.amount >= 0
         && (!('type' in request.resource.data)
+          || !('type' in resource.data)
           || request.resource.data.type == resource.data.type);
       allow delete: if false;
     }

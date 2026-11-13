@@ -128,11 +128,26 @@ class ErrorMessageHelper {
     bool showAction = true,
     VoidCallback? onAction,
     String? actionLabel,
+    bool allowPermissionWarnings = false,
   }) {
+    final errorString = _extractErrorString(error).toLowerCase();
+
+    final isPermissionWarning = errorString.contains('permission') ||
+        errorString.contains('unauthorized') ||
+        errorString.contains('denied');
+
+    if (isPermissionWarning && !allowPermissionWarnings) {
+      debugPrint('Suppressed permission-snackbar for background error: $error');
+      return;
+    }
+
     final message =
         getUserFriendlyMessage(error, operationContext: operationContext);
     final action = showAction ? getSuggestedAction(error) : null;
     final severity = getSeverity(error);
+
+    final showTechDetail =
+        message == 'Something went wrong. Please try again.';
 
     final backgroundColor = switch (severity) {
       ErrorSeverity.error => Colors.red.shade800,
@@ -140,6 +155,10 @@ class ErrorMessageHelper {
       ErrorSeverity.info => Colors.blue.shade800,
     };
 
+    // Don't stack snackbars: when several background refreshes fail at once
+    // (e.g. a network drop), a queue of 4-second toasts reads as one stuck,
+    // un-dismissable error. Drop pending ones before showing the new error.
+    ScaffoldMessenger.of(context).clearSnackBars();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Column(
@@ -172,10 +191,22 @@ class ErrorMessageHelper {
                 ),
               ),
             ],
+            // When the error is unknown (generic fallback), surface the real
+            // underlying exception so it can be diagnosed and reported instead
+            // of hiding behind a friendly-but-useless message.
+            if (showTechDetail && errorString.isNotEmpty) ...[
+              const SizedBox(height: 6),
+              Text(
+                errorString,
+                maxLines: 3,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 11, color: Colors.white70),
+              ),
+            ],
           ],
         ),
         backgroundColor: backgroundColor,
-        duration: const Duration(seconds: 4),
+        duration: const Duration(seconds: 5),
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(12),

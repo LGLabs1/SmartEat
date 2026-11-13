@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../services/auth_provider.dart';
 import '../services/firebase_service.dart';
+import '../utils/phone_utils.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({Key? key}) : super(key: key);
@@ -10,7 +13,8 @@ class ProfileScreen extends StatefulWidget {
   State<ProfileScreen> createState() => _ProfileScreenState();
 }
 
-class _ProfileScreenState extends State<ProfileScreen> {
+class _ProfileScreenState extends State<ProfileScreen>
+    with WidgetsBindingObserver {
   Map<String, dynamic>? _profile;
   Map<String, dynamic>? _eateryData;
   bool _isLoading = true;
@@ -20,7 +24,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
   List<Map<String, dynamic>> _attendanceRecords = [];
   Map<String, dynamic>? _todayAttendance;
   bool _isLoadingAttendance = false;
+  bool _isRecordingCheckIn = false;
   DateTime _selectedMonth = DateTime.now();
+  Timer? _clockTimer;
 
   final _firstNameController = TextEditingController();
   final _lastNameController = TextEditingController();
@@ -30,7 +36,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    // Rebuild once a minute so the check-in windows enable/disable on time.
+    _clockTimer = Timer.periodic(const Duration(minutes: 1), (_) {
+      if (mounted) setState(() {});
+    });
     _loadProfile();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _loadAttendance();
+    }
   }
 
   Future<void> _loadAttendance() async {
@@ -74,6 +92,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _clockTimer?.cancel();
     _firstNameController.dispose();
     _lastNameController.dispose();
     _phoneController.dispose();
@@ -123,16 +143,32 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
+  String _profilePhone(Map<String, dynamic>? profile) {
+    final phone = (profile?['phone'] ?? '').toString().trim();
+    if (phone.isNotEmpty) return phone;
+    return (profile?['phoneNumber'] ?? '').toString().trim();
+  }
+
   void _updateControllers() {
     _firstNameController.text = _profile?['firstName']?.toString() ?? '';
     _lastNameController.text = _profile?['lastName']?.toString() ?? '';
-    _phoneController.text = _profile?['phone']?.toString() ?? '';
+    _phoneController.text = PhoneUtils.formatPhMobile(_profilePhone(_profile));
     _positionController.text = _profile?['position']?.toString() ?? '';
   }
 
   Future<void> _saveProfile() async {
     final uid = context.read<AuthProvider>().user?.uid;
     if (uid == null) return;
+
+    final rawPhone = _phoneController.text.trim();
+    final normalizedPhone =
+        rawPhone.isEmpty ? '' : PhoneUtils.normalizePhMobile(rawPhone);
+    if (rawPhone.isNotEmpty && normalizedPhone == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please enter a valid mobile number')),
+      );
+      return;
+    }
 
     setState(() => _isLoading = true);
     try {
@@ -142,18 +178,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
       final updateData = <String, dynamic>{
         'firstName': _firstNameController.text.trim(),
         'lastName': _lastNameController.text.trim(),
-        'phone': _phoneController.text.trim(),
+        'phone': normalizedPhone ?? '',
+        'phoneNumber': normalizedPhone ?? '',
         'position': _positionController.text.trim(),
       };
 
-      // Update in appropriate collection based on role
+      // Admins keep a profile document for display in the Admins tab.
+      // Staff personal fields live on the users document only; payroll
+      // fields in staff_profiles stay admin-managed.
       if (role == 'admin' && eateryId != null) {
-        // Update in eatery's admin_profiles
         await FirebaseService.updateAdminProfileInEatery(
-            eateryId, uid, updateData);
-      } else if (eateryId != null) {
-        // Update in eatery's staff_profiles
-        await FirebaseService.updateStaffProfileInEatery(
             eateryId, uid, updateData);
       }
 
@@ -379,6 +413,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     icon: Icons.wb_sunny,
                     isCheckedIn: hasMorningCheckIn,
                     canCheckIn: _canCheckInMorning(),
+                    isLoading: _isRecordingCheckIn,
                     onPressed: hasMorningCheckIn
                         ? null
                         : () => _recordCheckIn('morning'),
@@ -391,6 +426,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     icon: Icons.wb_twilight,
                     isCheckedIn: hasAfternoonCheckIn,
                     canCheckIn: _canCheckInAfternoon(),
+                    isLoading: _isRecordingCheckIn,
                     onPressed: hasAfternoonCheckIn
                         ? null
                         : () => _recordCheckIn('afternoon'),
@@ -398,6 +434,39 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 ),
               ],
             ),
+            if (hasMorningCheckIn || hasAfternoonCheckIn) ...[
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 12,
+                runSpacing: 6,
+                children: [
+                  if (hasMorningCheckIn)
+                    _buildCheckInStamp(
+                      'Morning',
+                      _formatClock(_todayAttendance?['morningCheckIn']),
+                    ),
+                  if (hasAfternoonCheckIn)
+                    _buildCheckInStamp(
+                      'Afternoon',
+                      _formatClock(_todayAttendance?['afternoonCheckIn']),
+                    ),
+                ],
+              ),
+            ],
+            if (!hasMorningCheckIn && !_canCheckInMorning()) ...[
+              const SizedBox(height: 8),
+              Text(
+                'Morning check-in closed (opens 12:00 AM).',
+                style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+              ),
+            ],
+            if (!hasAfternoonCheckIn && !_canCheckInAfternoon()) ...[
+              const SizedBox(height: 8),
+              Text(
+                'Afternoon check-in opens at 12:00 PM.',
+                style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+              ),
+            ],
             const SizedBox(height: 12),
             Text(
               'Morning: 12am-11:59am | Afternoon: 12pm-11:59pm. Both = Full Day, One = Half Day, None = Absent.',
@@ -429,19 +498,29 @@ class _ProfileScreenState extends State<ProfileScreen> {
     required IconData icon,
     required bool isCheckedIn,
     required bool canCheckIn,
+    required bool isLoading,
     required VoidCallback? onPressed,
   }) {
     final color =
         isCheckedIn ? Colors.green : (canCheckIn ? Colors.blue : Colors.grey);
     return ElevatedButton.icon(
-      onPressed: canCheckIn ? onPressed : null,
-      icon: Icon(
-        isCheckedIn ? Icons.check : icon,
-        color: isCheckedIn || !canCheckIn ? Colors.white : null,
-        size: 18,
-      ),
+      onPressed: (canCheckIn && !isLoading) ? onPressed : null,
+      icon: isLoading
+          ? const SizedBox(
+              width: 16,
+              height: 16,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: Colors.white,
+              ),
+            )
+          : Icon(
+              isCheckedIn ? Icons.check : icon,
+              color: isCheckedIn || !canCheckIn ? Colors.white : null,
+              size: 18,
+            ),
       label: Text(
-        isCheckedIn ? 'Checked In' : label,
+        isLoading ? 'Saving...' : (isCheckedIn ? 'Checked In' : label),
         style: const TextStyle(fontSize: 12),
       ),
       style: ElevatedButton.styleFrom(
@@ -456,18 +535,66 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
+  Widget _buildCheckInStamp(String label, String time) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: Colors.green.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.check_circle, size: 14, color: Colors.green),
+          const SizedBox(width: 4),
+          Text(
+            time.isEmpty ? '$label recorded' : '$label $time',
+            style: TextStyle(
+              fontSize: 12,
+              color: Colors.green.shade800,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _formatClock(dynamic value) {
+    DateTime? dt;
+    if (value is DateTime) {
+      dt = value;
+    } else if (value is String) {
+      dt = DateTime.tryParse(value);
+    }
+    if (dt == null) return '';
+    final hour = dt.hour % 12 == 0 ? 12 : dt.hour % 12;
+    final minute = dt.minute.toString().padLeft(2, '0');
+    final period = dt.hour < 12 ? 'AM' : 'PM';
+    return '$hour:$minute $period';
+  }
+
   Future<void> _recordCheckIn(String checkInType) async {
     final eateryId = _profile?['eateryId']?.toString();
     final uid = _profile?['uid']?.toString();
 
     if (eateryId == null || uid == null) return;
+    if (_isRecordingCheckIn) return;
+
+    setState(() => _isRecordingCheckIn = true);
 
     try {
-      await FirebaseService.recordAttendanceCheckIn(
+      final updated = await FirebaseService.recordAttendanceCheckIn(
         eateryId: eateryId,
         uid: uid,
         checkInType: checkInType,
       );
+
+      if (!mounted) return;
+      setState(() {
+        _todayAttendance = updated;
+        _isRecordingCheckIn = false;
+      });
 
       // Refresh attendance data
       await _loadAttendance();
@@ -485,6 +612,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       }
     } catch (e) {
       if (mounted) {
+        setState(() => _isRecordingCheckIn = false);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Failed to record check-in: $e'),
@@ -874,8 +1002,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   _profile?['firstName']?.toString() ?? 'Not set'),
               _buildInfoRow(Icons.person, 'Last Name',
                   _profile?['lastName']?.toString() ?? 'Not set'),
-              _buildInfoRow(Icons.phone, 'Phone',
-                  _profile?['phone']?.toString() ?? 'Not set'),
+              _buildInfoRow(
+                Icons.phone,
+                'Phone',
+                _profilePhone(_profile).isEmpty
+                    ? 'Not set'
+                    : PhoneUtils.formatPhMobile(_profilePhone(_profile)),
+              ),
               _buildInfoRow(Icons.work, 'Position',
                   _profile?['position']?.toString() ?? 'Not set'),
               _buildInfoRow(Icons.calendar_today, 'Joined',

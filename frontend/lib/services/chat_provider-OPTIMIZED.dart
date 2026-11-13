@@ -44,12 +44,12 @@ class ChatProvider extends ChangeNotifier {
       _messages.add(ChatMessage(
         role: 'assistant',
         content:
-            "👋 Hello! I'm SmartBot, your AI assistant for SmartEat.\n\n"
-            "I can help you with:\n"
-            "• Questions about using SmartEat\n"
-            "• Restaurant insights & analytics\n"
-            "• Inventory & order tips\n\n"
-            "Try asking: 'How did my restaurant perform this week?' or 'What's my low stock items?'",
+            "👋 Hello! I'm Sage, your intelligent business assistant for SmartEat.\n\n"
+            "I can assist you with:\n"
+            "• Restaurant insights & business analytics\n"
+            "• Inventory optimization & order forecasting\n"
+            "• Best practices for using SmartEat\n\n"
+            "How can I help you optimize your eatery today? Try asking: 'How did my restaurant perform this week?' or 'What are my low stock items?'",
         timestamp: DateTime.now(),
       ));
     }

@@ -84,7 +84,7 @@ class ChatProvider extends ChangeNotifier {
     while (attempts > 0) {
       try {
         final status = await ApiService.getChatbotStatus().timeout(timeout);
-        if (status['online'] == true || status['ollamaRunning'] == true) {
+        if (status['online'] == true) {
           _sageOnline = true;
           _offlineReason = null;
           _lastError = null;

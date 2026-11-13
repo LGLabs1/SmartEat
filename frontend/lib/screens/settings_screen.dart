@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../services/notification_service.dart';
 import '../services/auth_provider.dart';
+import '../services/pos_settings_service.dart';
+import '../widgets/download_apps_card.dart';
 import 'package:provider/provider.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -14,6 +16,7 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   final NotificationService _notificationService = NotificationService();
   bool _isLoading = true;
+  bool _isAdmin = false;
 
   // Notification settings
   bool _notificationsEnabled = true;
@@ -23,7 +26,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   int _billReminderDays = 3;
 
   // Business settings
-  String _currencySymbol = '₱';
+  String _currencySymbol = '\u20B1';
   String _dateFormat = 'MM/dd/yyyy';
   bool _darkMode = false;
   bool _autoRefresh = true;
@@ -31,35 +34,87 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   // POS settings
   bool _requirePaymentConfirmation = true;
-  bool _printReceiptOnComplete = false;
   bool _showTaxBreakdown = true;
   double _defaultTaxRate = 0.12; // 12% VAT
+
+  // Receipt printing settings (eatery-wide, persisted via
+  // PosSettingsService)
+  bool _receiptPrintingEnabled = false;
+  bool _askForReceipt = false;
 
   // Inventory settings
   bool _lowStockWarnings = true;
   int _lowStockThreshold = 10;
   bool _autoDeductStock = true;
 
+  AuthProvider? _authProvider;
+
   @override
   void initState() {
     super.initState();
+    final auth = context.read<AuthProvider>();
+    _authProvider = auth;
+    auth.addListener(_onAuthChanged);
     _loadSettings();
     _loadBusinessSettings();
+    _loadPosSettings();
+    _loadProfile();
   }
+
+  @override
+  void dispose() {
+    _authProvider?.removeListener(_onAuthChanged);
+    super.dispose();
+  }
+
+  void _onAuthChanged() {
+    if (!mounted) return;
+    _loadProfile();
+  }
+
+  Future<void> _loadProfile() async {
+    try {
+      var profile =
+          await context.read<AuthProvider>().getCurrentUserProfile();
+      if (profile == null) {
+        await Future.delayed(const Duration(milliseconds: 150));
+        if (!mounted) return;
+        profile = await context.read<AuthProvider>().getCurrentUserProfile();
+      }
+      if (!mounted) return;
+      final role = (profile?['role'] ?? '').toString().toLowerCase();
+      setState(() {
+        _isAdmin = profile?['isAdmin'] == true || role == 'admin';
+      });
+    } catch (_) {
+      // Settings remain usable for non-admin users.
+    }
+  }
+
+  static const Set<String> _validCurrencySymbols = {'\u20B1', r'$', '\u20AC'};
 
   Future<void> _loadBusinessSettings() async {
     try {
-      final uid = context.read<AuthProvider>().user?.uid;
+      var uid = context.read<AuthProvider>().user?.uid;
+      if (uid == null || uid.isEmpty) {
+        // Auth state may still be initializing on web refresh; wait briefly and retry
+        await Future.delayed(const Duration(milliseconds: 150));
+        if (!mounted) return;
+        uid = context.read<AuthProvider>().user?.uid;
+      }
       if (uid == null || uid.isEmpty) return;
       final doc = await FirebaseFirestore.instance
           .collection('user_preferences')
           .doc(uid)
           .get();
-      final symbol = (doc.data()?['currencySymbol'] ?? '').toString();
+      final symbol = (doc.data()?['currencySymbol'] ?? '').toString().trim();
       if (!mounted) return;
-      if (symbol.trim().isEmpty) return;
+      if (symbol.isEmpty) return;
       setState(() {
-        _currencySymbol = symbol.trim();
+        // Fall back to peso if the stored symbol is not one of the known items,
+        // otherwise the DropdownButton assertion fails.
+        _currencySymbol =
+            _validCurrencySymbols.contains(symbol) ? symbol : '\u20B1';
       });
     } catch (_) {
       // Ignore settings load failures
@@ -76,6 +131,49 @@ class _SettingsScreenState extends State<SettingsScreen> {
           .set({'currencySymbol': symbol.trim()}, SetOptions(merge: true));
     } catch (_) {
       // Ignore save failures
+    }
+  }
+
+  Future<void> _loadPosSettings() async {
+    try {
+      final settings = await PosSettingsService.load();
+      if (!mounted) return;
+      setState(() {
+        _receiptPrintingEnabled = settings.receiptPrintingEnabled;
+        _askForReceipt = settings.askForReceipt;
+      });
+    } catch (_) {
+      // Defaults stay in effect; the section still renders.
+    }
+  }
+
+  Future<void> _updateReceiptSetting({
+    bool? receiptPrintingEnabled,
+    bool? askForReceipt,
+  }) async {
+    final previousEnabled = _receiptPrintingEnabled;
+    final previousAsk = _askForReceipt;
+    setState(() {
+      if (receiptPrintingEnabled != null) {
+        _receiptPrintingEnabled = receiptPrintingEnabled;
+      }
+      if (askForReceipt != null) _askForReceipt = askForReceipt;
+    });
+    try {
+      await PosSettingsService.save(PosSettings(
+        receiptPrintingEnabled: _receiptPrintingEnabled,
+        askForReceipt: _askForReceipt,
+      ));
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _receiptPrintingEnabled = previousEnabled;
+        _askForReceipt = previousAsk;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text('Could not save the receipt setting. Try again.')),
+      );
     }
   }
 
@@ -147,6 +245,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 // Notification Settings Section
                 _buildSectionHeader('Notifications'),
                 _buildNotificationSettingsCard(),
+                if (_isAdmin) ...[
+                  const SizedBox(height: 24),
+                  _buildSectionHeader('SMS Alerts'),
+                  _buildSmsSettingsCard(),
+                ],
                 const SizedBox(height: 24),
 
                 // Business Settings Section
@@ -159,6 +262,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 _buildPOSSettingsCard(),
                 const SizedBox(height: 24),
 
+                // Receipt Printing Section
+                _buildSectionHeader('Receipt Printing'),
+                _buildReceiptPrintingCard(),
+                const SizedBox(height: 24),
+
                 // Inventory Settings Section
                 _buildSectionHeader('Inventory Settings'),
                 _buildInventorySettingsCard(),
@@ -167,6 +275,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 // App Settings Section
                 _buildSectionHeader('App Settings'),
                 _buildAppSettingsCard(),
+                const SizedBox(height: 24),
+                _buildSectionHeader('Get Smart Eat'),
+                const DownloadAppsCard(),
                 const SizedBox(height: 32),
 
                 // Danger Zone
@@ -311,6 +422,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
+  Widget _buildSmsSettingsCard() {
+    return Card(
+      elevation: 0,
+      color: Colors.white,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(color: Colors.grey.shade200),
+      ),
+      child: ListTile(
+        leading: const Icon(Icons.sms_outlined),
+        title: const Text('SMS Alerts'),
+        subtitle:
+            const Text('Text low stock, bill, and sales alerts to your phone'),
+        trailing: const Icon(Icons.chevron_right),
+        onTap: () => Navigator.of(context).pushNamed('/settings/sms'),
+      ),
+    );
+  }
+
   Widget _buildBusinessSettingsCard() {
     return Card(
       elevation: 0,
@@ -394,15 +524,52 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 setState(() => _requirePaymentConfirmation = value),
             secondary: const Icon(Icons.verified_user_outlined),
           ),
+        ],
+      ),
+    );
+  }
+
+  /// Placeholder for the upcoming wireless receipt printer integration.
+  /// Nothing prints yet — the toggles only configure the future behavior.
+  Widget _buildReceiptPrintingCard() {
+    return Card(
+      elevation: 0,
+      color: Colors.white,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(color: Colors.grey.shade200),
+      ),
+      child: Column(
+        children: [
+          SwitchListTile(
+            title: const Text('Enable Receipt Printing'),
+            subtitle: const Text(
+                'Turn on once a wireless receipt printer is connected'),
+            value: _receiptPrintingEnabled,
+            onChanged: (value) =>
+                _updateReceiptSetting(receiptPrintingEnabled: value),
+            secondary: const Icon(Icons.print_outlined),
+          ),
+          const Divider(height: 1),
+          ListTile(
+            leading: const Icon(Icons.bluetooth),
+            title: const Text('Printer'),
+            trailing: Text(
+              'Not Connected',
+              style: TextStyle(
+                color: Colors.grey.shade600,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
           const Divider(height: 1),
           SwitchListTile(
-            title: const Text('Auto Print Receipt'),
+            title: const Text('Ask for Receipt'),
             subtitle: const Text(
-                'Automatically print receipt when order is completed'),
-            value: _printReceiptOnComplete,
-            onChanged: (value) =>
-                setState(() => _printReceiptOnComplete = value),
-            secondary: const Icon(Icons.print_outlined),
+                'Ask whether to print a receipt before completing an order'),
+            value: _askForReceipt,
+            onChanged: (value) => _updateReceiptSetting(askForReceipt: value),
+            secondary: const Icon(Icons.receipt_long_outlined),
           ),
         ],
       ),

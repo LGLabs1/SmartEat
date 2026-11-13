@@ -1,13 +1,24 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
+import '../features/staff/data/staff_service.dart';
 import '../services/auth_provider.dart';
 import '../services/api_service.dart';
+import '../services/firebase_service.dart';
 import '../widgets/confirmation_dialogs.dart';
+import '../widgets/pending_approvals_card.dart';
 import '../widgets/skeleton_loaders.dart';
 import '../utils/error_messages.dart';
 import '../utils/haptic_feedback.dart';
+import '../utils/staff_utils.dart';
+
+part '../features/staff/widgets/staff_profile_dialog.dart';
+part '../features/staff/widgets/staff_tab.dart';
+part '../features/staff/widgets/attendance_tab.dart';
+part '../features/staff/widgets/payroll_tab.dart';
+part '../features/staff/widgets/meals_tab.dart';
 
 class StaffManagementScreen extends StatefulWidget {
   const StaffManagementScreen({
@@ -27,6 +38,29 @@ class StaffManagementScreen extends StatefulWidget {
 
 class _StaffManagementScreenState extends State<StaffManagementScreen> {
   DateTime _weekStart = _startOfWeek(DateTime.now());
+
+  // Cached so the profile is fetched once instead of on every rebuild (the
+  // FutureBuilder below used to call the provider inline in build()).
+  late Future<Map<String, dynamic>?> _profileFuture;
+
+  // Stable StreamBuilders: memoized per eatery so rebuilds don't tear down and
+  // re-establish the Firestore listener.
+  Stream<QuerySnapshot<Map<String, dynamic>>>? _usersStream;
+  String _usersStreamKey = '';
+
+  Stream<QuerySnapshot<Map<String, dynamic>>> _usersStreamFor(String eateryId) {
+    if (_usersStream == null || _usersStreamKey != eateryId) {
+      _usersStreamKey = eateryId;
+      _usersStream = StaffService.usersStream(eateryId);
+    }
+    return _usersStream!;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _profileFuture = context.read<AuthProvider>().getCurrentUserProfile();
+  }
 
   static DateTime _dateOnly(DateTime d) => DateTime(d.year, d.month, d.day);
 
@@ -52,24 +86,13 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
     return double.tryParse((v ?? '').toString().trim()) ?? fallback;
   }
 
-  static String _displayNameFromUserDoc(Map<String, dynamic> data, String uid) {
-    final firstName = (data['firstName'] ?? '').toString().trim();
-    final lastName = (data['lastName'] ?? '').toString().trim();
-    final name = ('$firstName $lastName').trim();
-    if (name.isNotEmpty) return name;
-    final email = (data['email'] ?? '').toString().trim();
-    if (email.isNotEmpty) return email;
-    return uid;
-  }
+  static String _displayNameFromUserDoc(
+          Map<String, dynamic> data, String uid) =>
+      staffDisplayName(data, uid);
 
   bool _isAdminFromProfile(Map<String, dynamic>? profile) {
     if (profile == null) return false;
-    final role = (profile['role'] ?? '').toString().trim().toLowerCase();
-    final dynamic isAdminRaw = profile['isAdmin'];
-    final bool isAdminFlag = isAdminRaw == true ||
-        isAdminRaw == 1 ||
-        (isAdminRaw is String && isAdminRaw.toLowerCase().trim() == 'true');
-    return isAdminFlag || role == 'admin';
+    return isAdminUser(profile);
   }
 
   static String _adminDisplayNameFromProfile(Map<String, dynamic>? profile) {
@@ -86,10 +109,9 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
 
   Future<void> _approveStaff(BuildContext context, String uid) async {
     try {
-      await FirebaseFirestore.instance.collection('users').doc(uid).set({
-        'approved': true,
-        'updatedAt': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
+      await StaffService.approveStaff(uid);
+      await _clearPendingApprovalNotification(uid);
+      FirebaseService.invalidateUserProfileCache(uid);
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Staff approved')),
@@ -98,6 +120,15 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
       if (!context.mounted) return;
       ErrorMessageHelper.showSnackBar(context, e, operationContext: 'staff');
     }
+  }
+
+  Future<void> _clearPendingApprovalNotification(String uid) async {
+    try {
+      await FirebaseFirestore.instance
+          .collection('notifications')
+          .doc('pending_staff_$uid')
+          .delete();
+    } catch (_) {}
   }
 
   Future<void> _removeStaff(
@@ -141,6 +172,8 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
         'removedFromEateryName': finalEateryName,
         'updatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
+      await _clearPendingApprovalNotification(uid);
+      FirebaseService.invalidateUserProfileCache(uid);
       if (!context.mounted) return;
       HapticHelper.success();
       ErrorMessageHelper.showSnackBar(
@@ -161,10 +194,12 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
     required Map<String, dynamic> userData,
   }) async {
     final userName = _displayNameFromUserDoc(userData, uid);
+    final isAdmin = isAdminUser(userData);
+    final profileCollection = isAdmin ? 'admin_profiles' : 'staff_profiles';
     final profileRef = FirebaseFirestore.instance
         .collection('eateries')
         .doc(eateryId)
-        .collection('staff_profiles')
+        .collection(profileCollection)
         .doc(uid);
 
     Map<String, dynamic> existing;
@@ -195,11 +230,12 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
     }
 
     final email = (userData['email'] ?? '').toString();
-    final legacyRole = userData['role']?.toString().trim().toLowerCase();
-    final isAdmin = (userData['isAdmin'] == true) || (legacyRole == 'admin');
 
     // Profile data
-    final position = (existing['position'] ?? '').toString().trim();
+    final profilePosition = (existing['position'] ?? '').toString().trim();
+    final position = profilePosition.isNotEmpty
+        ? profilePosition
+        : (userData['position'] ?? '').toString().trim();
     final dailyRate = existing['dailyRate'];
     final rate = dailyRate is num ? dailyRate.toDouble() : 0.0;
     final halfDayRate = existing['halfDayRate'];
@@ -231,16 +267,16 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
     if (result == null) return;
 
     // Save changes
-    await profileRef.set({
-      'eateryId': eateryId,
-      'uid': uid,
-      'position': result.position,
-      'dailyRate': result.dailyRate,
-      'halfDayRate': result.halfDayRate,
-      'status': result.status,
-      'updatedAt': FieldValue.serverTimestamp(),
-      'createdAt': existing['createdAt'] ?? FieldValue.serverTimestamp(),
-    }, SetOptions(merge: true));
+    await StaffService.saveStaffProfile(
+      eateryId: eateryId,
+      uid: uid,
+      isAdmin: isAdmin,
+      position: result.position,
+      dailyRate: result.dailyRate,
+      halfDayRate: result.halfDayRate,
+      status: result.status,
+      createdAt: existing['createdAt'],
+    );
 
     if (!context.mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -254,9 +290,38 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
     required String uid,
     required String userLabel,
   }) async {
-    DateTime selectedDate = DateTime.now();
-    double workUnit = 1.0;
+    var selectedDate = DateTime.now();
+    var workUnit = 1.0;
     final notesController = TextEditingController();
+    Map<String, dynamic>? existing;
+    var loadingExisting = true;
+
+    Future<void> loadExisting(DateTime day) async {
+      loadingExisting = true;
+      existing = await _attendanceForDate(
+        eateryId: eateryId,
+        uid: uid,
+        day: day,
+      );
+      final record = existing;
+      if (record == null) {
+        workUnit = 1.0;
+        notesController.text = '';
+      } else {
+        final rawUnit = record['workUnit'];
+        workUnit = rawUnit is num
+            ? rawUnit.toDouble()
+            : (record['present'] == true ? 1.0 : 0.0);
+        notesController.text = (record['notes'] ?? '').toString();
+      }
+      loadingExisting = false;
+    }
+
+    await loadExisting(selectedDate);
+    if (!context.mounted) {
+      notesController.dispose();
+      return;
+    }
 
     final saved = await showDialog<bool>(
       context: context,
@@ -269,6 +334,7 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
                 width: 520,
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Row(
                       children: [
@@ -287,7 +353,13 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
                               lastDate: DateTime(2100, 12, 31),
                             );
                             if (picked == null) return;
-                            setLocal(() => selectedDate = picked);
+                            setLocal(() {
+                              selectedDate = picked;
+                              loadingExisting = true;
+                            });
+                            await loadExisting(picked);
+                            if (!context.mounted) return;
+                            setLocal(() {});
                           },
                           icon: const Icon(Icons.calendar_today, size: 18),
                           label: const Text('Pick'),
@@ -295,6 +367,28 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
                       ],
                     ),
                     const SizedBox(height: 8),
+                    if (loadingExisting)
+                      const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 8),
+                        child: LinearProgressIndicator(),
+                      )
+                    else
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: Colors.blueGrey.shade50,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          _attendanceCheckInSummary(existing),
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.blueGrey.shade700,
+                          ),
+                        ),
+                      ),
+                    const SizedBox(height: 12),
                     DropdownButtonFormField<double>(
                       value: workUnit,
                       items: const [
@@ -324,7 +418,9 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
                   child: const Text('Cancel'),
                 ),
                 FilledButton(
-                  onPressed: () => Navigator.of(context).pop(true),
+                  onPressed: loadingExisting
+                      ? null
+                      : () => Navigator.of(context).pop(true),
                   child: const Text('Save'),
                 ),
               ],
@@ -341,21 +437,27 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
     final day = _dateOnly(selectedDate);
     final docId = '${eateryId}_${uid}_${_fmtDate(day)}';
     final present = workUnit > 0;
-    await FirebaseFirestore.instance
-        .collection('eateries')
-        .doc(eateryId)
-        .collection('staff_attendance')
-        .doc(docId)
-        .set({
+    final status =
+        workUnit >= 1.0 ? 'present' : (workUnit > 0 ? 'halfday' : 'absent');
+    final data = <String, dynamic>{
       'eateryId': eateryId,
       'uid': uid,
       'date': _fmtDate(day),
       'present': present,
       'workUnit': workUnit,
+      'status': status,
       'notes': notes,
       'updatedAt': FieldValue.serverTimestamp(),
-      'createdAt': FieldValue.serverTimestamp(),
-    }, SetOptions(merge: true));
+    };
+    if (existing == null) {
+      data['createdAt'] = FieldValue.serverTimestamp();
+    }
+    await FirebaseFirestore.instance
+        .collection('eateries')
+        .doc(eateryId)
+        .collection('staff_attendance')
+        .doc(docId)
+        .set(data, SetOptions(merge: true));
 
     if (!context.mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -363,48 +465,72 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
     );
   }
 
-  Future<void> _autoMarkAbsent({
+  Future<Map<String, dynamic>?> _attendanceForDate({
+    required String eateryId,
+    required String uid,
+    required DateTime day,
+  }) async {
+    try {
+      final docId = '${eateryId}_${uid}_${_fmtDate(day)}';
+      final snap = await FirebaseFirestore.instance
+          .collection('eateries')
+          .doc(eateryId)
+          .collection('staff_attendance')
+          .doc(docId)
+          .get();
+      return snap.data();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  String _attendanceCheckInSummary(Map<String, dynamic>? record) {
+    if (record == null) {
+      return 'No record yet. Saving will create a new attendance entry.';
+    }
+    final morning = _formatClockValue(record['morningCheckIn']);
+    final afternoon = _formatClockValue(record['afternoonCheckIn']);
+    if (morning.isEmpty && afternoon.isEmpty) {
+      return 'No self check-ins recorded for this day.';
+    }
+    return [
+      if (morning.isNotEmpty) 'Morning: $morning',
+      if (afternoon.isNotEmpty) 'Afternoon: $afternoon',
+    ].join(' · ');
+  }
+
+  String _formatClockValue(dynamic value) {
+    DateTime? dt;
+    if (value is DateTime) {
+      dt = value;
+    } else if (value is Timestamp) {
+      dt = value.toDate();
+    } else if (value is String) {
+      dt = DateTime.tryParse(value);
+    }
+    if (dt == null) return '';
+    final hour = dt.hour % 12 == 0 ? 12 : dt.hour % 12;
+    final minute = dt.minute.toString().padLeft(2, '0');
+    final period = dt.hour < 12 ? 'AM' : 'PM';
+    return '$hour:$minute $period';
+  }
+
+  Future<int> _autoMarkAbsent({
     required String eateryId,
     required Map<String, Map<String, dynamic>> usersByUid,
     required DateTime weekStart,
     required Map<String, Map<String, dynamic>> existingAttendance,
-  }) async {
-    final now = DateTime.now();
-    final today = _dateOnly(now);
-    final weekEnd = weekStart.add(const Duration(days: 6));
-
-    for (final uid in usersByUid.keys) {
-      for (int i = 0; i < 7; i++) {
-        final day = weekStart.add(Duration(days: i));
-        // Only auto-mark past days (not today or future)
-        if (day.isAfter(today)) continue;
-
-        final dateKey = _fmtDate(day);
-        final key = '$uid|$dateKey';
-
-        // Skip if attendance already exists
-        if (existingAttendance.containsKey(key)) continue;
-
-        // Mark as absent
-        final docId = '${eateryId}_${uid}_$dateKey';
-        await FirebaseFirestore.instance
-            .collection('eateries')
-            .doc(eateryId)
-            .collection('staff_attendance')
-            .doc(docId)
-            .set({
-          'eateryId': eateryId,
-          'uid': uid,
-          'date': dateKey,
-          'present': false,
-          'workUnit': 0.0,
-          'notes': 'Auto-marked absent',
-          'updatedAt': FieldValue.serverTimestamp(),
-          'createdAt': FieldValue.serverTimestamp(),
-          'autoMarked': true,
-        }, SetOptions(merge: true));
-      }
-    }
+  }) {
+    final staffUids = usersByUid.entries
+        .where((e) => !isAdminUser(e.value))
+        .map((e) => e.key);
+    return StaffService.markMissingAbsent(
+      eateryId: eateryId,
+      staffUids: staffUids,
+      weekStart: weekStart,
+      existingKeys: existingAttendance.keys.toSet(),
+      today: DateTime.now(),
+    );
   }
 
   Future<void> _recordPayout(
@@ -415,6 +541,8 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
     required double amount,
     required String userLabel,
     required String type,
+    required String adminUid,
+    required String adminName,
   }) async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -444,35 +572,34 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
     if (confirmed != true) return;
 
     final weekKey = _fmtDate(weekStart);
-    final payoutId = type == 'weekly'
-        ? '${eateryId}_${uid}_$weekKey'
-        : '${eateryId}_${uid}_${weekKey}_advance_${DateTime.now().millisecondsSinceEpoch}';
-    await FirebaseFirestore.instance
-        .collection('payroll_payouts')
-        .doc(payoutId)
-        .set({
-      'eateryId': eateryId,
-      'uid': uid,
-      'weekStart': weekKey,
-      'amount': amount,
-      'type': type,
-      'paidAt': FieldValue.serverTimestamp(),
-      'createdAt': FieldValue.serverTimestamp(),
-    }, SetOptions(merge: true));
+    try {
+      await StaffService.recordPayout(
+        eateryId: eateryId,
+        uid: uid,
+        weekStartKey: weekKey,
+        amount: amount,
+        type: type,
+        adminUid: adminUid,
+        adminName: adminName,
+      );
 
-    if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content:
-            Text(type == 'advance' ? 'Advance recorded' : 'Payout recorded'),
-      ),
-    );
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content:
+              Text(type == 'advance' ? 'Advance recorded' : 'Payout recorded'),
+        ),
+      );
+    } catch (e) {
+      if (!context.mounted) return;
+      ErrorMessageHelper.showSnackBar(context, e, operationContext: 'staff');
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return FutureBuilder<Map<String, dynamic>?>(
-      future: context.read<AuthProvider>().getCurrentUserProfile(),
+      future: _profileFuture,
       builder: (context, profileSnapshot) {
         if (profileSnapshot.connectionState == ConnectionState.waiting) {
           return Scaffold(
@@ -568,7 +695,7 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
         final weekLabel = '${_fmtDate(_weekStart)} to ${_fmtDate(weekEnd)}';
 
         return DefaultTabController(
-          length: 5,
+          length: 4,
           child: Scaffold(
             appBar: widget.showAppBar
                 ? AppBar(
@@ -586,15 +713,6 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
                               )
                             : null),
                     title: const Text('Staff Management'),
-                    bottom: const TabBar(
-                      tabs: [
-                        Tab(text: 'Staff'),
-                        Tab(text: 'Admins'),
-                        Tab(text: 'Attendance'),
-                        Tab(text: 'Payroll'),
-                        Tab(text: 'Meals'),
-                      ],
-                    ),
                     actions: [
                       IconButton(
                         tooltip: 'Previous week',
@@ -640,15 +758,6 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        const TabBar(
-                          tabs: [
-                            Tab(text: 'Staff'),
-                            Tab(text: 'Admins'),
-                            Tab(text: 'Attendance'),
-                            Tab(text: 'Payroll'),
-                            Tab(text: 'Meals'),
-                          ],
-                        ),
                         Padding(
                           padding: const EdgeInsets.fromLTRB(12, 6, 12, 6),
                           child: Row(
@@ -693,10 +802,7 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
                   ),
                 Expanded(
                   child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-                    stream: FirebaseFirestore.instance
-                        .collection('users')
-                        .where('eateryId', isEqualTo: eateryId)
-                        .snapshots(),
+                    stream: _usersStreamFor(eateryId),
                     builder: (context, usersSnap) {
                       if (usersSnap.hasError) {
                         return Center(
@@ -748,16 +854,6 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
                             onApproveStaff: _approveStaff,
                             onRemoveStaff: _removeStaff,
                           ),
-                          _AdminsTab(
-                            eateryId: eateryId,
-                            usersByUid: usersByUid,
-                            onEditProfile: (uid, data) => _editStaffProfile(
-                              context,
-                              eateryId: eateryId,
-                              uid: uid,
-                              userData: data,
-                            ),
-                          ),
                           _AttendanceTab(
                             eateryId: eateryId,
                             usersByUid: usersByUid,
@@ -790,6 +886,8 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
                               amount: amount,
                               userLabel: label,
                               type: type,
+                              adminUid: adminUid,
+                              adminName: adminName,
                             ),
                           ),
                           _MealsTab(eateryId: eateryId),
@@ -800,1570 +898,58 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
                 ),
               ],
             ),
-          ),
-        );
-      },
-    );
-  }
-}
-
-class _StaffProfileResult {
-  final String position;
-  final double dailyRate;
-  final double halfDayRate;
-  final String status;
-
-  _StaffProfileResult({
-    required this.position,
-    required this.dailyRate,
-    required this.halfDayRate,
-    required this.status,
-  });
-}
-
-class _StaffProfileDialog extends StatefulWidget {
-  final String userName;
-  final String email;
-  final bool isAdmin;
-  final String joinedDate;
-  final String position;
-  final double dailyRate;
-  final double halfDayRate;
-  final String status;
-  final VoidCallback? onRemove;
-
-  const _StaffProfileDialog({
-    required this.userName,
-    required this.email,
-    required this.isAdmin,
-    required this.joinedDate,
-    required this.position,
-    required this.dailyRate,
-    required this.halfDayRate,
-    required this.status,
-    this.onRemove,
-  });
-
-  @override
-  State<_StaffProfileDialog> createState() => _StaffProfileDialogState();
-}
-
-class _StaffProfileDialogState extends State<_StaffProfileDialog> {
-  late bool _isEditing;
-  late TextEditingController _positionController;
-  late TextEditingController _dailyRateController;
-  late TextEditingController _halfDayRateController;
-  late String _status;
-
-  @override
-  void initState() {
-    super.initState();
-    _isEditing = false;
-    _positionController = TextEditingController(text: widget.position);
-    _dailyRateController = TextEditingController(
-      text: widget.dailyRate > 0 ? widget.dailyRate.toStringAsFixed(2) : '',
-    );
-    _halfDayRateController = TextEditingController(
-      text: widget.halfDayRate > 0 ? widget.halfDayRate.toStringAsFixed(2) : '',
-    );
-    _status = widget.status;
-  }
-
-  @override
-  void dispose() {
-    _positionController.dispose();
-    _dailyRateController.dispose();
-    _halfDayRateController.dispose();
-    super.dispose();
-  }
-
-  double _parseDouble(String value) {
-    if (value.trim().isEmpty) return 0.0;
-    return double.tryParse(value.trim()) ?? 0.0;
-  }
-
-  Widget _buildReadOnlyView() {
-    return SizedBox(
-      width: 520,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // User info header
-          Row(
-            children: [
-              CircleAvatar(
-                backgroundColor:
-                    widget.isAdmin ? Colors.indigo : Colors.grey.shade400,
-                child: Icon(
-                  widget.isAdmin
-                      ? Icons.admin_panel_settings
-                      : Icons.badge_outlined,
-                  color: Colors.white,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      widget.userName,
-                      style: const TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
+            bottomNavigationBar: Material(
+              color: Theme.of(context).colorScheme.surface,
+              child: SafeArea(
+                top: false,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    border: Border(
+                      top: BorderSide(
+                        color: Theme.of(context).colorScheme.outlineVariant,
                       ),
                     ),
-                    Text(
-                      widget.email.isNotEmpty ? widget.email : 'No email',
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: Colors.grey.shade600,
+                  ),
+                  child: TabBar(
+                    labelColor: Theme.of(context).colorScheme.primary,
+                    unselectedLabelColor:
+                        Theme.of(context).colorScheme.onSurfaceVariant,
+                    indicatorColor: Theme.of(context).colorScheme.primary,
+                    indicatorSize: TabBarIndicatorSize.tab,
+                    labelStyle: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                    ),
+                    unselectedLabelStyle: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                    labelPadding: const EdgeInsets.symmetric(horizontal: 6),
+                    tabs: const [
+                      Tab(
+                        icon: Icon(Icons.group_outlined, size: 20),
+                        text: 'Staff',
                       ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          const Divider(),
-          const SizedBox(height: 12),
-
-          // Joined date
-          _buildInfoRow(Icons.calendar_today, 'Joined', widget.joinedDate),
-          const SizedBox(height: 12),
-
-          // Role
-          _buildInfoRow(
-            widget.isAdmin ? Icons.admin_panel_settings : Icons.badge_outlined,
-            'Role',
-            widget.isAdmin ? 'Admin' : 'Staff',
-          ),
-          const SizedBox(height: 12),
-
-          // Position
-          _buildInfoRow(Icons.work_outline, 'Position',
-              widget.position.isNotEmpty ? widget.position : 'Not set'),
-          const SizedBox(height: 12),
-
-          // Daily rate
-          _buildInfoRow(
-            Icons.attach_money,
-            'Daily Rate',
-            widget.dailyRate > 0
-                ? '₱${widget.dailyRate.toStringAsFixed(2)}'
-                : 'Not set',
-          ),
-          const SizedBox(height: 12),
-
-          // Half-day rate (now exact amount)
-          _buildInfoRow(
-            Icons.timer_outlined,
-            'Half-Day Rate',
-            widget.halfDayRate > 0
-                ? '₱${widget.halfDayRate.toStringAsFixed(2)}'
-                : 'Not set',
-          ),
-          const SizedBox(height: 12),
-
-          // Status
-          _buildInfoRow(
-            Icons.circle,
-            'Status',
-            widget.status.isNotEmpty ? widget.status : 'active',
-            statusColor: widget.status == 'active' ? Colors.green : Colors.grey,
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildInfoRow(IconData icon, String label, String value,
-      {Color? statusColor}) {
-    return Row(
-      children: [
-        Icon(icon, size: 20, color: statusColor ?? Colors.grey.shade600),
-        const SizedBox(width: 12),
-        Expanded(
-          flex: 2,
-          child: Text(
-            label,
-            style: TextStyle(
-              fontSize: 14,
-              color: Colors.grey.shade700,
-            ),
-          ),
-        ),
-        Expanded(
-          flex: 3,
-          child: Text(
-            value,
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
-              color: statusColor ?? Colors.grey.shade900,
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildEditView() {
-    return SizedBox(
-      width: 520,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          TextField(
-            controller: _positionController,
-            decoration: const InputDecoration(
-              labelText: 'Position',
-              prefixIcon: Icon(Icons.work_outline),
-            ),
-          ),
-          const SizedBox(height: 16),
-          TextField(
-            controller: _dailyRateController,
-            keyboardType: TextInputType.number,
-            decoration: const InputDecoration(
-              labelText: 'Daily rate (₱)',
-              prefixIcon: Icon(Icons.attach_money),
-            ),
-          ),
-          const SizedBox(height: 16),
-          TextField(
-            controller: _halfDayRateController,
-            keyboardType: TextInputType.number,
-            decoration: const InputDecoration(
-              labelText: 'Half-day rate (₱) - exact amount',
-              prefixIcon: Icon(Icons.timer_outlined),
-              helperText: 'Enter exact amount (not percentage)',
-            ),
-          ),
-          const SizedBox(height: 16),
-          DropdownButtonFormField<String>(
-            value: _status,
-            items: const [
-              DropdownMenuItem(value: 'active', child: Text('Active')),
-              DropdownMenuItem(value: 'inactive', child: Text('Inactive')),
-            ],
-            onChanged: (v) {
-              if (v != null) {
-                setState(() => _status = v);
-              }
-            },
-            decoration: const InputDecoration(
-              labelText: 'Status',
-              prefixIcon: Icon(Icons.circle_outlined),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: Text('Staff profile: ${widget.userName}'),
-      content: _isEditing ? _buildEditView() : _buildReadOnlyView(),
-      actions: [
-        if (!_isEditing) ...[
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Close'),
-          ),
-          if (widget.onRemove != null)
-            TextButton.icon(
-              onPressed: widget.onRemove,
-              icon: const Icon(Icons.delete_forever, color: Colors.red),
-              label: const Text('Remove', style: TextStyle(color: Colors.red)),
-            ),
-          FilledButton.icon(
-            onPressed: () => setState(() => _isEditing = true),
-            icon: const Icon(Icons.edit),
-            label: const Text('Edit'),
-          ),
-        ] else ...[
-          TextButton(
-            onPressed: () => setState(() => _isEditing = false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () {
-              final result = _StaffProfileResult(
-                position: _positionController.text.trim(),
-                dailyRate: _parseDouble(_dailyRateController.text),
-                halfDayRate: _parseDouble(_halfDayRateController.text),
-                status: _status,
-              );
-              Navigator.of(context).pop(result);
-            },
-            child: const Text('Save'),
-          ),
-        ],
-      ],
-    );
-  }
-}
-
-class _StaffTab extends StatefulWidget {
-  const _StaffTab({
-    required this.eateryId,
-    required this.eateryName,
-    required this.adminUid,
-    required this.adminName,
-    required this.usersByUid,
-    required this.globalSearchQuery,
-    required this.onEditProfile,
-    required this.onApproveStaff,
-    required this.onRemoveStaff,
-  });
-
-  final String eateryId;
-  final String eateryName;
-  final String adminUid;
-  final String adminName;
-  final Map<String, Map<String, dynamic>> usersByUid;
-  final ValueNotifier<String>? globalSearchQuery;
-  final Future<void> Function(String uid, Map<String, dynamic> userData)
-      onEditProfile;
-  final Future<void> Function(BuildContext context, String uid) onApproveStaff;
-  final Future<void> Function(BuildContext context,
-      {required String uid, required String label}) onRemoveStaff;
-
-  @override
-  State<_StaffTab> createState() => _StaffTabState();
-}
-
-class _StaffTabState extends State<_StaffTab> {
-  late TextEditingController _searchController;
-  String _localQuery = '';
-
-  @override
-  void initState() {
-    super.initState();
-    _searchController = TextEditingController();
-  }
-
-  @override
-  void dispose() {
-    _searchController.dispose();
-    super.dispose();
-  }
-
-  String _displayName(Map<String, dynamic> data, String uid) {
-    final firstName = (data['firstName'] ?? '').toString().trim();
-    final lastName = (data['lastName'] ?? '').toString().trim();
-    final name = ('$firstName $lastName').trim();
-    if (name.isNotEmpty) return name;
-    final email = (data['email'] ?? '').toString().trim();
-    if (email.isNotEmpty) return email;
-    return uid;
-  }
-
-  bool _matches(String q, String text) {
-    if (q.isEmpty) return true;
-    return text.toLowerCase().contains(q);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final notifier = widget.globalSearchQuery;
-    if (notifier == null) {
-      final q = '';
-
-      final entries = widget.usersByUid.entries.where((e) {
-        final uid = e.key;
-        final data = e.value;
-        final email = (data['email'] ?? '').toString();
-        final name = _displayName(data, uid);
-        // Filter out admins - they should only appear in Admins tab
-        final legacyRole = data['role']?.toString().trim().toLowerCase();
-        final isAdmin = (data['isAdmin'] == true) || (legacyRole == 'admin');
-        if (isAdmin) return false;
-        return _matches(q, uid) || _matches(q, email) || _matches(q, name);
-      }).toList()
-        ..sort((a, b) => _displayName(a.value, a.key)
-            .toLowerCase()
-            .compareTo(_displayName(b.value, b.key).toLowerCase()));
-
-      return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-        stream: FirebaseFirestore.instance
-            .collection('eateries')
-            .doc(widget.eateryId)
-            .collection('staff_profiles')
-            .snapshots(),
-        builder: (context, profilesSnap) {
-          final profileByUid = <String, Map<String, dynamic>>{};
-          if (profilesSnap.hasData) {
-            for (final d in profilesSnap.data!.docs) {
-              final data = d.data();
-              final docUid = d.id.toString().trim();
-              if (docUid.isEmpty) continue;
-              profileByUid[docUid] = data;
-            }
-          }
-
-          return ListView.separated(
-            padding: const EdgeInsets.all(12),
-            itemCount: entries.length,
-            separatorBuilder: (_, __) => const SizedBox(height: 8),
-            itemBuilder: (context, index) {
-              final uid = entries[index].key;
-              final userData = entries[index].value;
-              final label = _displayName(userData, uid);
-              final email = (userData['email'] ?? '').toString();
-
-              final legacyRole =
-                  userData['role']?.toString().trim().toLowerCase();
-              final isAdmin =
-                  (userData['isAdmin'] == true) || (legacyRole == 'admin');
-              final dynamic approvedRaw = userData['approved'];
-              final bool approved =
-                  approvedRaw == null ? true : approvedRaw == true;
-
-              final p = profileByUid[uid] ?? const <String, dynamic>{};
-              final position = (p['position'] ?? '').toString().trim();
-              final dailyRate = p['dailyRate'];
-              final rate = dailyRate is num ? dailyRate.toDouble() : 0.0;
-              final status = (p['status'] ?? 'active').toString().trim();
-
-              return Card(
-                elevation: 0,
-                color: Colors.white,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  side: BorderSide(color: Colors.grey.shade200),
-                ),
-                child: ListTile(
-                  onTap: () => widget.onEditProfile(uid, userData),
-                  leading: CircleAvatar(
-                    backgroundColor:
-                        isAdmin ? Colors.indigo : Colors.grey.shade400,
-                    child: Icon(
-                      isAdmin
-                          ? Icons.admin_panel_settings
-                          : Icons.badge_outlined,
-                      color: Colors.white,
-                    ),
-                  ),
-                  title: Text(
-                    label,
-                    style: const TextStyle(fontWeight: FontWeight.w700),
-                  ),
-                  subtitle: Text(
-                    '${email.isEmpty ? uid : email}\n'
-                    '${isAdmin ? 'Admin' : (approved ? 'Staff' : 'Staff (Pending)')} · '
-                    '${status.isEmpty ? 'active' : status}'
-                    '${position.isEmpty ? '' : ' · $position'}'
-                    '${rate > 0 ? ' · ₱${rate.toStringAsFixed(2)}/day' : ''}',
-                  ),
-                  isThreeLine: true,
-                ),
-              );
-            },
-          );
-        },
-      );
-    }
-
-    return ValueListenableBuilder<String>(
-      valueListenable: widget.globalSearchQuery!,
-      builder: (context, query, _) {
-        final q = query.trim().toLowerCase();
-        final combinedQuery =
-            q.isNotEmpty ? q : _localQuery.trim().toLowerCase();
-
-        final entries = widget.usersByUid.entries.where((e) {
-          final uid = e.key;
-          final data = e.value;
-          final email = (data['email'] ?? '').toString();
-          final name = _displayName(data, uid);
-          // Filter out admins - they should only appear in Admins tab
-          final legacyRole = data['role']?.toString().trim().toLowerCase();
-          final isAdmin = (data['isAdmin'] == true) || (legacyRole == 'admin');
-          if (isAdmin) return false;
-          return _matches(combinedQuery, uid) ||
-              _matches(combinedQuery, email) ||
-              _matches(combinedQuery, name);
-        }).toList()
-          ..sort((a, b) => _displayName(a.value, a.key)
-              .toLowerCase()
-              .compareTo(_displayName(b.value, b.key).toLowerCase()));
-
-        return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-          stream: FirebaseFirestore.instance
-              .collection('eateries')
-              .doc(widget.eateryId)
-              .collection('staff_profiles')
-              .snapshots(),
-          builder: (context, profilesSnap) {
-            final profileByUid = <String, Map<String, dynamic>>{};
-            if (profilesSnap.hasData) {
-              for (final d in profilesSnap.data!.docs) {
-                final data = d.data();
-                final docUid = d.id.toString().trim();
-                if (docUid.isEmpty) continue;
-                profileByUid[docUid] = data;
-              }
-            }
-
-            return ListView.separated(
-              padding: const EdgeInsets.all(12),
-              itemCount: entries.length,
-              separatorBuilder: (_, __) => const SizedBox(height: 8),
-              itemBuilder: (context, index) {
-                final uid = entries[index].key;
-                final userData = entries[index].value;
-                final label = _displayName(userData, uid);
-                final email = (userData['email'] ?? '').toString();
-
-                final legacyRole =
-                    userData['role']?.toString().trim().toLowerCase();
-                final isAdmin =
-                    (userData['isAdmin'] == true) || (legacyRole == 'admin');
-                final dynamic approvedRaw = userData['approved'];
-                final bool approved =
-                    approvedRaw == null ? true : approvedRaw == true;
-
-                final p = profileByUid[uid] ?? const <String, dynamic>{};
-                final position = (p['position'] ?? '').toString().trim();
-                final dailyRate = p['dailyRate'];
-                final rate = dailyRate is num ? dailyRate.toDouble() : 0.0;
-                final status = (p['status'] ?? 'active').toString().trim();
-
-                return Card(
-                  elevation: 0,
-                  color: Colors.white,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    side: BorderSide(color: Colors.grey.shade200),
-                  ),
-                  child: ListTile(
-                    onTap: () => widget.onEditProfile(uid, userData),
-                    leading: CircleAvatar(
-                      backgroundColor:
-                          isAdmin ? Colors.indigo : Colors.grey.shade400,
-                      child: Icon(
-                        isAdmin
-                            ? Icons.admin_panel_settings
-                            : Icons.badge_outlined,
-                        color: Colors.white,
+                      Tab(
+                        icon: Icon(Icons.calendar_month_outlined, size: 20),
+                        text: 'Attendance',
                       ),
-                    ),
-                    title: Text(
-                      label,
-                      style: const TextStyle(fontWeight: FontWeight.w700),
-                    ),
-                    subtitle: Text(
-                      '${email.isEmpty ? uid : email}\n'
-                      '${isAdmin ? 'Admin' : (approved ? 'Staff' : 'Staff (Pending)')} · '
-                      '${status.isEmpty ? 'active' : status}'
-                      '${position.isEmpty ? '' : ' · $position'}'
-                      '${rate > 0 ? ' · ₱${rate.toStringAsFixed(2)}/day' : ''}',
-                    ),
-                    isThreeLine: true,
-                  ),
-                );
-              },
-            );
-          },
-        );
-      },
-    );
-  }
-}
-
-class _AdminsTab extends StatelessWidget {
-  const _AdminsTab({
-    required this.eateryId,
-    required this.usersByUid,
-    required this.onEditProfile,
-  });
-
-  final String eateryId;
-  final Map<String, Map<String, dynamic>> usersByUid;
-  final Future<void> Function(String uid, Map<String, dynamic> userData)
-      onEditProfile;
-
-  String _displayName(Map<String, dynamic> data, String uid) {
-    final firstName = (data['firstName'] ?? '').toString().trim();
-    final lastName = (data['lastName'] ?? '').toString().trim();
-    final name = ('$firstName $lastName').trim();
-    if (name.isNotEmpty) return name;
-    final email = (data['email'] ?? '').toString().trim();
-    if (email.isNotEmpty) return email;
-    return uid;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    // Filter only admin users
-    final adminEntries = usersByUid.entries.where((e) {
-      final data = e.value;
-      final legacyRole = data['role']?.toString().trim().toLowerCase();
-      return (data['isAdmin'] == true) || (legacyRole == 'admin');
-    }).toList()
-      ..sort((a, b) => _displayName(a.value, a.key)
-          .toLowerCase()
-          .compareTo(_displayName(b.value, b.key).toLowerCase()));
-
-    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-      stream: FirebaseFirestore.instance
-          .collection('eateries')
-          .doc(eateryId)
-          .collection('admin_profiles')
-          .snapshots(),
-      builder: (context, profilesSnap) {
-        final profileByUid = <String, Map<String, dynamic>>{};
-        if (profilesSnap.hasData) {
-          for (final d in profilesSnap.data!.docs) {
-            final data = d.data();
-            final docUid = d.id.toString().trim();
-            if (docUid.isEmpty) continue;
-            profileByUid[docUid] = data;
-          }
-        }
-
-        if (adminEntries.isEmpty) {
-          return Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(
-                  Icons.admin_panel_settings_outlined,
-                  size: 64,
-                  color: Colors.grey.shade300,
-                ),
-                const SizedBox(height: 16),
-                Text(
-                  'No admins found',
-                  style: TextStyle(
-                    fontSize: 16,
-                    color: Colors.grey.shade600,
-                  ),
-                ),
-              ],
-            ),
-          );
-        }
-
-        return ListView.separated(
-          padding: const EdgeInsets.all(12),
-          itemCount: adminEntries.length,
-          separatorBuilder: (_, __) => const SizedBox(height: 8),
-          itemBuilder: (context, index) {
-            final uid = adminEntries[index].key;
-            final userData = adminEntries[index].value;
-            final label = _displayName(userData, uid);
-            final email = (userData['email'] ?? '').toString();
-
-            final p = profileByUid[uid] ?? const <String, dynamic>{};
-            final position = (p['position'] ?? '').toString().trim();
-            final status = (p['status'] ?? 'active').toString().trim();
-            final joinedAt = p['joinedAt'] ?? userData['createdAt'];
-
-            return Card(
-              elevation: 0,
-              color: Colors.white,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-                side: BorderSide(color: Colors.indigo.shade200),
-              ),
-              child: ListTile(
-                onTap: () => showDialog(
-                  context: context,
-                  builder: (context) => AlertDialog(
-                    title: Text(label),
-                    content: Text(
-                      '${email.isEmpty ? uid : email}\n'
-                      'Admin · ${status.isEmpty ? 'active' : status}'
-                      '${position.isEmpty ? '' : ' · $position'}'
-                      '${joinedAt != null ? '\nJoined: ${joinedAt.toString().split('T').first}' : ''}',
-                    ),
-                    actions: [
-                      TextButton(
-                        onPressed: () => onEditProfile(uid, userData),
-                        child: const Text('Edit'),
+                      Tab(
+                        icon: Icon(Icons.payments_outlined, size: 20),
+                        text: 'Payroll',
+                      ),
+                      Tab(
+                        icon: Icon(Icons.lunch_dining_outlined, size: 20),
+                        text: 'Meals',
                       ),
                     ],
                   ),
                 ),
-                leading: CircleAvatar(
-                  backgroundColor: Colors.indigo,
-                  child: const Icon(
-                    Icons.admin_panel_settings,
-                    color: Colors.white,
-                  ),
-                ),
-                title: Text(
-                  label,
-                  style: const TextStyle(fontWeight: FontWeight.w700),
-                ),
-                subtitle: Text(
-                  '${email.isEmpty ? uid : email}\n'
-                  'Admin · ${status.isEmpty ? 'active' : status}'
-                  '${position.isEmpty ? '' : ' · $position'}'
-                  '${joinedAt != null ? '\nJoined: ${joinedAt.toString().split('T').first}' : ''}',
-                ),
-                isThreeLine: true,
-              ),
-            );
-          },
-        );
-      },
-    );
-  }
-}
-
-class _AttendanceTab extends StatelessWidget {
-  const _AttendanceTab({
-    required this.eateryId,
-    required this.usersByUid,
-    required this.weekStart,
-    required this.onEncodeAttendance,
-    required this.onAutoMarkAbsent,
-  });
-
-  final String eateryId;
-  final Map<String, Map<String, dynamic>> usersByUid;
-  final DateTime weekStart;
-  final Future<void> Function(String uid, String userLabel) onEncodeAttendance;
-  final Future<void> Function(
-      Map<String, Map<String, dynamic>> existingAttendance) onAutoMarkAbsent;
-
-  String _fmtDate(DateTime d) {
-    final y = d.year.toString().padLeft(4, '0');
-    final m = d.month.toString().padLeft(2, '0');
-    final day = d.day.toString().padLeft(2, '0');
-    return '$y-$m-$day';
-  }
-
-  String _displayName(Map<String, dynamic> data, String uid) {
-    final firstName = (data['firstName'] ?? '').toString().trim();
-    final lastName = (data['lastName'] ?? '').toString().trim();
-    final name = ('$firstName $lastName').trim();
-    if (name.isNotEmpty) return name;
-    final email = (data['email'] ?? '').toString().trim();
-    if (email.isNotEmpty) return email;
-    return uid;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final weekEnd = weekStart.add(const Duration(days: 6));
-    final startKey = _fmtDate(weekStart);
-    final endKey = _fmtDate(weekEnd);
-
-    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-      stream: FirebaseFirestore.instance
-          .collection('eateries')
-          .doc(eateryId)
-          .collection('staff_attendance')
-          .where('date', isGreaterThanOrEqualTo: startKey)
-          .where('date', isLessThanOrEqualTo: endKey)
-          .snapshots(),
-      builder: (context, attSnap) {
-        if (attSnap.hasError) {
-          return Center(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Text('Failed to load attendance: ${attSnap.error}'),
-            ),
-          );
-        }
-
-        final byUidDate = <String, Map<String, dynamic>>{};
-        if (attSnap.hasData) {
-          for (final d in attSnap.data!.docs) {
-            final a = d.data();
-            final uid = (a['uid'] ?? '').toString().trim();
-            final date = (a['date'] ?? '').toString().trim();
-            if (uid.isEmpty || date.isEmpty) continue;
-            byUidDate['$uid|$date'] = a;
-          }
-          // Auto-mark absent for past days without attendance records
-          onAutoMarkAbsent(byUidDate);
-        }
-
-        final uids = usersByUid.keys.toList()..sort();
-        final days = List<DateTime>.generate(
-          7,
-          (i) => weekStart.add(Duration(days: i)),
-        );
-
-        return ListView.separated(
-          padding: const EdgeInsets.all(12),
-          itemCount: uids.length,
-          separatorBuilder: (_, __) => const SizedBox(height: 8),
-          itemBuilder: (context, index) {
-            final uid = uids[index];
-            final userData = usersByUid[uid] ?? const <String, dynamic>{};
-            final label = _displayName(userData, uid);
-
-            double workedUnits = 0;
-            for (final day in days) {
-              final key = _fmtDate(day);
-              final a = byUidDate['$uid|$key'];
-              if (a == null) continue;
-              final rawUnit = a['workUnit'];
-              final unit = rawUnit is num
-                  ? rawUnit.toDouble()
-                  : (a['present'] == true ? 1.0 : 0.0);
-              workedUnits += unit;
-            }
-
-            return Card(
-              elevation: 0,
-              color: Colors.white,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-                side: BorderSide(color: Colors.grey.shade200),
-              ),
-              child: Padding(
-                padding: const EdgeInsets.all(12),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            label,
-                            style: const TextStyle(
-                              fontWeight: FontWeight.w800,
-                              fontSize: 16,
-                            ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                        Text(
-                          '${workedUnits.toStringAsFixed(1)}/7 worked',
-                          style: TextStyle(
-                            color: Colors.grey.shade700,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        FilledButton.tonalIcon(
-                          onPressed: () => onEncodeAttendance(uid, label),
-                          icon: const Icon(Icons.edit_calendar),
-                          label: const Text('Encode'),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 10),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: days.map((day) {
-                        final dateKey = _fmtDate(day);
-                        final a = byUidDate['$uid|$dateKey'];
-                        final hasLog = a != null;
-                        final rawUnit = a?['workUnit'];
-                        final unit = rawUnit is num
-                            ? rawUnit.toDouble()
-                            : (a?['present'] == true ? 1.0 : 0.0);
-                        final labelDay = '${day.month}/${day.day}';
-
-                        Color bg;
-                        Color fg;
-                        if (!hasLog) {
-                          bg = Colors.grey.shade100;
-                          fg = Colors.grey.shade700;
-                        } else if (unit >= 1.0) {
-                          bg = Colors.green.shade100;
-                          fg = Colors.green.shade900;
-                        } else if (unit > 0) {
-                          bg = Colors.orange.shade100;
-                          fg = Colors.orange.shade900;
-                        } else {
-                          bg = Colors.red.shade100;
-                          fg = Colors.red.shade900;
-                        }
-
-                        return InkWell(
-                          onTap: () => onEncodeAttendance(uid, label),
-                          borderRadius: BorderRadius.circular(999),
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 10,
-                              vertical: 6,
-                            ),
-                            decoration: BoxDecoration(
-                              color: bg,
-                              borderRadius: BorderRadius.circular(999),
-                              border: Border.all(color: Colors.grey.shade200),
-                            ),
-                            child: Text(
-                              hasLog
-                                  ? (unit >= 1.0
-                                      ? '$labelDay ✓'
-                                      : (unit > 0
-                                          ? '$labelDay ½'
-                                          : '$labelDay ✕'))
-                                  : '$labelDay —',
-                              style: TextStyle(
-                                color: fg,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                          ),
-                        );
-                      }).toList(),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          },
-        );
-      },
-    );
-  }
-}
-
-class _PayrollTab extends StatelessWidget {
-  const _PayrollTab({
-    required this.eateryId,
-    required this.usersByUid,
-    required this.weekStart,
-    required this.onRecordPayout,
-  });
-
-  final String eateryId;
-  final Map<String, Map<String, dynamic>> usersByUid;
-  final DateTime weekStart;
-  final Future<void> Function(
-    String uid,
-    String userLabel,
-    double amount,
-    String type,
-  ) onRecordPayout;
-
-  String _fmtDate(DateTime d) {
-    final y = d.year.toString().padLeft(4, '0');
-    final m = d.month.toString().padLeft(2, '0');
-    final day = d.day.toString().padLeft(2, '0');
-    return '$y-$m-$day';
-  }
-
-  String _fmtMoney(double v) => '₱${v.toStringAsFixed(2)}';
-
-  String _displayName(Map<String, dynamic> data, String uid) {
-    final firstName = (data['firstName'] ?? '').toString().trim();
-    final lastName = (data['lastName'] ?? '').toString().trim();
-    final name = ('$firstName $lastName').trim();
-    if (name.isNotEmpty) return name;
-    final email = (data['email'] ?? '').toString().trim();
-    if (email.isNotEmpty) return email;
-    return uid;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final weekEnd = weekStart.add(const Duration(days: 6));
-    final startKey = _fmtDate(weekStart);
-    final endKey = _fmtDate(weekEnd);
-
-    final profilesStream = FirebaseFirestore.instance
-        .collection('eateries')
-        .doc(eateryId)
-        .collection('staff_profiles')
-        .snapshots();
-
-    final attendanceStream = FirebaseFirestore.instance
-        .collection('eateries')
-        .doc(eateryId)
-        .collection('staff_attendance')
-        .where('date', isGreaterThanOrEqualTo: startKey)
-        .where('date', isLessThanOrEqualTo: endKey)
-        .snapshots();
-
-    final payoutsStream = FirebaseFirestore.instance
-        .collection('payroll_payouts')
-        .where('eateryId', isEqualTo: eateryId)
-        .where('weekStart', isEqualTo: startKey)
-        .snapshots();
-
-    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-      stream: profilesStream,
-      builder: (context, profSnap) {
-        final rateByUid = <String, double>{};
-        final halfDayRateByUid = <String, double>{};
-        if (profSnap.hasData) {
-          for (final d in profSnap.data!.docs) {
-            final p = d.data();
-            final uid = (p['uid'] ?? '').toString().trim();
-            if (uid.isEmpty) continue;
-            final raw = p['dailyRate'];
-            final rate = raw is num ? raw.toDouble() : 0.0;
-            rateByUid[uid] = rate;
-
-            final rawHalf = p['halfDayRate'];
-            final halfRate = rawHalf is num ? rawHalf.toDouble() : 0.0;
-            halfDayRateByUid[uid] = halfRate;
-          }
-        }
-
-        return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-          stream: attendanceStream,
-          builder: (context, attSnap) {
-            final fullDaysByUid = <String, int>{};
-            final halfDaysByUid = <String, int>{};
-            if (attSnap.hasData) {
-              for (final d in attSnap.data!.docs) {
-                final a = d.data();
-                final uid = (a['uid'] ?? '').toString().trim();
-                if (uid.isEmpty) continue;
-
-                final rawUnit = a['workUnit'];
-                final unit = rawUnit is num
-                    ? rawUnit.toDouble()
-                    : (a['present'] == true ? 1.0 : 0.0);
-
-                if (unit >= 1.0) {
-                  fullDaysByUid[uid] = (fullDaysByUid[uid] ?? 0) + 1;
-                } else if (unit > 0) {
-                  halfDaysByUid[uid] = (halfDaysByUid[uid] ?? 0) + 1;
-                }
-              }
-            }
-
-            return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-              stream: payoutsStream,
-              builder: (context, paySnap) {
-                final paidWeeklyByUid = <String, double>{};
-                final advancesByUid = <String, double>{};
-                if (paySnap.hasData) {
-                  for (final d in paySnap.data!.docs) {
-                    final p = d.data();
-                    final uid = (p['uid'] ?? '').toString().trim();
-                    if (uid.isEmpty) continue;
-                    final raw = p['amount'];
-                    final amount = raw is num ? raw.toDouble() : 0.0;
-                    final type = (p['type'] ?? 'weekly').toString().trim();
-                    if (type == 'advance') {
-                      advancesByUid[uid] = (advancesByUid[uid] ?? 0) + amount;
-                    } else {
-                      paidWeeklyByUid[uid] = amount;
-                    }
-                  }
-                }
-
-                final uids = usersByUid.keys.toList()..sort();
-                double grandTotal = 0;
-
-                final rows = uids.map((uid) {
-                  final userData = usersByUid[uid] ?? const <String, dynamic>{};
-                  final label = _displayName(userData, uid);
-                  final fullDays = fullDaysByUid[uid] ?? 0;
-                  final halfDays = halfDaysByUid[uid] ?? 0;
-                  final rate = rateByUid[uid] ?? 0.0;
-                  final halfDayRate = halfDayRateByUid[uid] ?? 0.0;
-
-                  // Calculate gross using exact half-day rate
-                  final gross = (rate * fullDays) + (halfDayRate * halfDays);
-                  grandTotal += gross;
-                  final advances = advancesByUid[uid] ?? 0.0;
-                  final net = (gross - advances) < 0 ? 0.0 : (gross - advances);
-                  final paidAmount = paidWeeklyByUid[uid];
-                  final isPaid = paidAmount != null;
-                  return {
-                    'uid': uid,
-                    'label': label,
-                    'fullDays': fullDays,
-                    'halfDays': halfDays,
-                    'rate': rate,
-                    'halfDayRate': halfDayRate,
-                    'gross': gross,
-                    'advances': advances,
-                    'net': net,
-                    'isPaid': isPaid,
-                  };
-                }).toList();
-
-                return ListView(
-                  padding: const EdgeInsets.all(12),
-                  children: [
-                    Card(
-                      elevation: 0,
-                      color: Colors.white,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        side: BorderSide(color: Colors.grey.shade200),
-                      ),
-                      child: Padding(
-                        padding: const EdgeInsets.all(12),
-                        child: Row(
-                          children: [
-                            Expanded(
-                              child: Text(
-                                'Weekly total',
-                                style: TextStyle(
-                                  color: Colors.grey.shade700,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                            ),
-                            Text(
-                              _fmtMoney(grandTotal),
-                              style: const TextStyle(
-                                fontWeight: FontWeight.w900,
-                                fontSize: 16,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    ...rows.map((r) {
-                      final uid = r['uid'] as String;
-                      final label = r['label'] as String;
-                      final fullDays = r['fullDays'] as int;
-                      final halfDays = r['halfDays'] as int;
-                      final halfDayRate = r['halfDayRate'] as double;
-                      final gross = r['gross'] as double;
-                      final advances = r['advances'] as double;
-                      final net = r['net'] as double;
-                      final isPaid = r['isPaid'] as bool;
-
-                      return Card(
-                        elevation: 0,
-                        color: Colors.white,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                          side: BorderSide(color: Colors.grey.shade200),
-                        ),
-                        child: ListTile(
-                          title: Text(
-                            label,
-                            style: const TextStyle(fontWeight: FontWeight.w700),
-                          ),
-                          subtitle: Text(
-                            'Full: $fullDays · Half: $halfDays @ ₱${halfDayRate.toStringAsFixed(2)}/half-day\n'
-                            'Gross: ${_fmtMoney(gross)} · Advances: ${_fmtMoney(advances)}',
-                          ),
-                          isThreeLine: true,
-                          trailing: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(
-                                _fmtMoney(net),
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.w900,
-                                ),
-                              ),
-                              const SizedBox(width: 10),
-                              FilledButton.tonal(
-                                onPressed: isPaid
-                                    ? null
-                                    : () async {
-                                        final amountController =
-                                            TextEditingController();
-                                        final saved = await showDialog<bool>(
-                                          context: context,
-                                          builder: (context) {
-                                            return AlertDialog(
-                                              title: Text(
-                                                  'Advance payout: $label'),
-                                              content: TextField(
-                                                controller: amountController,
-                                                keyboardType:
-                                                    TextInputType.number,
-                                                decoration:
-                                                    const InputDecoration(
-                                                  labelText: 'Amount (₱)',
-                                                ),
-                                              ),
-                                              actions: [
-                                                TextButton(
-                                                  onPressed: () =>
-                                                      Navigator.of(context)
-                                                          .pop(false),
-                                                  child: const Text('Cancel'),
-                                                ),
-                                                FilledButton(
-                                                  onPressed: () =>
-                                                      Navigator.of(context)
-                                                          .pop(true),
-                                                  child: const Text('Record'),
-                                                ),
-                                              ],
-                                            );
-                                          },
-                                        );
-                                        final amount =
-                                            _StaffManagementScreenState
-                                                ._asDouble(
-                                          amountController.text,
-                                          fallback: 0,
-                                        );
-                                        amountController.dispose();
-                                        if (saved != true) return;
-                                        if (amount <= 0) return;
-                                        await onRecordPayout(
-                                          uid,
-                                          label,
-                                          amount,
-                                          'advance',
-                                        );
-                                      },
-                                child: const Text('Advance'),
-                              ),
-                              const SizedBox(width: 8),
-                              FilledButton.tonal(
-                                onPressed: isPaid || net <= 0
-                                    ? null
-                                    : () => onRecordPayout(
-                                        uid, label, net, 'weekly'),
-                                child: Text(isPaid ? 'Paid' : 'Mark paid'),
-                              ),
-                            ],
-                          ),
-                        ),
-                      );
-                    }),
-                  ],
-                );
-              },
-            );
-          },
-        );
-      },
-    );
-  }
-}
-
-class _MealsTab extends StatefulWidget {
-  final String eateryId;
-
-  const _MealsTab({required this.eateryId});
-
-  @override
-  State<_MealsTab> createState() => _MealsTabState();
-}
-
-class _MealsTabState extends State<_MealsTab> {
-  bool _isLoading = true;
-  List<Map<String, dynamic>> _mealOrders = [];
-  DateTime _startDate = DateTime.now().subtract(const Duration(days: 7));
-  DateTime _endDate = DateTime.now();
-
-  @override
-  void initState() {
-    super.initState();
-    _loadMealOrders();
-  }
-
-  Future<void> _loadMealOrders() async {
-    setState(() => _isLoading = true);
-    try {
-      final response = await ApiService.getStaffMealOrders(
-        eateryId: widget.eateryId,
-        startDate: _startDate,
-        endDate: _endDate,
-      );
-      if (mounted) {
-        setState(() {
-          _mealOrders = List<Map<String, dynamic>>.from(response['data'] ?? []);
-          _isLoading = false;
-        });
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() => _isLoading = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to load meal orders: $e')),
-        );
-      }
-    }
-  }
-
-  // Optimistic update helper
-  void _updateMealOrderStatusLocal(String orderId, String status) {
-    setState(() {
-      _mealOrders = _mealOrders.map((order) {
-        if (order['id'] == orderId) {
-          return {...order, 'status': status};
-        }
-        return order;
-      }).toList();
-    });
-  }
-
-  Future<void> _updateOrderStatus(String orderId, String status) async {
-    try {
-      await ApiService.updateStaffMealOrderStatus(
-        orderId,
-        eateryId: widget.eateryId,
-        status: status,
-      );
-      // Optimistic update - update status in local list without full refresh
-      _updateMealOrderStatusLocal(orderId, status);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Order $status')),
-      );
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to update order: $e')),
-        );
-      }
-    }
-  }
-
-  double _calculateTotalCost() {
-    return _mealOrders.fold(0.0, (sum, order) {
-      final items = (order['items'] as List?) ?? [];
-      return sum +
-          items.fold(0.0, (itemSum, item) {
-            final price = (item['price'] as num?)?.toDouble() ?? 0.0;
-            final qty = (item['quantity'] as num?)?.toInt() ?? 0;
-            return itemSum + (price * qty);
-          });
-    });
-  }
-
-  void _showOrderDetails(Map<String, dynamic> order) {
-    final items = (order['items'] as List?) ?? [];
-    final total = items.fold(0.0, (sum, item) {
-      final price = (item['price'] as num?)?.toDouble() ?? 0.0;
-      final qty = (item['quantity'] as num?)?.toInt() ?? 0;
-      return sum + (price * qty);
-    });
-
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text('Order by ${order['staffName'] ?? 'Unknown'}'),
-        content: SizedBox(
-          width: double.maxFinite,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Status: ${order['status'] ?? 'unknown'}',
-                style: TextStyle(
-                  color: (order['status'] ?? '') == 'completed'
-                      ? Colors.green
-                      : Colors.orange,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text('Date: ${order['createdAt'] ?? ''}'),
-              if (order['notes'] != null &&
-                  order['notes'].toString().isNotEmpty)
-                Text('Notes: ${order['notes']}'),
-              const SizedBox(height: 16),
-              const Divider(),
-              const Text('Items:',
-                  style: TextStyle(fontWeight: FontWeight.bold)),
-              ...items.map((item) => ListTile(
-                    title: Text(item['name'] ?? 'Unknown'),
-                    trailing: Text(
-                      '${item['quantity']} x ₱${(item['price'] as num?)?.toStringAsFixed(2) ?? '0.00'}',
-                    ),
-                  )),
-              const Divider(),
-              Align(
-                alignment: Alignment.centerRight,
-                child: Text(
-                  'Total: ₱${total.toStringAsFixed(2)}',
-                  style: const TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 16,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Close'),
-          ),
-          if (order['status'] == 'pending')
-            ElevatedButton(
-              onPressed: () {
-                Navigator.of(context).pop();
-                _updateOrderStatus(order['id'], 'completed');
-              },
-              child: const Text('Mark Completed'),
-            ),
-        ],
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final totalCost = _calculateTotalCost();
-
-    return Padding(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Date range picker and summary
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: InkWell(
-                          onTap: () async {
-                            final date = await showDatePicker(
-                              context: context,
-                              initialDate: _startDate,
-                              firstDate: DateTime.now().subtract(
-                                const Duration(days: 365),
-                              ),
-                              lastDate: _endDate,
-                            );
-                            if (date != null) {
-                              setState(() => _startDate = date);
-                              _loadMealOrders();
-                            }
-                          },
-                          child: InputDecorator(
-                            decoration: const InputDecoration(
-                              labelText: 'From',
-                              border: OutlineInputBorder(),
-                            ),
-                            child: Text(
-                              '${_startDate.year}-${_startDate.month.toString().padLeft(2, '0')}-${_startDate.day.toString().padLeft(2, '0')}',
-                            ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 16),
-                      Expanded(
-                        child: InkWell(
-                          onTap: () async {
-                            final date = await showDatePicker(
-                              context: context,
-                              initialDate: _endDate,
-                              firstDate: _startDate,
-                              lastDate: DateTime.now(),
-                            );
-                            if (date != null) {
-                              setState(() => _endDate = date);
-                              _loadMealOrders();
-                            }
-                          },
-                          child: InputDecorator(
-                            decoration: const InputDecoration(
-                              labelText: 'To',
-                              border: OutlineInputBorder(),
-                            ),
-                            child: Text(
-                              '${_endDate.year}-${_endDate.month.toString().padLeft(2, '0')}-${_endDate.day.toString().padLeft(2, '0')}',
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        'Total Orders: ${_mealOrders.length}',
-                        style: const TextStyle(fontWeight: FontWeight.bold),
-                      ),
-                      Text(
-                        'Total Cost: ₱${totalCost.toStringAsFixed(2)}',
-                        style: const TextStyle(
-                          fontWeight: FontWeight.bold,
-                          color: Colors.blue,
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
               ),
             ),
           ),
-          const SizedBox(height: 16),
-          // Meal orders list
-          Expanded(
-            child: _isLoading
-                ? ListView(
-                    padding: const EdgeInsets.all(16),
-                    children: const [
-                      SkeletonListTile(hasLeading: true, hasSubtitle: true),
-                      SkeletonListTile(hasLeading: true, hasSubtitle: true),
-                      SkeletonListTile(hasLeading: true, hasSubtitle: true),
-                    ],
-                  )
-                : _mealOrders.isEmpty
-                    ? const Center(child: Text('No meal orders found'))
-                    : ListView.builder(
-                        itemCount: _mealOrders.length,
-                        itemBuilder: (context, index) {
-                          final order = _mealOrders[index];
-                          final items = (order['items'] as List?) ?? [];
-                          final itemCount = items.fold(0, (sum, item) {
-                            return sum +
-                                ((item['quantity'] as num?)?.toInt() ?? 0);
-                          });
-                          final total = items.fold(0.0, (sum, item) {
-                            final price =
-                                (item['price'] as num?)?.toDouble() ?? 0.0;
-                            final qty =
-                                (item['quantity'] as num?)?.toInt() ?? 0;
-                            return sum + (price * qty);
-                          });
-
-                          return Card(
-                            child: ListTile(
-                              leading: CircleAvatar(
-                                backgroundColor: order['status'] == 'completed'
-                                    ? Colors.green
-                                    : Colors.orange,
-                                child: Icon(
-                                  order['status'] == 'completed'
-                                      ? Icons.check
-                                      : Icons.access_time,
-                                  color: Colors.white,
-                                ),
-                              ),
-                              title: Text(order['staffName'] ?? 'Unknown'),
-                              subtitle: Text(
-                                '$itemCount items • ₱${total.toStringAsFixed(2)}',
-                              ),
-                              trailing: Text(
-                                order['createdAt'] != null
-                                    ? order['createdAt']
-                                        .toString()
-                                        .substring(0, 10)
-                                    : '',
-                                style: TextStyle(
-                                  color: Colors.grey.shade600,
-                                  fontSize: 12,
-                                ),
-                              ),
-                              onTap: () => _showOrderDetails(order),
-                            ),
-                          );
-                        },
-                      ),
-          ),
-        ],
-      ),
+        );
+      },
     );
   }
 }

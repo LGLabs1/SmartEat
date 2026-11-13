@@ -31,11 +31,21 @@ dependencies:
   flutter_local_notifications: ^17.2.4
   audioplayers: ^6.0.0
   lottie: ^2.4.0
+  pdf: ^3.11.1
+  printing: ^5.13.1
+  path_provider: ^2.1.5
+  url_launcher: ^6.3.2
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_launcher_icons: ^0.13.1
+
+dependency_overrides:
+  # Patched Windows C++ implementation for Flutter 3.38's explicit
+  # EncodableValue constructors.
+  firebase_auth:
+    path: third_party/firebase_auth
 
 flutter_launcher_icons:
   android: true
@@ -51,3 +61,10 @@ flutter:
     - assets/logo.png
     - assets/sounds/
     - assets/animations/
+    - assets/fonts/
+  fonts:
+    - family: SmartEatPdf
+      fonts:
+        - asset: assets/fonts/arial.ttf
+        - asset: assets/fonts/arialbd.ttf
+          weight: 700

@@ -196,6 +196,10 @@ class ApiService {
     String? notes,
     String? orderId,
     bool completeNow = false,
+    double? amountReceived,
+    double? change,
+    String? referenceNumber,
+    String paymentStatus = 'paid',
   }) async {
     // Calculate total amount
     double totalAmount = 0;
@@ -219,6 +223,12 @@ class ApiService {
       'paymentMethod': paymentMethod,
       'notes': notes ?? '',
       'status': completeNow ? 'completed' : 'pending',
+      if (amountReceived != null) 'amountReceived': amountReceived,
+      if (change != null) 'change': change,
+      if (referenceNumber != null && referenceNumber.isNotEmpty)
+        'referenceNumber': referenceNumber,
+      // A tab opened but not yet completed is unpaid by definition.
+      'paymentStatus': completeNow ? paymentStatus : 'pending',
     }, orderId: orderId, status: completeNow ? 'completed' : 'pending');
     return {'data': order};
   }
@@ -263,8 +273,22 @@ class ApiService {
     return {'data': order};
   }
 
-  static Future<Map<String, dynamic>> completeOrder(String orderId) async {
-    final res = await FirebaseService.completeOrder(orderId);
+  static Future<Map<String, dynamic>> completeOrder(
+    String orderId, {
+    String? paymentMethod,
+    double? amountReceived,
+    double? change,
+    String? referenceNumber,
+    String? paymentStatus,
+  }) async {
+    final res = await FirebaseService.completeOrder(
+      orderId,
+      paymentMethod: paymentMethod,
+      amountReceived: amountReceived,
+      change: change,
+      referenceNumber: referenceNumber,
+      paymentStatus: paymentStatus,
+    );
     return {'data': res};
   }
 
@@ -1341,9 +1365,9 @@ class ApiService {
       headers: headers,
     );
 
-    // Any JSON payload is useful: the backend reports ollamaRunning:false
-    // (with a reason code) on 503, which is a *different* cause than the
-    // backend being unreachable.
+    // Any JSON payload is useful: the backend reports online:false with a
+    // Gemini reason code (gemini_invalid_key, gemini_quota, ...) on 503, which
+    // is a *different* cause than the backend being unreachable.
     try {
       final decoded = jsonDecode(response.body);
       if (decoded is Map<String, dynamic>) return decoded;

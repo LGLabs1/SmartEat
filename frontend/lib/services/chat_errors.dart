@@ -106,24 +106,13 @@ String _describeApiException(ChatApiException error) {
           'Analytics, inventory, finance, and other SmartEat features '
           'remain available.';
     case 'AI service unavailable':
-    case 'ollama_unavailable':
+      // Legacy alias kept for older backends.
       return '🤖 Sage\'s AI service is offline at the moment.\n\n'
           'It should be back shortly — try me again in a bit 💚';
-    case 'ollama_timeout':
     case 'AI request timed out':
     case 'ai_timeout':
       return '⏱️ The model is being slow to answer right now — it may still '
           'be warming up.\n\nGive it a breather and ask me again.';
-    case 'ollama_connection_lost':
-      return '🔌 The link to my brain dropped halfway through that answer.\n\n'
-          'Probably a transient hiccup — pop the question again?';
-    case 'ollama_host_unreachable':
-      return '🤖 I can\'t find the AI service at the configured address.\n\n'
-          'Worth checking the backend config — I\'ll wait.';
-    case 'ollama_error':
-      return '🤖 The model threw a wobble'
-          '${serverMessage.isNotEmpty ? ': $serverMessage' : '.'}\n\n'
-          'Try rephrasing and I\'ll have another go.';
     case 'invalid_message':
       return '💬 I\'d love to help — I just need a bit more to go on.\n\n'
           'Try naming a period, metric, menu item, order, or stock item.';

@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
+import '../features/finance/data/business_kpis.dart';
+import '../features/finance/data/finance_metrics.dart';
 import '../services/api_service.dart';
 
 class AnalyticsScreen extends StatefulWidget {
@@ -105,6 +107,7 @@ class _CompactKpiItem extends StatelessWidget {
   final IconData icon;
   final Color color;
   final bool isNarrow;
+  final String? description;
 
   const _CompactKpiItem({
     required this.title,
@@ -113,13 +116,17 @@ class _CompactKpiItem extends StatelessWidget {
     required this.icon,
     required this.color,
     required this.isNarrow,
+    this.description,
   });
+
+  Widget _withTip(Widget child) => description == null
+      ? child
+      : Tooltip(message: description!, preferBelow: false, waitDuration: const Duration(milliseconds: 300), child: child);
 
   @override
   Widget build(BuildContext context) {
     if (isNarrow) {
-      // Ultra-compact for narrow screens - icon + text horizontal
-      return Container(
+      return _withTip(Container(
         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
         decoration: BoxDecoration(
           color: Theme.of(context).colorScheme.surface,
@@ -143,34 +150,17 @@ class _CompactKpiItem extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(
-                    value,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontWeight: FontWeight.w800,
-                      fontSize: 12,
-                    ),
-                  ),
-                  Text(
-                    subtitle,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                      fontSize: 9,
-                    ),
-                  ),
+                  Text(value, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 12)),
+                  Text(subtitle, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 9)),
                 ],
               ),
             ),
           ],
         ),
-      );
+      ));
     }
 
-    // Standard compact for wider screens
-    return Container(
+    return _withTip(Container(
       width: 160,
       padding: const EdgeInsets.all(8),
       decoration: BoxDecoration(
@@ -184,10 +174,7 @@ class _CompactKpiItem extends StatelessWidget {
           Container(
             width: 28,
             height: 28,
-            decoration: BoxDecoration(
-              color: color.withOpacity(0.1),
-              borderRadius: BorderRadius.circular(8),
-            ),
+            decoration: BoxDecoration(color: color.withOpacity(0.1), borderRadius: BorderRadius.circular(8)),
             child: Icon(icon, color: color, size: 16),
           ),
           const SizedBox(width: 8),
@@ -196,42 +183,16 @@ class _CompactKpiItem extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
-                Text(
-                  title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    fontWeight: FontWeight.w700,
-                    fontSize: 10,
-                  ),
-                ),
+                Text(title, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontWeight: FontWeight.w700, fontSize: 10)),
                 const SizedBox(height: 2),
-                Text(
-                  value,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w900,
-                    fontSize: 13,
-                  ),
-                ),
-                Text(
-                  subtitle,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    fontSize: 9,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
+                Text(value, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 13)),
+                Text(subtitle, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 9, fontWeight: FontWeight.w500)),
               ],
             ),
           ),
         ],
       ),
-    );
+    ));
   }
 }
 
@@ -245,6 +206,10 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
   List<Map<String, dynamic>> _topSellingItems = [];
   List<Map<String, dynamic>> _ordersForecast = [];
   List<Map<String, dynamic>> _salesForecast = [];
+  List<Map<String, dynamic>> _ordersForRange = [];
+  List<Map<String, dynamic>> _stockMovements = [];
+  List<Map<String, dynamic>> _inventoryItems = [];
+  List<Map<String, dynamic>> _damagedItems = [];
   Map<String, dynamic>? _recommendations;
   List<Map<String, dynamic>> _expenses = [];
   List<Map<String, dynamic>> _payables = [];
@@ -255,7 +220,6 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
   DateTimeRange? _customRange;
   String? _selectedMonthYear;
   DateTime? _selectedMonth;
-  bool _showKpis = false;
 
   // Year/Month slicers (new)
   int? _selectedYear; // null = All
@@ -265,11 +229,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
   List<int> _availableYears = [];
   final Map<int, List<int>> _availableMonthsByYear = {};
 
-  final NumberFormat _currency = NumberFormat.currency(
-    locale: 'en_PH',
-    symbol: '₱',
-    decimalDigits: 2,
-  );
+  final NumberFormat _currency = NumberFormat.currency(locale: 'en_PH', symbol: '\u20B1', decimalDigits: 2);
 
   bool _looksLikeNetworkIssue(Object e) {
     final s = e.toString().toLowerCase();
@@ -496,18 +456,28 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
         ApiService.getRecommendations(),
         ApiService.getExpenses(),
         ApiService.getPayables(),
-        ordersForRangeFuture,
+        ordersForRangeFuture.catchError((_) => <String, dynamic>{'data': const []}),
+        ApiService.getStockMovements().catchError((_) => <String, dynamic>{'data': const []}),
+        ApiService.getInventoryItems().catchError((_) => <String, dynamic>{'data': const []}),
+        ApiService.getDamagedItems().catchError((_) => <String, dynamic>{'data': const []}),
       ]);
 
       if (mounted) {
-        final ordersForRange =
-            (results[8]['data'] as List<dynamic>? ?? const []);
+        List<Map<String, dynamic>> asList(dynamic raw) {
+          if (raw is List) return raw.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
+          if (raw is Map) {
+            final data = raw['data'];
+            if (data is List) return data.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
+          }
+          return const [];
+        }
+        final ordersForRange = asList(results[8]);
         setState(() {
-          _summaryStats = results[0]['data'];
+          _summaryStats = (results[0] is Map ? (results[0] as Map)['data'] : null) as Map<String, dynamic>?;
           _dailySales = List<Map<String, dynamic>>.from(
-              results[1]['data']['dailySales'] ?? []);
+              ((results[1] is Map ? (results[1] as Map)['data'] : null) as Map?)?['dailySales'] ?? []);
           _itemPerformance =
-              List<Map<String, dynamic>>.from(results[2]['data']['items'] ?? [])
+              List<Map<String, dynamic>>.from(((results[2] is Map ? (results[2] as Map)['data'] : null) as Map?)?['items'] ?? [])
                 ..sort((a, b) {
                   final ar = a['revenue'];
                   final br = b['revenue'];
@@ -516,13 +486,17 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                   return bv.compareTo(av);
                 });
           _topSellingItems = _computeTopSellingItems(ordersForRange);
+          _ordersForRange = ordersForRange;
           _ordersForecast =
-              List<Map<String, dynamic>>.from(results[3]['data'] ?? []);
+              List<Map<String, dynamic>>.from((results[3] is Map ? (results[3] as Map)['data'] : null) ?? []);
           _salesForecast =
-              List<Map<String, dynamic>>.from(results[4]['data'] ?? []);
-          _recommendations = results[5]['data'];
-          _expenses = List<Map<String, dynamic>>.from(results[6]['data'] ?? []);
-          _payables = List<Map<String, dynamic>>.from(results[7]['data'] ?? []);
+              List<Map<String, dynamic>>.from((results[4] is Map ? (results[4] as Map)['data'] : null) ?? []);
+          _recommendations = (results[5] is Map ? (results[5] as Map)['data'] : null) as Map<String, dynamic>?;
+          _expenses = List<Map<String, dynamic>>.from((results[6] is Map ? (results[6] as Map)['data'] : null) ?? []);
+          _payables = List<Map<String, dynamic>>.from((results[7] is Map ? (results[7] as Map)['data'] : null) ?? []);
+          _stockMovements = asList(results[9]);
+          _inventoryItems = asList(results[10]);
+          _damagedItems = asList(results[11]);
           _isLoading = false;
         });
       }
@@ -541,6 +515,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     return Scaffold(
       appBar: widget.showAppBar
           ? AppBar(
@@ -565,42 +540,6 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
             : Column(
                 children: [
                   Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: Colors.grey.shade200),
-                      ),
-                      child: SizedBox(
-                        height: 40,
-                        child: TabBar(
-                          controller: _tabController,
-                          labelColor: Theme.of(context).colorScheme.primary,
-                          unselectedLabelColor: Colors.grey.shade700,
-                          indicatorColor: Theme.of(context).colorScheme.primary,
-                          labelStyle: const TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w700,
-                          ),
-                          unselectedLabelStyle: const TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                          ),
-                          labelPadding:
-                              const EdgeInsets.symmetric(horizontal: 10),
-                          indicatorSize: TabBarIndicatorSize.tab,
-                          tabs: const [
-                            Tab(text: 'Sales'),
-                            Tab(text: 'Insights'),
-                            Tab(text: 'Forecast'),
-                            Tab(text: 'Finance'),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                  Padding(
                     padding: const EdgeInsets.fromLTRB(16, 8, 16, 6),
                     child: LayoutBuilder(
                       builder: (context, constraints) {
@@ -614,32 +553,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                               // Year/Month slicers
                               _buildYearMonthSlicers(),
                               const SizedBox(width: 10),
-                              // KPI button
-                              OutlinedButton.icon(
-                                onPressed: () =>
-                                    setState(() => _showKpis = !_showKpis),
-                                style: OutlinedButton.styleFrom(
-                                  visualDensity: VisualDensity.compact,
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 10, vertical: 8),
-                                  minimumSize: const Size(0, 34),
-                                  tapTargetSize:
-                                      MaterialTapTargetSize.shrinkWrap,
-                                ),
-                                icon: Icon(
-                                  _showKpis
-                                      ? Icons.expand_less
-                                      : Icons.expand_more,
-                                  size: 18,
-                                ),
-                                label: const Text('KPIs'),
-                              ),
-                              const SizedBox(width: 10),
-                              // KPI cards (compact inline version)
-                              if (_showKpis)
-                                Expanded(
-                                  child: _buildCompactKpiRow(),
-                                ),
+                              Expanded(child: _buildCompactKpiRow()),
                             ],
                           );
                         } else {
@@ -651,31 +565,10 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                                 children: [
                                   _buildYearMonthSlicers(),
                                   const SizedBox(width: 10),
-                                  OutlinedButton.icon(
-                                    onPressed: () =>
-                                        setState(() => _showKpis = !_showKpis),
-                                    style: OutlinedButton.styleFrom(
-                                      visualDensity: VisualDensity.compact,
-                                      padding: const EdgeInsets.symmetric(
-                                          horizontal: 10, vertical: 8),
-                                      minimumSize: const Size(0, 34),
-                                      tapTargetSize:
-                                          MaterialTapTargetSize.shrinkWrap,
-                                    ),
-                                    icon: Icon(
-                                      _showKpis
-                                          ? Icons.expand_less
-                                          : Icons.expand_more,
-                                      size: 18,
-                                    ),
-                                    label: const Text('KPIs'),
-                                  ),
                                 ],
                               ),
-                              if (_showKpis) ...[
-                                const SizedBox(height: 8),
-                                _buildCompactKpiRow(),
-                              ],
+                              const SizedBox(height: 8),
+                              _buildCompactKpiRow(),
                             ],
                           );
                         }
@@ -697,6 +590,35 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                 ],
               ),
       ),
+      bottomNavigationBar: _isLoading
+          ? null
+          : Material(
+              color: scheme.surface,
+              child: SafeArea(
+                top: false,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    border: Border(top: BorderSide(color: scheme.outlineVariant)),
+                  ),
+                  child: TabBar(
+                    controller: _tabController,
+                    labelColor: scheme.primary,
+                    unselectedLabelColor: scheme.onSurfaceVariant,
+                    indicatorColor: scheme.primary,
+                    indicatorSize: TabBarIndicatorSize.tab,
+                    labelStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+                    unselectedLabelStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                    labelPadding: const EdgeInsets.symmetric(horizontal: 6),
+                    tabs: const [
+                      Tab(icon: Icon(Icons.show_chart_outlined, size: 20), text: 'Sales'),
+                      Tab(icon: Icon(Icons.insights_outlined, size: 20), text: 'Insights'),
+                      Tab(icon: Icon(Icons.auto_graph_outlined, size: 20), text: 'Forecast'),
+                      Tab(icon: Icon(Icons.payments_outlined, size: 20), text: 'Finance'),
+                    ],
+                  ),
+                ),
+              ),
+            ),
     );
   }
 
@@ -820,6 +742,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
             icon: Icons.account_balance_wallet,
             color: Theme.of(context).colorScheme.error,
             isNarrow: isNarrow,
+            description: 'Total recorded expenses for the selected/current month and number of expense transactions.',
           ),
           _CompactKpiItem(
             title: 'Payables',
@@ -828,6 +751,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
             icon: Icons.payment,
             color: Theme.of(context).colorScheme.secondary,
             isNarrow: isNarrow,
+            description: 'Outstanding payables/bills due and the number of pending payable records.',
           ),
         ];
 
@@ -1324,127 +1248,120 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
     // Note: We don't reset _selectedMonthNumber here to preserve user selection
     // The dropdown will show the selected value even if not in current data
 
-    return Row(
+    BoxDecoration box() => BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: Colors.grey.shade300),
+        );
+
+    final yearSlicer = Container(
+      decoration: box(),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            'Year',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: Colors.grey.shade600,
+            ),
+          ),
+          const SizedBox(width: 8),
+          DropdownButtonHideUnderline(
+            child: DropdownButton<int?>(
+              value: _selectedYear,
+              isDense: true,
+              icon: Icon(Icons.arrow_drop_down,
+                  size: 18, color: Colors.grey.shade600),
+              items: [
+                const DropdownMenuItem<int?>(value: null, child: Text('All')),
+                ...availableYears.map((year) => DropdownMenuItem<int?>(
+                      value: year,
+                      child: Text(year.toString()),
+                    )),
+              ],
+              onChanged: (value) {
+                setState(() {
+                  _selectedYear = value;
+                  if (value == null) _selectedMonthNumber = null;
+                });
+                _loadAnalyticsData();
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+
+    final monthSlicer = Container(
+      decoration: box(),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            'Month',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: Colors.grey.shade600,
+            ),
+          ),
+          const SizedBox(width: 8),
+          DropdownButtonHideUnderline(
+            child: DropdownButton<int?>(
+              value: _selectedMonthNumber,
+              isDense: true,
+              icon: Icon(Icons.arrow_drop_down,
+                  size: 18, color: Colors.grey.shade600),
+              items: [
+                const DropdownMenuItem<int?>(value: null, child: Text('All')),
+                ...availableMonths.map((month) => DropdownMenuItem<int?>(
+                      value: month,
+                      child: Text(DateFormat('MMMM')
+                          .format(DateTime(2024, month, 1))),
+                    )),
+              ],
+              onChanged: (value) {
+                setState(() => _selectedMonthNumber = value);
+                _loadAnalyticsData();
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+
+    return Column(
       mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Year slicer
-        Container(
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: Colors.grey.shade300),
-          ),
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                'Year',
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                  color: Colors.grey.shade600,
-                ),
-              ),
+        yearSlicer,
+        const SizedBox(height: 8),
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            monthSlicer,
+            if (_selectedYear != null || _selectedMonthNumber != null) ...[
               const SizedBox(width: 8),
-              DropdownButtonHideUnderline(
-                child: DropdownButton<int?>(
-                  value: _selectedYear,
-                  isDense: true,
-                  icon: Icon(Icons.arrow_drop_down,
-                      size: 18, color: Colors.grey.shade600),
-                  items: [
-                    // All option
-                    const DropdownMenuItem<int?>(
-                      value: null,
-                      child: Text('All'),
-                    ),
-                    ...availableYears.map((year) => DropdownMenuItem<int?>(
-                          value: year,
-                          child: Text(year.toString()),
-                        )),
-                  ],
-                  onChanged: (value) {
-                    setState(() {
-                      _selectedYear = value;
-                      // Reset month when year changes to All
-                      if (value == null) {
-                        _selectedMonthNumber = null;
-                      }
-                    });
-                    _loadAnalyticsData();
-                  },
-                ),
+              IconButton(
+                icon: const Icon(Icons.clear, size: 18),
+                tooltip: 'Clear filters',
+                onPressed: () {
+                  setState(() {
+                    _selectedYear = null;
+                    _selectedMonthNumber = null;
+                  });
+                  _loadAnalyticsData();
+                },
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
               ),
             ],
-          ),
+          ],
         ),
-        const SizedBox(width: 12),
-        // Month slicer
-        Container(
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: Colors.grey.shade300),
-          ),
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                'Month',
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                  color: Colors.grey.shade600,
-                ),
-              ),
-              const SizedBox(width: 8),
-              DropdownButtonHideUnderline(
-                child: DropdownButton<int?>(
-                  value: _selectedMonthNumber,
-                  isDense: true,
-                  icon: Icon(Icons.arrow_drop_down,
-                      size: 18, color: Colors.grey.shade600),
-                  items: [
-                    // All option
-                    const DropdownMenuItem<int?>(
-                      value: null,
-                      child: Text('All'),
-                    ),
-                    ...availableMonths.map((month) => DropdownMenuItem<int?>(
-                          value: month,
-                          child: Text(DateFormat('MMMM')
-                              .format(DateTime(2024, month, 1))),
-                        )),
-                  ],
-                  onChanged: (value) {
-                    setState(() {
-                      _selectedMonthNumber = value;
-                    });
-                    _loadAnalyticsData();
-                  },
-                ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(width: 12),
-        // Reset button
-        if (_selectedYear != null || _selectedMonthNumber != null)
-          IconButton(
-            icon: const Icon(Icons.clear, size: 18),
-            tooltip: 'Clear filters',
-            onPressed: () {
-              setState(() {
-                _selectedYear = null;
-                _selectedMonthNumber = null;
-              });
-              _loadAnalyticsData();
-            },
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-          ),
       ],
     );
   }
@@ -1888,12 +1805,21 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                   iconColor: const Color(0xFF00B0FF),
                   data: _salesForecast,
                   valueKey: 'predictedRevenue',
-                  unit: '₱',
+                  unit: '\u20B1',
                   isCurrency: true,
                 ),
               ),
             ],
           ),
+          const SizedBox(height: 16),
+          Builder(builder: (context) {
+            final f = BusinessKpis.forecastKpi(salesForecast: _salesForecast, menuProfitRowsData: _itemPerformance);
+            return Wrap(spacing: 12, runSpacing: 12, children: [
+              SizedBox(width: 320, child: _FinanceCard(title: 'Forecast Revenue (30d)', value: _currency.format(f.forecastRevenue), subtitle: 'From sales forecast', icon: Icons.trending_up, color: const Color(0xFF00B0FF))),
+              SizedBox(width: 320, child: _FinanceCard(title: 'Forecast Ingredient Cost (est.)', value: _currency.format(f.forecastIngredientCost), subtitle: 'Estimated from menu costing ratio; label as estimate.', icon: Icons.inventory, color: Colors.orange.shade600)),
+              SizedBox(width: 320, child: _FinanceCard(title: 'Forecast Profit (est.)', value: _currency.format(f.forecastProfit), subtitle: 'Revenue minus estimated ingredient cost.', icon: Icons.savings, color: f.forecastProfit >= 0 ? Colors.green.shade600 : Colors.red.shade600)),
+            ]);
+          }),
         ],
       ),
     );
@@ -2096,7 +2022,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                         // Value
                         Text(
                           isCurrency
-                              ? '₱${NumberFormat.compact().format(value)}'
+                              ? '\u20B1${NumberFormat.compact(locale: 'en_PH').format(value)}'
                               : value.toStringAsFixed(0),
                           style: TextStyle(
                             fontSize: 9,
@@ -2547,7 +2473,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                         final dateStr =
                             '${date.month.toString().padLeft(2, '0')}/${date.day.toString().padLeft(2, '0')}/${date.year}';
                         return LineTooltipItem(
-                          '$dateStr\n₱${spot.y.toStringAsFixed(0)}',
+                          '$dateStr\n\u20B1${spot.y.toStringAsFixed(0)}',
                           const TextStyle(
                             color: Colors.white,
                             fontSize: 12,
@@ -2599,8 +2525,8 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                           padding: const EdgeInsets.only(right: 4),
                           child: Text(
                             value >= 1000
-                                ? '₱${(value / 1000).toStringAsFixed(0)}k'
-                                : '₱${value.toInt()}',
+                                ? '\u20B1${(value / 1000).toStringAsFixed(0)}k'
+                                : _currency.format(value),
                             style: TextStyle(
                                 fontSize: 10, color: Colors.grey.shade600),
                           ),
@@ -3041,7 +2967,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                       borderRadius: BorderRadius.circular(20),
                     ),
                     child: Text(
-                      'Total: ₱${NumberFormat.compact().format(totalForecast)}',
+                      'Total: \u20B1${NumberFormat.compact(locale: 'en_PH').format(totalForecast)}',
                       style: const TextStyle(
                         fontSize: 11,
                         fontWeight: FontWeight.w600,
@@ -3148,7 +3074,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                                 ),
                               ),
                               Text(
-                                '₱${NumberFormat.compact().format(sales)}',
+                                '\u20B1${NumberFormat.compact(locale: 'en_PH').format(sales)}',
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                                 style: const TextStyle(
@@ -3173,64 +3099,34 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
     final now = DateTime.now();
     final currentMonth = DateTime(now.year, now.month, 1);
     final prevMonth = DateTime(now.year, now.month - 1, 1);
+    final prevMonthEnd = DateTime(prevMonth.year, prevMonth.month + 1, 0, 23, 59, 59, 999);
+    final currentMonthEnd = DateTime(currentMonth.year, currentMonth.month + 1, 0, 23, 59, 59, 999);
+    final mtdSales = BusinessKpis.summarizeOrders(_ordersForRange, start: currentMonth, end: currentMonthEnd);
+    final cogs = BusinessKpis.resolveCogs(stockMovements: _stockMovements, itemPerformance: _itemPerformance);
+    final opEx = BusinessKpis.operatingExpenses(_expenses, start: currentMonth, end: currentMonthEnd);
+    final netProfit = mtdSales.netSales - cogs.amount - opEx;
+    final profitMargin = mtdSales.netSales > 0 ? netProfit / mtdSales.netSales * 100 : 0.0;
+    final menuRows = BusinessKpis.menuProfitRows(_itemPerformance);
+    final topProfit = menuRows.where((r) => r.hasCosting).toList()
+      ..sort((a, b) => b.profit.compareTo(a.profit));
+    final lowProfit = menuRows.where((r) => r.hasCosting && r.revenue > 0).toList()
+      ..sort((a, b) => a.profit.compareTo(b.profit));
+    final payablesKpi = BusinessKpis.payablesKpi(_payables, now: now);
+    final prevSales = BusinessKpis.summarizeOrders(_ordersForRange, start: prevMonth, end: prevMonthEnd);
+    final revGrowth = prevSales.netSales > 0 ? ((mtdSales.netSales - prevSales.netSales) / prevSales.netSales) * 100 : 0.0;
 
-    // Calculate current month expenses
+
     final currentMonthExpenses = _expenses.where((e) {
-      final dateStr = e['date']?.toString() ?? e['createdAt']?.toString();
-      if (dateStr == null) return false;
-      final date = DateTime.tryParse(dateStr);
+      final date = FinanceMetrics.expenseDate(e);
       if (date == null) return false;
-      return date.year == currentMonth.year && date.month == currentMonth.month;
+      return date.year == currentMonth.year && date.month == currentMonth.month && BusinessKpis.isOperatingExpense(e);
     }).toList();
-
-    // Calculate previous month expenses
-    final prevMonthExpenses = _expenses.where((e) {
-      final dateStr = e['date']?.toString() ?? e['createdAt']?.toString();
-      if (dateStr == null) return false;
-      final date = DateTime.tryParse(dateStr);
-      if (date == null) return false;
-      return date.year == prevMonth.year && date.month == prevMonth.month;
-    }).toList();
-
-    final currentTotal = currentMonthExpenses.fold<double>(
-      0,
-      (sum, e) =>
-          sum + ((e['amount'] is num) ? (e['amount'] as num).toDouble() : 0),
-    );
-
-    final prevTotal = prevMonthExpenses.fold<double>(
-      0,
-      (sum, e) =>
-          sum + ((e['amount'] is num) ? (e['amount'] as num).toDouble() : 0),
-    );
-
-    // Calculate change percentage
-    final changePercent =
-        prevTotal > 0 ? ((currentTotal - prevTotal) / prevTotal) * 100 : 0.0;
-
-    // Calculate due payables
-    final duePayables = _payables.where((p) {
-      final status = (p['status'] ?? 'unpaid').toString().toLowerCase();
-      return status != 'paid';
-    }).toList();
-
-    final totalPayables = duePayables.fold<double>(
-      0,
-      (sum, p) =>
-          sum + ((p['amount'] is num) ? (p['amount'] as num).toDouble() : 0),
-    );
-
-    // Category breakdown for current month
-    final categoryMap = <String, double>{};
-    for (final e in currentMonthExpenses) {
-      final category = (e['category'] ?? 'Other').toString();
-      final amount =
-          (e['amount'] is num) ? (e['amount'] as num).toDouble() : 0.0;
-      categoryMap[category] = (categoryMap[category] ?? 0) + amount;
-    }
-
-    final sortedCategories = categoryMap.entries.toList()
-      ..sort((a, b) => b.value.compareTo(a.value));
+    final currentTotal = opEx;
+    final prevTotal = BusinessKpis.operatingExpenses(_expenses, start: prevMonth, end: prevMonthEnd);
+    final changePercent = prevTotal > 0 ? ((currentTotal - prevTotal) / prevTotal) * 100 : 0.0;
+    final duePayables = _payables.where((p) => (p['status'] ?? 'unpaid').toString().toLowerCase() != 'paid').toList();
+    final totalPayables = payablesKpi.outstanding;
+    final sortedCategories = FinanceMetrics.expensesByCategory(currentMonthExpenses);
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
@@ -3244,47 +3140,83 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
           ),
           const SizedBox(height: 16),
 
-          // Summary cards
-          Row(
+          Wrap(
+            spacing: 12, runSpacing: 12,
             children: [
-              Expanded(
-                child: _FinanceCard(
-                  title: 'Monthly Expenses',
-                  value: _currency.format(currentTotal),
-                  subtitle: changePercent != 0
-                      ? '${changePercent > 0 ? '+' : ''}${changePercent.toStringAsFixed(1)}% vs last month'
-                      : 'No change vs last month',
-                  icon: Icons.account_balance_wallet,
-                  color: Colors.red.shade400,
-                  trend: changePercent > 0
-                      ? Icons.trending_up
-                      : changePercent < 0
-                          ? Icons.trending_down
-                          : Icons.trending_flat,
-                  trendColor: changePercent > 0
-                      ? Colors.red
-                      : changePercent < 0
-                          ? Colors.green
-                          : Colors.grey,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _FinanceCard(
-                  title: 'Due Payables',
-                  value: _currency.format(totalPayables),
-                  subtitle: '${duePayables.length} pending',
-                  icon: Icons.payment,
-                  color: Colors.orange.shade400,
-                ),
-              ),
+              SizedBox(width: 320, child: _FinanceCard(title: 'Net Sales (MTD)', value: _currency.format(mtdSales.netSales),
+                subtitle: 'Gross ${_currency.format(mtdSales.grossSales)} · Disc ${_currency.format(mtdSales.discounts)} · ${revGrowth >= 0 ? '+' : ''}${revGrowth.toStringAsFixed(1)}% vs prev · ${mtdSales.ordersCount} orders · AOV ${_currency.format(mtdSales.averageOrderValue)}',
+                icon: Icons.payments, color: Colors.green.shade600, trend: revGrowth >= 0 ? Icons.trending_up : Icons.trending_down, trendColor: revGrowth >= 0 ? Colors.green : Colors.red)),
+              SizedBox(width: 320, child: _FinanceCard(title: 'COGS (${cogs.sourceLabel})', value: _currency.format(cogs.amount),
+                subtitle: cogs.isEstimated ? 'Estimated from recipe/menu costing (fallback). Separate from Actual sale-consumption COGS.' : 'Actual from sale-consumption stock movements.',
+                icon: Icons.inventory_2, color: Colors.blue.shade600)),
+              SizedBox(width: 320, child: _FinanceCard(title: 'Operating Expenses (MTD)', value: _currency.format(opEx),
+                subtitle: 'Heuristic: excludes inventory purchases; payable payments treated as operating-related.',
+                icon: Icons.account_balance_wallet, color: Colors.red.shade400)),
+              SizedBox(width: 320, child: _FinanceCard(title: 'Net Profit / Margin', value: _currency.format(netProfit),
+                subtitle: '${profitMargin.toStringAsFixed(1)}% margin · Gross profit ${_currency.format(mtdSales.netSales - cogs.amount)}',
+                icon: Icons.savings, color: netProfit >= 0 ? Colors.teal.shade600 : Colors.red.shade700)),
+              SizedBox(width: 320, child: _FinanceCard(title: 'Outstanding Payables', description: 'Unpaid payables/bills currently outstanding, including overdue and due buckets when available.', value: _currency.format(payablesKpi.outstanding),
+                subtitle: 'Outstanding ${_currency.format(payablesKpi.outstanding)} · Overdue ${_currency.format(payablesKpi.overdue)} · Due today ${payablesKpi.dueToday} · Week ${payablesKpi.dueThisWeek} · Month ${payablesKpi.dueThisMonth}',
+                icon: Icons.payment, color: Colors.orange.shade400)),
             ],
           ),
-          const SizedBox(height: 24),
+          if (topProfit.isNotEmpty) ...[
+            const SizedBox(height: 16),
+            const Text('Highest Profit Menu Items (menu costing; separate from Actual COGS)', style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
+            ...topProfit.take(5).map((r) => ListTile(dense: true, contentPadding: EdgeInsets.zero,
+              title: Text((r.item['name'] ?? r.item['itemName'] ?? 'Item').toString()), subtitle: Text('Sold ${r.quantity.toStringAsFixed(0)} · Rev ${_currency.format(r.revenue)} · COGS/item ${_currency.format(r.cogsPerItem)} · Profit/item ${_currency.format(r.profitPerItem)}'),
+              trailing: Text(_currency.format(r.profit), style: TextStyle(fontWeight: FontWeight.bold, color: r.profit >= 0 ? Colors.green.shade700 : Colors.red.shade700)))),
+          ],
+          if (lowProfit.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            const Text('Low-Profit Menu Items (costed)', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+            ...lowProfit.take(5).map((r) => ListTile(dense: true, contentPadding: EdgeInsets.zero,
+              title: Text((r.item['name'] ?? r.item['itemName'] ?? 'Item').toString()), subtitle: Text('Margin ${r.marginPercent.toStringAsFixed(1)}% · Profit/item ${_currency.format(r.profitPerItem)}'),
+              trailing: Text(_currency.format(r.profit), style: const TextStyle(color: Colors.orange, fontWeight: FontWeight.w600)))),
+          ],
+          const SizedBox(height: 20),
+          const Text('Period Revenue / Expense / Profit (with growth)', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 8),
+          Builder(builder: (context) {
+            Widget period(String label, DateTime cStart, DateTime cEnd, DateTime pStart, DateTime pEnd) {
+              final sales = BusinessKpis.summarizeOrders(_ordersForRange, start: cStart, end: cEnd);
+              final pSales = BusinessKpis.summarizeOrders(_ordersForRange, start: pStart, end: pEnd);
+              final op = BusinessKpis.operatingExpenses(_expenses, start: cStart, end: cEnd);
+              final pOp = BusinessKpis.operatingExpenses(_expenses, start: pStart, end: pEnd);
+              final pc = BusinessKpis.resolveCogs(stockMovements: _stockMovements, itemPerformance: _itemPerformance);
+              final menuRows = BusinessKpis.menuProfitRows(_itemPerformance);
+              final rr = menuRows.where((r) => r.hasCosting).fold<double>(0, (s, r) => s + r.revenue);
+              final rc = menuRows.where((r) => r.hasCosting).fold<double>(0, (s, r) => s + r.estimatedCogs);
+              final cogsV = pc.isEstimated ? (rr > 0 ? sales.netSales * (rc / rr) : 0) : pc.amount;
+              final profit = sales.netSales - op - cogsV;
+              String g(double c, double p) => p > 0 ? '${((c - p) / p * 100) >= 0 ? '+' : ''}${((c - p) / p * 100).toStringAsFixed(1)}%' : (c > 0 ? 'n/a' : '0%');
+              return SizedBox(width: 320, child: _FinanceCard(
+                title: label,
+                value: _currency.format(sales.netSales),
+                subtitle: 'Rev ${g(sales.netSales, pSales.netSales)} · Exp ${_currency.format(op)} ${g(op, pOp)} · Profit ${_currency.format(profit)} · ${sales.ordersCount} orders · COGS ${pc.isEstimated ? 'est.' : 'actual'}',
+                icon: Icons.calendar_view_week,
+                color: profit >= 0 ? Colors.blue.shade600 : Colors.red.shade600,
+              ));
+            }
+            final todayStart = DateTime(now.year, now.month, now.day);
+            final todayEnd = DateTime(now.year, now.month, now.day, 23, 59, 59, 999);
+            final yday = todayStart.subtract(const Duration(days: 1));
+            final weekStart = todayStart.subtract(Duration(days: now.weekday - 1));
+            final prevWeekStart = weekStart.subtract(const Duration(days: 7));
+            final prevWeekEnd = weekStart.subtract(const Duration(seconds: 1));
+            final yearStart = DateTime(now.year, 1, 1);
+            final prevYearStart = DateTime(now.year - 1, 1, 1);
+            final prevYearEnd = DateTime(now.year - 1, 12, 31, 23, 59, 59, 999);
+            return Wrap(spacing: 12, runSpacing: 12, children: [
+              period('Daily (Today)', todayStart, todayEnd, yday, DateTime(yday.year, yday.month, yday.day, 23, 59, 59, 999)),
+              period('Weekly (This week)', weekStart, todayEnd, prevWeekStart, prevWeekEnd),
+              period('Yearly (${now.year})', yearStart, todayEnd, prevYearStart, prevYearEnd),
+            ]);
+          }),
 
           // Category breakdown
           const Text(
-            'Expenses by Category',
+            'Operating Expenses by Category (MTD)',
             style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 12),
@@ -3339,7 +3271,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                     value: currentMonthExpenses.isNotEmpty
                         ? _currency
                             .format(currentTotal / currentMonthExpenses.length)
-                        : '₱0.00',
+                        : _currency.format(0),
                     icon: Icons.calculate,
                   ),
                 ],
@@ -3420,7 +3352,7 @@ class _SummaryCard extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             Text(
-              '₱${revenue.toStringAsFixed(2)}',
+              NumberFormat.currency(locale: 'en_PH', symbol: '₱', decimalDigits: 2).format(revenue),
               style: TextStyle(
                 fontSize: 24,
                 fontWeight: FontWeight.bold,
@@ -3507,7 +3439,7 @@ class _SalesItemTile extends StatelessWidget {
       title: Text(sale['date'] ?? ''),
       subtitle: Text('${sale['orders']} orders'),
       trailing: Text(
-        '₱${revenue.toStringAsFixed(2)}',
+        NumberFormat.currency(locale: 'en_PH', symbol: '₱', decimalDigits: 2).format(revenue),
         style: const TextStyle(
           fontWeight: FontWeight.bold,
           color: Colors.green,
@@ -3708,7 +3640,7 @@ class _ChartLegend extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Row(
+    final child = Row(
       children: [
         Container(
           width: 16,
@@ -3725,6 +3657,7 @@ class _ChartLegend extends StatelessWidget {
         ),
       ],
     );
+    return child;
   }
 }
 
@@ -3736,6 +3669,7 @@ class _FinanceCard extends StatelessWidget {
   final Color color;
   final IconData? trend;
   final Color? trendColor;
+  final String? description;
 
   const _FinanceCard({
     Key? key,
@@ -3746,11 +3680,12 @@ class _FinanceCard extends StatelessWidget {
     required this.color,
     this.trend,
     this.trendColor,
+    this.description,
   }) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
-    return Card(
+    final card = Card(
       elevation: 2,
       child: Padding(
         padding: const EdgeInsets.all(12),
@@ -3802,6 +3737,7 @@ class _FinanceCard extends StatelessWidget {
         ),
       ),
     );
+    return description == null ? card : Tooltip(message: description!, preferBelow: false, waitDuration: const Duration(milliseconds: 300), child: card);
   }
 }
 
@@ -3839,7 +3775,7 @@ class _CategoryBar extends StatelessWidget {
                 ),
               ),
               Text(
-                '${percent.toStringAsFixed(1)}% • ${currency.format(amount)}',
+                '${percent.toStringAsFixed(1)}% \u00B7 ${currency.format(amount)}',
                 style: TextStyle(
                   fontSize: 11,
                   color: Colors.grey.shade600,

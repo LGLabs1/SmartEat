@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'dart:async';
 import 'dart:math';
 import '../services/api_service.dart';
 import '../services/auth_provider.dart';
 import '../services/ai_assistant_provider.dart';
+import '../services/pos_settings_service.dart';
+import '../widgets/payment_method_dialog.dart';
 import '../widgets/skeleton_loaders.dart';
 import '../utils/haptic_feedback.dart';
 import '../utils/error_messages.dart';
@@ -41,6 +44,16 @@ class _POSScreenState extends State<POSScreen> {
   String _selectedCategory = 'All';
   List<String> _pinnedItemIds = [];
 
+  /// Short-lived confirmation shown inside the cart panel after an order is
+  /// created, instead of a full-screen snackbar. Auto-dismisses.
+  String? _cartSuccessMessage;
+  Timer? _successDismissTimer;
+
+  /// The cart sheet lives in its own route and never rebuilds when this State
+  /// calls setState(). Bump this tick inside the cart-affecting mutations so
+  /// the open sheet stays in sync (loading spinner, success banner, clear).
+  final ValueNotifier<int> _cartSheetTick = ValueNotifier<int>(0);
+
   void _openCartSheet() {
     showModalBottomSheet<void>(
       context: context,
@@ -50,19 +63,31 @@ class _POSScreenState extends State<POSScreen> {
         return SafeArea(
           child: SizedBox(
             height: MediaQuery.of(context).size.height * 0.82,
-            child: _CartPanel(
-              cartItems: _cartItems,
-              totalAmount: _totalAmount,
-              isLoading: _isLoading,
-              isAddToExistingOrder: _addToExistingOrder,
-              orderId:
-                  _addToExistingOrder ? _targetPendingOrderId : _newOrderTempId,
-              isNewOrder: !_addToExistingOrder,
-              baselineQtyByMenuId: _baselineQtyByMenuId,
-              onQuantityChanged: (index, qty) => _updateQuantity(index, qty),
-              onRemove: (index) => _removeFromCart(index),
-              onCreateOrder: _createOrder,
-              actionLabel: _addToExistingOrder ? 'Add Items' : 'Create Order',
+            // The sheet lives in its own route, so it would never rebuild when
+            // this State's setState() runs (loading spinner, success banner,
+            // cart clearing). Listen to this State to propagate those updates.
+            child: ListenableBuilder(
+              listenable: _cartSheetTick,
+              builder: (context, _) {
+                return _CartPanel(
+                  cartItems: _cartItems,
+                  totalAmount: _totalAmount,
+                  isLoading: _isLoading,
+                  successMessage: _cartSuccessMessage,
+                  isAddToExistingOrder: _addToExistingOrder,
+                  orderId: _addToExistingOrder
+                      ? _targetPendingOrderId
+                      : _newOrderTempId,
+                  isNewOrder: !_addToExistingOrder,
+                  baselineQtyByMenuId: _baselineQtyByMenuId,
+                  onQuantityChanged: (index, qty) => _updateQuantity(index, qty),
+                  onRemove: (index) => _removeFromCart(index),
+                  onCreateOrder: () => _createOrder(),
+                  onCompleteOrder: _completeWithPayment,
+                  onClearCart: _clearCart,
+                  actionLabel: _addToExistingOrder ? 'Add Items' : 'Create Order',
+                );
+              },
             ),
           ),
         );
@@ -72,10 +97,15 @@ class _POSScreenState extends State<POSScreen> {
 
   late Stream<List<Map<String, dynamic>>> _menuStream;
 
+  // Cached so the inventory is fetched once per refresh instead of on every
+  // rebuild (the FutureBuilder below used to call the API inline in build()).
+  late Future<Map<String, dynamic>> _inventoryFuture;
+
   @override
   void initState() {
     super.initState();
     _menuStream = ApiService.getMenuItemsStream();
+    _inventoryFuture = ApiService.getInventoryItems();
     _addToExistingOrder = widget.initialAddToExistingOrder;
     _targetPendingOrderId = widget.initialOrderId.trim();
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -223,7 +253,10 @@ class _POSScreenState extends State<POSScreen> {
   }
 
   Future<void> _loadMenuItems() async {
-    setState(() => _isLoading = true);
+    setState(() {
+      _isLoading = true;
+      _inventoryFuture = ApiService.getInventoryItems();
+    });
 
     try {
       final results = await Future.wait([
@@ -476,6 +509,7 @@ class _POSScreenState extends State<POSScreen> {
   }
 
   void _setQtyForItem(Map<String, dynamic> item, int nextQty) {
+    _dismissCartSuccess();
     final menuId = (item['id'] ?? '').toString().trim();
     if (menuId.isEmpty) return;
 
@@ -502,6 +536,7 @@ class _POSScreenState extends State<POSScreen> {
     final exceeded = !isUnlimited && nextQty > cappedQty;
 
     setState(() {
+      _cartSheetTick.value++;
       final idx = _cartItems.indexWhere(
         (e) => (e['id'] ?? '').toString().trim() == menuId,
       );
@@ -736,7 +771,9 @@ class _POSScreenState extends State<POSScreen> {
       return;
     }
 
+    _dismissCartSuccess();
     setState(() {
+      _cartSheetTick.value++;
       _cartItems[index]['quantity'] = quantity;
       _cartItems[index]['subtotal'] = quantity * _cartItems[index]['price'];
       _calculateTotal();
@@ -744,7 +781,9 @@ class _POSScreenState extends State<POSScreen> {
   }
 
   void _removeFromCart(int index) {
+    _dismissCartSuccess();
     setState(() {
+      _cartSheetTick.value++;
       _cartItems.removeAt(index);
       _calculateTotal();
     });
@@ -757,7 +796,85 @@ class _POSScreenState extends State<POSScreen> {
     );
   }
 
-  Future<void> _createOrder() async {
+  /// Empties the cart and resets everything scoped to the order in progress.
+  /// Shared by the Clear button and the post-submit path so the two cannot
+  /// drift apart.
+  ///
+  /// [dismissSuccess] keeps the in-cart success banner alive when the flow that
+  /// just show it (order created) clears the cart itself.
+  void _clearCart({bool dismissSuccess = true}) {
+    if (!mounted) return;
+    if (dismissSuccess) _dismissCartSuccess();
+    setState(() {
+      _cartSheetTick.value++;
+      _cartItems.clear();
+      _baselineQtyByMenuId.clear();
+      _totalAmount = 0.0;
+      _newOrderTempId = '';
+      if (!_addToExistingOrder) {
+        _targetPendingOrderId = '';
+      }
+    });
+  }
+
+  void _dismissCartSuccess() {
+    _successDismissTimer?.cancel();
+    if (_cartSuccessMessage == null) return;
+    setState(() {
+      _cartSheetTick.value++;
+      _cartSuccessMessage = null;
+    });
+  }
+
+  @override
+  void dispose() {
+    _successDismissTimer?.cancel();
+    _cartSheetTick.dispose();
+    super.dispose();
+  }
+
+  /// Completing an order goes through the payment dialog first: the cashier
+  /// picks the method (and tendered amount for cash), then the order is
+  /// created as completed with those details attached.
+  Future<void> _completeWithPayment() async {
+    // Whether to offer the receipt option is an eatery-level setting; load it
+    // fresh so changes on another device apply immediately.
+    var askForReceipt = false;
+    try {
+      askForReceipt = (await PosSettingsService.load()).askForReceipt;
+    } catch (_) {
+      // Setting unavailable (offline, permissions) — skip the receipt offer.
+    }
+    if (!mounted) return;
+
+    final details = await showPaymentDetailsDialog(
+      context,
+      totalAmount: _totalAmount,
+      askForReceipt: askForReceipt,
+    );
+    if (details == null) return; // cancelled
+
+    await _createOrder(completeNow: true, paymentDetails: details);
+
+    if (details.wantsReceipt && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+              'Receipt printing will be available once a printer is connected.'),
+          duration: Duration(seconds: 3),
+        ),
+      );
+    }
+  }
+
+  /// [completeNow] writes the order straight into 'completed'. That is passed
+  /// into the create call rather than completed afterwards, because createOrder
+  /// already deducts stock inside its own transaction — completing later would
+  /// deduct the same stock twice.
+  Future<void> _createOrder({
+    bool completeNow = false,
+    PaymentDetails? paymentDetails,
+  }) async {
     if (_cartItems.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -827,7 +944,10 @@ class _POSScreenState extends State<POSScreen> {
       }
     }
 
-    setState(() => _isLoading = true);
+    setState(() {
+      _cartSheetTick.value++;
+      _isLoading = true;
+    });
 
     try {
       final List<Map<String, dynamic>> orderItems;
@@ -856,7 +976,10 @@ class _POSScreenState extends State<POSScreen> {
           });
         }
         if (deltas.isEmpty) {
-          setState(() => _isLoading = false);
+          setState(() {
+            _cartSheetTick.value++;
+            _isLoading = false;
+          });
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('No new items to add.')),
           );
@@ -883,64 +1006,63 @@ class _POSScreenState extends State<POSScreen> {
       } else {
         await ApiService.createOrder(
           items: orderItems,
-          paymentMethod: 'cash',
+          paymentMethod: paymentDetails?.method ?? 'cash',
           orderId: _newOrderTempId.isNotEmpty ? _newOrderTempId : null,
+          completeNow: completeNow,
+          amountReceived: paymentDetails?.amountReceived,
+          change: paymentDetails?.change,
+          referenceNumber: paymentDetails?.referenceNumber,
+          paymentStatus: paymentDetails?.paymentStatus ?? 'paid',
         );
       }
 
       if (mounted) {
-        final theme = Theme.of(context);
         setState(() {
-          _cartItems.clear();
-          _baselineQtyByMenuId.clear();
-          _totalAmount = 0.0;
+          _cartSheetTick.value++;
           _isLoading = false;
-          _newOrderTempId = '';
-          if (!_addToExistingOrder) {
-            _targetPendingOrderId = '';
-          }
+          // Show the confirmation inside the open cart panel rather than a
+          // screen-level snackbar.
+          _cartSuccessMessage = _addToExistingOrder
+              ? 'Items added to order!'
+              : completeNow
+                  ? (paymentDetails?.change != null
+                      ? 'Order completed! Change: '
+                          '₱${paymentDetails!.change!.toStringAsFixed(2)}'
+                      : 'Order completed and recorded!')
+                  : 'Order opened as a pending tab.';
         });
+        _successDismissTimer?.cancel();
+        _successDismissTimer = Timer(const Duration(seconds: 5), () {
+          if (!mounted) return;
+          setState(() => _cartSuccessMessage = null);
+        });
+        _clearCart(dismissSuccess: false);
 
-        _loadMenuItems();
-        _loadPendingOrders();
+        _loadMenuItems().onError((Object e, StackTrace st) {
+          debugPrint('POS: background menu refresh after order failed: $e');
+        });
+        _loadPendingOrders().onError((Object e, StackTrace st) {
+          debugPrint('POS: background pending-orders refresh after order '
+              'failed: $e');
+        });
 
         // Success haptic feedback
         HapticHelper.orderComplete();
-
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Row(
-              children: [
-                Icon(Icons.check_circle,
-                    color: theme.colorScheme.onSecondary),
-                const SizedBox(width: 8),
-                Text(
-                  _addToExistingOrder
-                      ? 'Items added to order!'
-                      : 'Order created successfully!',
-                  style: theme.textTheme.bodyMedium?.copyWith(
-                    color: theme.colorScheme.onSecondary,
-                  ),
-                ),
-              ],
-            ),
-            backgroundColor: theme.colorScheme.secondary,
-            behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12),
-            ),
-            margin: const EdgeInsets.all(16),
-          ),
-        );
       }
     } catch (e) {
-      setState(() => _isLoading = false);
+      setState(() {
+        _cartSheetTick.value++;
+        _isLoading = false;
+      });
       if (mounted) {
         ErrorMessageHelper.showSnackBar(
           context,
           e,
           operationContext: 'order',
-          onAction: _createOrder,
+          onAction: () => _createOrder(
+            completeNow: completeNow,
+            paymentDetails: paymentDetails,
+          ),
           actionLabel: 'Retry',
         );
       }
@@ -984,7 +1106,7 @@ class _POSScreenState extends State<POSScreen> {
       stream: _menuStream,
       builder: (context, menuSnapshot) {
         return FutureBuilder<Map<String, dynamic>>(
-          future: ApiService.getInventoryItems(),
+          future: _inventoryFuture,
           builder: (context, inventorySnapshot) {
             final isLoading =
                 !menuSnapshot.hasData || !inventorySnapshot.hasData;
@@ -1170,13 +1292,10 @@ class _POSScreenState extends State<POSScreen> {
                                 SizedBox(
                                   height: 36,
                                   child: FilledButton.icon(
-                                    onPressed: _isLoading
-                                        ? null
-                                        : (_cartItems.isEmpty
-                                            ? _openCartSheet
-                                            : (_addToExistingOrder
-                                                ? _createOrder
-                                                : _openCartSheet)),
+                                    // Always opens the cart sheet, which owns
+                                    // the pending/complete choice. Submitting
+                                    // from here would bypass that decision.
+                                    onPressed: _isLoading ? null : _openCartSheet,
                                     style: FilledButton.styleFrom(
                                       backgroundColor:
                                           Theme.of(context).colorScheme.primary,
@@ -1322,6 +1441,7 @@ class _POSScreenState extends State<POSScreen> {
                                   cartItems: _cartItems,
                                   totalAmount: _totalAmount,
                                   isLoading: isLoading,
+                                  successMessage: _cartSuccessMessage,
                                   isAddToExistingOrder: _addToExistingOrder,
                                   orderId: _addToExistingOrder
                                       ? _targetPendingOrderId
@@ -1331,7 +1451,9 @@ class _POSScreenState extends State<POSScreen> {
                                   onQuantityChanged: (index, qty) =>
                                       _updateQuantity(index, qty),
                                   onRemove: (index) => _removeFromCart(index),
-                                  onCreateOrder: _createOrder,
+                                  onCreateOrder: () => _createOrder(),
+                                  onCompleteOrder: _completeWithPayment,
+                                  onClearCart: _clearCart,
                                   actionLabel: _addToExistingOrder
                                       ? 'Add Items'
                                       : 'Create Order',
@@ -1356,6 +1478,7 @@ class _CartPanel extends StatelessWidget {
     required this.cartItems,
     required this.totalAmount,
     required this.isLoading,
+    this.successMessage,
     required this.isAddToExistingOrder,
     required this.orderId,
     required this.isNewOrder,
@@ -1363,19 +1486,31 @@ class _CartPanel extends StatelessWidget {
     required this.onQuantityChanged,
     required this.onRemove,
     required this.onCreateOrder,
+    required this.onCompleteOrder,
+    required this.onClearCart,
     this.actionLabel = 'Create Order',
   }) : super(key: key);
 
   final List<Map<String, dynamic>> cartItems;
   final double totalAmount;
   final bool isLoading;
+
+  /// In-cart confirmation banner, e.g. after an order is created.
+  final String? successMessage;
   final bool isAddToExistingOrder;
   final String orderId;
   final bool isNewOrder;
   final Map<String, int> baselineQtyByMenuId;
   final void Function(int index, int quantity) onQuantityChanged;
   final void Function(int index) onRemove;
+
+  /// Creates the order leaving it pending so it can be edited later.
   final Future<void> Function() onCreateOrder;
+
+  /// Creates the order and records it as already completed.
+  final Future<void> Function() onCompleteOrder;
+
+  final VoidCallback onClearCart;
   final String actionLabel;
 
   String _shortOrderId(String id) {
@@ -1630,6 +1765,17 @@ class _CartPanel extends StatelessWidget {
                     ],
                   ),
                 ),
+                IconButton(
+                  tooltip: 'Clear cart',
+                  onPressed: cartItems.isEmpty ? null : onClearCart,
+                  icon: Icon(
+                    Icons.delete_outline,
+                    color: cartItems.isEmpty
+                        ? theme.colorScheme.onSurfaceVariant
+                        : theme.colorScheme.error,
+                  ),
+                ),
+                const SizedBox(width: 8),
                 Text(
                   '₱${totalAmount.toStringAsFixed(2)}',
                   style: theme.textTheme.titleMedium?.copyWith(
@@ -1669,40 +1815,161 @@ class _CartPanel extends StatelessWidget {
                         },
                       )),
           ),
-          Padding(
-            padding: const EdgeInsets.all(12),
-            child: SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                onPressed: cartItems.isEmpty
-                    ? null
-                    : (isLoading ? null : onCreateOrder),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: theme.colorScheme.primary,
-                  foregroundColor: theme.colorScheme.onPrimary,
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
+          if (successMessage != null && successMessage!.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
+              child: Container(
+                width: double.infinity,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.secondaryContainer,
+                  borderRadius: BorderRadius.circular(12),
                 ),
-                child: isLoading
-                    ? SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(
-                          color: theme.colorScheme.onPrimary,
-                          strokeWidth: 2,
-                        ),
-                      )
-                    : Text(
-                        actionLabel,
-                        style: theme.textTheme.labelLarge?.copyWith(
-                          color: theme.colorScheme.onPrimary,
-                          fontWeight: FontWeight.w700,
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.check_circle,
+                      size: 20,
+                      color: theme.colorScheme.onSecondaryContainer,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        successMessage!,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.onSecondaryContainer,
+                          fontWeight: FontWeight.w600,
                         ),
                       ),
+                    ),
+                  ],
+                ),
               ),
             ),
+          Padding(
+            padding: const EdgeInsets.all(12),
+            child: isAddToExistingOrder
+                // Appending to someone's open order always leaves it pending —
+                // completing it is a separate, deliberate action elsewhere.
+                ? SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: cartItems.isEmpty
+                          ? null
+                          : (isLoading ? null : onCreateOrder),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: theme.colorScheme.primary,
+                        foregroundColor: theme.colorScheme.onPrimary,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      child: isLoading
+                          ? SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(
+                                color: theme.colorScheme.onPrimary,
+                                strokeWidth: 2,
+                              ),
+                            )
+                          : Text(
+                              actionLabel,
+                              style: theme.textTheme.labelLarge?.copyWith(
+                                color: theme.colorScheme.onPrimary,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                    ),
+                  )
+                : Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: cartItems.isEmpty
+                              ? null
+                              : (isLoading ? null : onCreateOrder),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: theme.colorScheme.primary,
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            side: BorderSide(color: theme.colorScheme.primary),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                          child: isLoading
+                              ? SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(
+                                    color: theme.colorScheme.primary,
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(Icons.schedule,
+                                        size: 20,
+                                        color: theme.colorScheme.primary),
+                                    const SizedBox(width: 8),
+                                    Text(
+                                      'Open Tab',
+                                      style:
+                                          theme.textTheme.labelLarge?.copyWith(
+                                        color: theme.colorScheme.primary,
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: ElevatedButton(
+                          onPressed: cartItems.isEmpty
+                              ? null
+                              : (isLoading ? null : onCompleteOrder),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF16A34A),
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                          child: isLoading
+                              ? SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(
+                                    color: Colors.white,
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(Icons.check_circle,
+                                        size: 20, color: Colors.white),
+                                    const SizedBox(width: 8),
+                                    Text(
+                                      'Complete',
+                                      style:
+                                          theme.textTheme.labelLarge?.copyWith(
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                        ),
+                      ),
+                    ],
+                  ),
           ),
         ],
       ),

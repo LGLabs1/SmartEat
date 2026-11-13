@@ -9,6 +9,12 @@ class AppTheme {
   static const Color outline = Color(0xFFCBD6E2);
   static const Color success = Color(0xFF2E7D32);
   static const Color error = Color(0xFFEF5350);
+  static const Color warning = Color(0xFFF59E0B);
+
+  // Shared shape / spacing tokens used across the app.
+  static const double cardRadius = 16;
+  static const double pagePadding = 16;
+  static const double contentMaxWidth = 1280;
 
   static ThemeData get lightTheme {
     final colorScheme = ColorScheme.fromSeed(

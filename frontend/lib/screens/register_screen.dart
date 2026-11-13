@@ -5,6 +5,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:http/http.dart' as http;
 import 'auth_ui.dart';
 import '../services/firebase_service.dart';
+import '../utils/phone_utils.dart';
 
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({Key? key}) : super(key: key);
@@ -640,6 +641,17 @@ class _RegisterScreenState extends State<RegisterScreen>
       return;
     }
 
+    final normalizedPhone = PhoneUtils.normalizePhMobile(_phoneController.text);
+    if (normalizedPhone == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please enter a valid Philippine mobile number'),
+          backgroundColor: errorColor,
+        ),
+      );
+      return;
+    }
+
     setState(() => _isLoading = true);
     try {
       final email = _emailController.text.trim();
@@ -672,7 +684,8 @@ class _RegisterScreenState extends State<RegisterScreen>
           'lastName': _lastNameController.text.trim(),
           'eateryName': eateryName,
           'eateryId': eateryId,
-          'phoneNumber': _phoneController.text.trim(),
+          'phone': normalizedPhone,
+          'phoneNumber': normalizedPhone,
           'role': 'admin',
           'isAdmin': true,
         });
@@ -692,7 +705,8 @@ class _RegisterScreenState extends State<RegisterScreen>
           'lastName': _lastNameController.text.trim(),
           'eateryName': (eatery['name'] ?? '').toString(),
           'eateryId': joinId,
-          'phoneNumber': _phoneController.text.trim(),
+          'phone': normalizedPhone,
+          'phoneNumber': normalizedPhone,
           'role': 'staff',
           'isAdmin': false,
           'approved': false,
@@ -1097,7 +1111,7 @@ class _RegisterScreenState extends State<RegisterScreen>
                                     if (value == null || value.isEmpty) {
                                       return 'Please enter your phone number';
                                     }
-                                    if (value.length < 8) {
+                                    if (!PhoneUtils.isValidPhMobile(value)) {
                                       return 'Please enter a valid phone number';
                                     }
                                     return null;

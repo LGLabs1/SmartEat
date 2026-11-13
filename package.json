@@ -1,0 +1,26 @@
+{
+  "name": "smarteat",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/LGLabs1/SmartEat.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/LGLabs1/SmartEat/issues"
+  },
+  "homepage": "https://github.com/LGLabs1/SmartEat#readme",
+  "dependencies": {
+    "@firebase/rules-unit-testing": "^3.0.3",
+    "firebase-admin": "^12.7.0",
+    "firebase-tools": "^13.29.1"
+  }
+}

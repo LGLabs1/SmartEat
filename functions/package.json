@@ -2,8 +2,11 @@
   "name": "smarteat-functions",
   "private": true,
   "main": "index.js",
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
   "engines": {
-    "node": "18"
+    "node": "20"
   },
   "dependencies": {
     "firebase-admin": "^12.0.0",

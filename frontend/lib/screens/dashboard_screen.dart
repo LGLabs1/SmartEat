@@ -1,23 +1,37 @@
 import 'dart:async';
-import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/auth_provider.dart';
 import '../services/api_service.dart';
 import '../services/ai_assistant_provider.dart';
+import '../services/analytics_service.dart';
 import '../services/firebase_service.dart';
 import '../services/notification_trigger_manager.dart';
-import '../services/sound_service.dart';
+
+import '../features/finance/data/business_kpis.dart';
+import '../features/finance/data/finance_format.dart';
+import '../features/finance/data/finance_metrics.dart';
+import '../features/staff/data/staff_service.dart';
+import '../features/staff/presentation/screens/my_payroll_screen.dart';
+import '../utils/staff_utils.dart';
 import '../widgets/skeleton_loaders.dart';
+import '../widgets/dashboard/section_card.dart';
+import '../widgets/dashboard/kpi_card.dart';
+import '../widgets/dashboard/empty_state.dart';
+import '../widgets/dashboard/revenue_trend_chart.dart';
 import 'pos_screen.dart';
+import 'orders_screen.dart';
 import 'analytics_screen.dart';
 import 'menu_screen.dart';
 import 'inventory_screen.dart';
 import 'staff_management_screen.dart';
 import 'finance_screen.dart';
-import 'chatbot_screen.dart';
+import 'admin_tab_index.dart';
+// chatbot_screen.dart is intentionally not imported: the header button that
+// opened ChatbotScreen was removed. Re-add the import when it is re-wired.
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({Key? key}) : super(key: key);
@@ -26,1266 +40,48 @@ class DashboardScreen extends StatefulWidget {
   State<DashboardScreen> createState() => _DashboardScreenState();
 }
 
-class StaffHomeTab extends StatefulWidget {
-  const StaffHomeTab({Key? key, required this.onNavigate}) : super(key: key);
-
-  final ValueChanged<int> onNavigate;
-
-  @override
-  State<StaffHomeTab> createState() => _StaffHomeTabState();
-}
-
-class _StaffHomeTabState extends State<StaffHomeTab> {
-  String _eateryName = '';
-  Stream<List<Map<String, dynamic>>>? _ordersStream;
-
-  @override
-  void initState() {
-    super.initState();
-    _initOrdersStream();
-  }
-
-  void _initOrdersStream() async {
-    final profile = await context.read<AuthProvider>().getCurrentUserProfile();
-    final eateryName = (profile?['eateryName'] ?? '').toString().trim();
-
-    if (mounted) {
-      setState(() {
-        _eateryName = eateryName;
-      });
-    }
-
-    final stream = await FirebaseService.getTodayOrdersStream();
-    if (mounted) {
-      setState(() {
-        _ordersStream = stream;
-      });
-    }
-  }
-
-  void _showStaffMealDialog(BuildContext context) {
-    showDialog(
-      context: context,
-      builder: (context) => const StaffMealDialog(),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return StreamBuilder<List<Map<String, dynamic>>>(
-      stream: _ordersStream,
-      builder: (context, snapshot) {
-        final orders = snapshot.data ?? [];
-
-        return RefreshIndicator(
-          onRefresh: () async => _initOrdersStream(),
-          child: ListView(
-            padding: const EdgeInsets.all(16),
-            children: [
-              _buildHeader(),
-              const SizedBox(height: 16),
-              _buildQuickActionsAndStats(context, orders),
-              const SizedBox(height: 16),
-              _buildTodayOrders(orders),
-              const SizedBox(height: 16),
-              _buildTopSellingItems(orders),
-              const SizedBox(height: 16),
-              _buildRecentActivity(orders),
-              const SizedBox(height: 16),
-              _buildRevenueStats(orders),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _buildQuickActionsAndStats(
-      BuildContext context, List<Map<String, dynamic>> orders) {
-    final pendingCount = orders.where((o) {
-      final status = (o['status'] ?? '').toString().trim().toLowerCase();
-      return status == 'pending';
-    }).length;
-    final completedCount = orders.where((o) {
-      final status = (o['status'] ?? '').toString().trim().toLowerCase();
-      return status == 'completed';
-    }).length;
-
-    final isNarrow = MediaQuery.of(context).size.width < 500;
-
-    final quickActions = Wrap(
-      spacing: 8,
-      runSpacing: 8,
-      children: [
-        _ActionChip(
-          icon: Icons.shopping_cart,
-          label: 'POS',
-          color: Theme.of(context).colorScheme.primary,
-          onTap: () => widget.onNavigate(0),
-          compact: true,
-        ),
-        _ActionChip(
-          icon: Icons.restaurant_menu,
-          label: 'Menu',
-          color: Theme.of(context).colorScheme.secondary,
-          onTap: () => widget.onNavigate(2),
-          compact: true,
-        ),
-        _ActionChip(
-          icon: Icons.food_bank,
-          label: 'Staff Meal',
-          color: Theme.of(context).colorScheme.secondary,
-          onTap: () => _showStaffMealDialog(context),
-          compact: true,
-        ),
-      ],
-    );
-
-    final statsRow = Row(
-      children: [
-        Expanded(
-          child: _CompactStatCard(
-            icon: Icons.receipt_outlined,
-            label: 'Total',
-            value: orders.length.toString(),
-            color: Theme.of(context).colorScheme.tertiary,
-          ),
-        ),
-        const SizedBox(width: 8),
-        Expanded(
-          child: _CompactStatCard(
-            icon: Icons.schedule,
-            label: 'Pending',
-            value: pendingCount.toString(),
-            color: Theme.of(context).colorScheme.secondary,
-          ),
-        ),
-        const SizedBox(width: 8),
-        Expanded(
-          child: _CompactStatCard(
-            icon: Icons.check_circle_outline,
-            label: 'Done',
-            value: completedCount.toString(),
-            color: Theme.of(context).colorScheme.secondary,
-          ),
-        ),
-      ],
-    );
-
-    return Card(
-      elevation: 0,
-      color: Theme.of(context).colorScheme.surface,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(16),
-        side: BorderSide(color: Theme.of(context).colorScheme.outline),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: isNarrow
-            ? Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  quickActions,
-                  const Divider(height: 16),
-                  statsRow,
-                ],
-              )
-            : Row(
-                children: [
-                  Expanded(
-                    flex: 2,
-                    child: quickActions,
-                  ),
-                  const VerticalDivider(width: 16, thickness: 1),
-                  Expanded(
-                    flex: 3,
-                    child: statsRow,
-                  ),
-                ],
-              ),
-      ),
-    );
-  }
-
-  Widget _buildHeader() {
-    return Card(
-      elevation: 0,
-      color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.08),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Row(
-          children: [
-            Container(
-              width: 48,
-              height: 48,
-              decoration: BoxDecoration(
-                color: Theme.of(context)
-                    .colorScheme
-                    .primary
-                    .withValues(alpha: 0.15),
-                borderRadius: BorderRadius.circular(14),
-              ),
-              child: Icon(
-                Icons.storefront,
-                color: Theme.of(context).colorScheme.primary,
-                size: 24,
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Today',
-                    style: TextStyle(
-                      fontSize: 14,
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    _eateryName.isEmpty
-                        ? 'Quick access for staff'
-                        : _eateryName,
-                    style: const TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildTodayOrders(List<Map<String, dynamic>> orders) {
-    return Card(
-      elevation: 0,
-      color: Theme.of(context).colorScheme.surface,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(16),
-        side: BorderSide(color: Theme.of(context).colorScheme.outline),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(Icons.receipt_long_outlined,
-                    color: Theme.of(context).colorScheme.onSurfaceVariant, size: 20),
-                const SizedBox(width: 8),
-                Text(
-                  'Today\'s Orders',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                    color: Theme.of(context).colorScheme.onSurface,
-                  ),
-                ),
-                const Spacer(),
-                if (orders.isNotEmpty)
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: Theme.of(context).colorScheme.surfaceVariant,
-                      borderRadius: BorderRadius.circular(999),
-                    ),
-                    child: Text(
-                      '${orders.length} orders',
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            if (orders.isEmpty)
-              Container(
-                padding: const EdgeInsets.all(24),
-                decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.surfaceVariant,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Center(
-                  child: Column(
-                    children: [
-                      Icon(
-                        Icons.receipt_long_outlined,
-                        size: 40,
-                        color: Theme.of(context).colorScheme.outline,
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        'No orders yet today',
-                        style: TextStyle(
-                          color: Theme.of(context).colorScheme.onSurfaceVariant,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              )
-            else
-              ...orders.take(10).map((order) {
-                final id = (order['id'] ?? '').toString();
-                final total = (order['totalAmount'] as num?)?.toDouble() ?? 0.0;
-                final status = (order['status'] ?? '').toString().trim();
-                final statusKey = status.toLowerCase();
-                final itemsRaw = order['items'];
-                final items = itemsRaw is List ? itemsRaw : const [];
-
-                // Color coding based on status
-                Color statusColor;
-                Color statusBgColor;
-                IconData statusIcon;
-
-                switch (statusKey) {
-                  case 'completed':
-                    statusColor = Theme.of(context).colorScheme.secondary;
-                    statusBgColor = Theme.of(context).colorScheme.secondary.withOpacity(0.1);
-                    statusIcon = Icons.check_circle;
-                    break;
-                  case 'pending':
-                    statusColor = Theme.of(context).colorScheme.secondary;
-                    statusBgColor = Theme.of(context).colorScheme.secondary.withOpacity(0.1);
-                    statusIcon = Icons.schedule;
-                    break;
-                  case 'rejected':
-                  case 'voided':
-                    statusColor = Theme.of(context).colorScheme.error;
-                    statusBgColor = Theme.of(context).colorScheme.error.withOpacity(0.1);
-                    statusIcon = Icons.cancel;
-                    break;
-                  default:
-                    statusColor = Theme.of(context).colorScheme.onSurfaceVariant;
-                    statusBgColor = Theme.of(context).colorScheme.onSurfaceVariant.withOpacity(0.1);
-                    statusIcon = Icons.help_outline;
-                }
-
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
-                  child: InkWell(
-                    onTap: id.isEmpty
-                        ? null
-                        : () {
-                            _showOrderDetails(order);
-                          },
-                    borderRadius: BorderRadius.circular(12),
-                    child: Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: Theme.of(context).colorScheme.surfaceVariant,
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: Theme.of(context).colorScheme.outline),
-                      ),
-                      child: Row(
-                        children: [
-                          Container(
-                            width: 40,
-                            height: 40,
-                            decoration: BoxDecoration(
-                              color: statusBgColor,
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                            child: Icon(
-                              statusIcon,
-                              color: statusColor,
-                              size: 20,
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  id.isEmpty
-                                      ? 'Order'
-                                      : 'Order #${id.substring(0, id.length > 6 ? 6 : id.length)}',
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.w700,
-                                    fontSize: 14,
-                                  ),
-                                ),
-                                const SizedBox(height: 2),
-                                Text(
-                                  '${items.length} item${items.length != 1 ? 's' : ''}',
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: Theme.of(context).colorScheme.onSurfaceVariant,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          Column(
-                            crossAxisAlignment: CrossAxisAlignment.end,
-                            children: [
-                              Text(
-                                '₱${total.toStringAsFixed(2)}',
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.w800,
-                                  fontSize: 14,
-                                ),
-                              ),
-                              const SizedBox(height: 4),
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 8,
-                                  vertical: 3,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: statusBgColor,
-                                  borderRadius: BorderRadius.circular(999),
-                                ),
-                                child: Text(
-                                  status.isEmpty ? 'Unknown' : status,
-                                  style: TextStyle(
-                                    fontSize: 10,
-                                    fontWeight: FontWeight.w700,
-                                    color: statusColor,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                );
-              }),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildTopSellingItems(List<Map<String, dynamic>> orders) {
-    // Calculate top selling items from all orders
-    final itemCounts = <String, Map<String, dynamic>>{};
-    for (final order in orders) {
-      final items = order['items'] as List<dynamic>? ?? [];
-      for (final item in items) {
-        if (item is Map) {
-          final name = (item['name'] ?? 'Unknown').toString();
-          final qty = (item['quantity'] as num?)?.toInt() ?? 1;
-          if (itemCounts.containsKey(name)) {
-            itemCounts[name]!['count'] =
-                (itemCounts[name]!['count'] as int) + qty;
-          } else {
-            itemCounts[name] = {'name': name, 'count': qty};
-          }
-        }
-      }
-    }
-
-    final sortedItems = itemCounts.values.toList()
-      ..sort((a, b) => (b['count'] as int).compareTo(a['count'] as int));
-    final topItems = sortedItems.take(5).toList();
-
-    if (topItems.isEmpty) return const SizedBox.shrink();
-
-    return Card(
-      elevation: 0,
-      color: Colors.white,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(16),
-        side: BorderSide(color: Colors.grey.shade200),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(Icons.trending_up,
-                    color: Colors.purple.shade400, size: 20),
-                const SizedBox(width: 8),
-                Text(
-                  'Top Selling Today',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.grey.shade800,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            ...topItems.asMap().entries.map((entry) {
-              final index = entry.key;
-              final item = entry.value;
-              final name = item['name'] as String;
-              final count = item['count'] as int;
-              final colors = [
-                Colors.amber.shade400,
-                Colors.grey.shade400,
-                Colors.orange.shade300,
-                Colors.blue.shade300,
-                Colors.green.shade300,
-              ];
-              final rankColor =
-                  colors[index < colors.length ? index : colors.length - 1];
-
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: Row(
-                  children: [
-                    Container(
-                      width: 28,
-                      height: 28,
-                      decoration: BoxDecoration(
-                        color: rankColor.withValues(alpha: 0.15),
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      child: Center(
-                        child: Text(
-                          '${index + 1}',
-                          style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.bold,
-                            color: rankColor,
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Text(
-                        name,
-                        style: const TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w500,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 8, vertical: 3),
-                      decoration: BoxDecoration(
-                        color: Theme.of(context).colorScheme.surfaceVariant,
-                        borderRadius: BorderRadius.circular(999),
-                      ),
-                      child: Text(
-                        '$count sold',
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w600,
-                          color: Theme.of(context).colorScheme.tertiary,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              );
-            }),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildRecentActivity(List<Map<String, dynamic>> orders) {
-    // Get orders completed in the last 2 hours
-    final now = DateTime.now();
-    final twoHoursAgo = now.subtract(const Duration(hours: 2));
-
-    final recentCompleted = orders.where((o) {
-      final status = (o['status'] ?? '').toString().trim().toLowerCase();
-      if (status != 'completed') return false;
-      final createdAt = o['createdAt'];
-      if (createdAt == null) return false;
-      DateTime? orderTime;
-      if (createdAt is Timestamp) {
-        orderTime = createdAt.toDate();
-      } else if (createdAt is DateTime) {
-        orderTime = createdAt;
-      }
-      if (orderTime == null) return false;
-      return orderTime.isAfter(twoHoursAgo);
-    }).toList()
-      ..sort((a, b) {
-        final aTime = a['createdAt'] is Timestamp
-            ? (a['createdAt'] as Timestamp).toDate()
-            : a['createdAt'] as DateTime?;
-        final bTime = b['createdAt'] is Timestamp
-            ? (b['createdAt'] as Timestamp).toDate()
-            : b['createdAt'] as DateTime?;
-        if (aTime == null || bTime == null) return 0;
-        return bTime.compareTo(aTime);
-      });
-
-    if (recentCompleted.isEmpty) return const SizedBox.shrink();
-
-    return Card(
-      elevation: 0,
-      color: Theme.of(context).colorScheme.surface,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(16),
-        side: BorderSide(color: Theme.of(context).colorScheme.outline),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(Icons.update, color: Theme.of(context).colorScheme.secondary, size: 20),
-                const SizedBox(width: 8),
-                Text(
-                  'Recent Activity',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                    color: Theme.of(context).colorScheme.onSurface,
-                  ),
-                ),
-                const Spacer(),
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                  decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.surfaceVariant,
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                  child: Text(
-                    'Last 2 hours',
-                    style: TextStyle(
-                      fontSize: 10,
-                      fontWeight: FontWeight.w600,
-                      color: Theme.of(context).colorScheme.secondary,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            ...recentCompleted.take(5).map((order) {
-              final id = (order['id'] ?? '').toString();
-              final total = (order['totalAmount'] as num?)?.toDouble() ?? 0.0;
-              final createdAt = order['createdAt'];
-              String timeAgo = '';
-              if (createdAt is Timestamp) {
-                final dateTime = createdAt.toDate();
-                final diff = now.difference(dateTime);
-                if (diff.inMinutes < 60) {
-                  timeAgo = '${diff.inMinutes}m ago';
-                } else {
-                  timeAgo = '${diff.inHours}h ago';
-                }
-              }
-
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: Row(
-                  children: [
-                    Container(
-                      width: 36,
-                      height: 36,
-                      decoration: BoxDecoration(
-                        color: Theme.of(context).colorScheme.surfaceVariant,
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Icon(
-                        Icons.check_circle,
-                        color: Theme.of(context).colorScheme.secondary,
-                        size: 18,
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            id.isEmpty
-                                ? 'Order Completed'
-                                : 'Order #${id.substring(0, id.length > 6 ? 6 : id.length)} completed',
-                            style: const TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600,
-                            ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          Text(
-                            '₱${total.toStringAsFixed(2)}',
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: Theme.of(context).colorScheme.onSurfaceVariant,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    Text(
-                      timeAgo,
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: Theme.of(context).colorScheme.onSurface,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ],
-                ),
-              );
-            }),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildRevenueStats(List<Map<String, dynamic>> orders) {
-    final completedOrders = orders.where((o) {
-      final status = (o['status'] ?? '').toString().trim().toLowerCase();
-      return status == 'completed';
-    }).toList();
-
-    final totalRevenue = completedOrders.fold<double>(0, (sum, o) {
-      return sum + ((o['totalAmount'] as num?)?.toDouble() ?? 0.0);
-    });
-
-    final pendingRevenue = orders.where((o) {
-      final status = (o['status'] ?? '').toString().trim().toLowerCase();
-      return status == 'pending';
-    }).fold<double>(0, (sum, o) {
-      return sum + ((o['totalAmount'] as num?)?.toDouble() ?? 0.0);
-    });
-
-    final avgOrderValue = completedOrders.isNotEmpty
-        ? totalRevenue / completedOrders.length
-        : 0.0;
-
-    return Card(
-      elevation: 0,
-      color: Colors.white,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(16),
-        side: BorderSide(color: Colors.grey.shade200),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(Icons.attach_money,
-                    color: Colors.green.shade600, size: 20),
-                const SizedBox(width: 8),
-                Text(
-                  'Today\'s Revenue',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.grey.shade800,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            Row(
-              children: [
-                Expanded(
-                  child: _RevenueStatItem(
-                    label: 'Completed Sales',
-                    value: '₱${totalRevenue.toStringAsFixed(0)}',
-                    icon: Icons.check_circle,
-                    color: Colors.green,
-                  ),
-                ),
-                Expanded(
-                  child: _RevenueStatItem(
-                    label: 'Pending Sales',
-                    value: '₱${pendingRevenue.toStringAsFixed(0)}',
-                    icon: Icons.schedule,
-                    color: Colors.orange,
-                  ),
-                ),
-                Expanded(
-                  child: _RevenueStatItem(
-                    label: 'Avg Order',
-                    value: '₱${avgOrderValue.toStringAsFixed(0)}',
-                    icon: Icons.calculate,
-                    color: Colors.blue,
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  void _showOrderDetails(Map<String, dynamic> order) {
-    final id = (order['id'] ?? '').toString();
-    final items = order['items'] as List<dynamic>? ?? [];
-    final total = (order['totalAmount'] as num?)?.toDouble() ?? 0.0;
-    final status = (order['status'] ?? 'unknown').toString();
-    final createdAt = order['createdAt'];
-    final isPending = status.trim().toLowerCase() == 'pending';
-
-    // Format the timestamp
-    String? formattedDate;
-    if (createdAt != null) {
-      if (createdAt is Timestamp) {
-        final dateTime = createdAt.toDate();
-        formattedDate = _formatDateTime(dateTime);
-      } else if (createdAt is DateTime) {
-        formattedDate = _formatDateTime(createdAt);
-      }
-    }
-
-    if (!mounted) {
-      return;
-    }
-
-    showDialog<void>(
-      context: context,
-      builder: (dialogContext) {
-        return AlertDialog(
-          title: Text(id.isEmpty
-              ? 'Order Details'
-              : 'Order #${id.substring(0, id.length > 8 ? 8 : id.length)}'),
-          content: SizedBox(
-            width: 400,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('Status: ${status.toUpperCase()}',
-                    style: const TextStyle(fontWeight: FontWeight.bold)),
-                const SizedBox(height: 8),
-                Text('Total: ₱${total.toStringAsFixed(2)}'),
-                if (formattedDate != null) ...[
-                  const SizedBox(height: 4),
-                  Text('Created: $formattedDate'),
-                ],
-                const SizedBox(height: 16),
-                const Text('Items:',
-                    style: TextStyle(fontWeight: FontWeight.bold)),
-                const SizedBox(height: 8),
-                ...items.map((item) {
-                  final name = (item is Map
-                      ? (item['name'] ?? 'Unknown').toString()
-                      : 'Unknown');
-                  final qty = (item is Map ? (item['quantity'] ?? 1) : 1);
-                  final price = (item is Map
-                      ? (item['price'] as num?)?.toDouble() ?? 0.0
-                      : 0.0);
-                  return Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 4),
-                    child: Row(
-                      children: [
-                        Text('$qty x $name'),
-                        const Spacer(),
-                        Text('₱${(price * qty).toStringAsFixed(2)}'),
-                      ],
-                    ),
-                  );
-                }),
-              ],
-            ),
-          ),
-          actions: [
-            if (isPending) ...[
-              // Complete button
-              FilledButton.icon(
-                onPressed: () async {
-                  try {
-                    await ApiService.completeOrder(id);
-                    Navigator.of(dialogContext).pop();
-                    ScaffoldMessenger.of(dialogContext).showSnackBar(
-                      const SnackBar(
-                          content: Text('Order completed successfully.')),
-                    );
-                  } catch (e) {
-                    ScaffoldMessenger.of(dialogContext).showSnackBar(
-                      SnackBar(content: Text('Failed to complete order: $e')),
-                    );
-                  }
-                },
-                icon: const Icon(Icons.check_circle),
-                label: const Text('Complete'),
-                style: FilledButton.styleFrom(backgroundColor: Colors.green),
-              ),
-              // Edit button
-              FilledButton.icon(
-                onPressed: () {
-                  Navigator.of(dialogContext).pop();
-                  _showEditOrderDialog(order);
-                },
-                icon: const Icon(Icons.edit),
-                label: const Text('Edit'),
-                style: FilledButton.styleFrom(backgroundColor: Colors.blue),
-              ),
-              // Void button
-              FilledButton.icon(
-                onPressed: () async {
-                  final controller = TextEditingController();
-                  final confirmed = await showDialog<bool>(
-                    context: dialogContext,
-                    builder: (ctx) => AlertDialog(
-                      title: const Text('Void Order'),
-                      content: TextField(
-                        controller: controller,
-                        decoration: const InputDecoration(
-                          labelText: 'Reason (optional)',
-                          hintText: 'Enter reason for voiding',
-                        ),
-                        maxLines: 2,
-                      ),
-                      actions: [
-                        TextButton(
-                          onPressed: () => Navigator.of(ctx).pop(false),
-                          child: const Text('Cancel'),
-                        ),
-                        FilledButton(
-                          onPressed: () => Navigator.of(ctx).pop(true),
-                          style: FilledButton.styleFrom(
-                            backgroundColor: Colors.red,
-                          ),
-                          child: const Text('Void'),
-                        ),
-                      ],
-                    ),
-                  );
-                  if (confirmed != true) return;
-                  try {
-                    await ApiService.voidOrder(id, reason: controller.text);
-                    if (!mounted) return;
-                    Navigator.of(dialogContext).pop();
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                          content: Text('Order voided successfully.')),
-                    );
-                  } catch (e) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('Failed to void order: $e')),
-                    );
-                  } finally {
-                    controller.dispose();
-                  }
-                },
-                icon: const Icon(Icons.cancel),
-                label: const Text('Void'),
-                style: FilledButton.styleFrom(backgroundColor: Colors.red),
-              ),
-            ],
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(),
-              child: const Text('Close'),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  String _formatDateTime(DateTime dateTime) {
-    final months = [
-      'Jan',
-      'Feb',
-      'Mar',
-      'Apr',
-      'May',
-      'Jun',
-      'Jul',
-      'Aug',
-      'Sep',
-      'Oct',
-      'Nov',
-      'Dec'
-    ];
-    final month = months[dateTime.month - 1];
-    final day = dateTime.day;
-    final year = dateTime.year;
-    final hour = dateTime.hour > 12
-        ? dateTime.hour - 12
-        : (dateTime.hour == 0 ? 12 : dateTime.hour);
-    final minute = dateTime.minute.toString().padLeft(2, '0');
-    final period = dateTime.hour >= 12 ? 'PM' : 'AM';
-    return '$month $day, $year at $hour:$minute $period';
-  }
-
-  Future<void> _showEditOrderDialog(Map<String, dynamic> order) async {
-    final orderId = (order['id'] ?? '').toString();
-    if (orderId.isEmpty) return;
-
-    // Get current items
-    final itemsRaw = order['items'] as List<dynamic>? ?? [];
-    final currentItems = List<Map<String, dynamic>>.from(
-      itemsRaw.where((item) => item is Map).cast<Map<String, dynamic>>(),
-    );
-
-    // Load available menu items
-    List<Map<String, dynamic>> menuItems = [];
-    try {
-      final response = await ApiService.getMenuItems();
-      if (response['data'] != null) {
-        final items = response['data'] as List<dynamic>;
-        menuItems = items
-            .where((item) => item is Map)
-            .cast<Map<String, dynamic>>()
-            .toList();
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to load menu: $e')),
-        );
-      }
-      return;
-    }
-
-    // Track items to add
-    final List<Map<String, dynamic>> itemsToAdd = [];
-    double additionalTotal = 0.0;
-
-    final result = await showDialog<bool>(
-      context: context,
-      builder: (context) {
-        return StatefulBuilder(
-          builder: (context, setLocalState) {
-            return AlertDialog(
-              title: Row(
-                children: [
-                  const Icon(Icons.edit),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'Edit Order #${orderId.substring(0, orderId.length > 6 ? 6 : orderId.length)}',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                ],
-              ),
-              content: SizedBox(
-                width: 400,
-                height: 500,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // Current items section
-                    const Text(
-                      'Current Items',
-                      style:
-                          TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
-                    ),
-                    const SizedBox(height: 8),
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: Colors.grey.shade100,
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Column(
-                        children: currentItems.map((item) {
-                          final name = (item['name'] ?? 'Unknown').toString();
-                          final qty = (item['quantity'] as num?)?.toInt() ?? 1;
-                          final price =
-                              (item['price'] as num?)?.toDouble() ?? 0.0;
-                          return Row(
-                            children: [
-                              Expanded(child: Text('$qty x $name')),
-                              Text('₱${(price * qty).toStringAsFixed(2)}'),
-                            ],
-                          );
-                        }).toList(),
-                      ),
-                    ),
-                    const Divider(height: 24),
-
-                    // Add items section
-                    const Text(
-                      'Add Items',
-                      style:
-                          TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
-                    ),
-                    const SizedBox(height: 8),
-                    Expanded(
-                      child: ListView.builder(
-                        itemCount: menuItems.length,
-                        itemBuilder: (context, index) {
-                          final item = menuItems[index];
-                          final name = (item['name'] ?? 'Unknown').toString();
-                          final price =
-                              (item['price'] as num?)?.toDouble() ?? 0.0;
-                          final itemId = (item['id'] ?? '').toString();
-
-                          // Find if this item is already in itemsToAdd
-                          final existingIndex = itemsToAdd.indexWhere(
-                            (i) =>
-                                (i['menuId'] ?? i['id'] ?? '').toString() ==
-                                itemId,
-                          );
-                          final existingQty = existingIndex >= 0
-                              ? (itemsToAdd[existingIndex]['quantity'] as num?)
-                                      ?.toInt() ??
-                                  0
-                              : 0;
-
-                          return ListTile(
-                            dense: true,
-                            title: Text(name),
-                            subtitle: Text('₱${price.toStringAsFixed(2)}'),
-                            trailing: existingQty > 0
-                                ? Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      IconButton(
-                                        icon: const Icon(Icons.remove_circle,
-                                            size: 20),
-                                        onPressed: () {
-                                          setLocalState(() {
-                                            if (existingIndex >= 0) {
-                                              final currentQty =
-                                                  (itemsToAdd[existingIndex]
-                                                                  ['quantity']
-                                                              as num?)
-                                                          ?.toInt() ??
-                                                      1;
-                                              if (currentQty <= 1) {
-                                                itemsToAdd
-                                                    .removeAt(existingIndex);
-                                              } else {
-                                                itemsToAdd[existingIndex]
-                                                        ['quantity'] =
-                                                    currentQty - 1;
-                                              }
-                                              additionalTotal -= price;
-                                            }
-                                          });
-                                        },
-                                      ),
-                                      Text('$existingQty'),
-                                      IconButton(
-                                        icon: const Icon(Icons.add_circle,
-                                            size: 20),
-                                        onPressed: () {
-                                          setLocalState(() {
-                                            if (existingIndex >= 0) {
-                                              final currentQty =
-                                                  (itemsToAdd[existingIndex]
-                                                                  ['quantity']
-                                                              as num?)
-                                                          ?.toInt() ??
-                                                      1;
-                                              itemsToAdd[existingIndex]
-                                                  ['quantity'] = currentQty + 1;
-                                            }
-                                            additionalTotal += price;
-                                          });
-                                        },
-                                      ),
-                                    ],
-                                  )
-                                : IconButton(
-                                    icon: const Icon(Icons.add_circle_outline,
-                                        size: 20),
-                                    onPressed: () {
-                                      setLocalState(() {
-                                        itemsToAdd.add({
-                                          'menuId': itemId,
-                                          'name': name,
-                                          'price': price,
-                                          'quantity': 1,
-                                        });
-                                        additionalTotal += price;
-                                      });
-                                    },
-                                  ),
-                          );
-                        },
-                      ),
-                    ),
-
-                    // Additional total
-                    if (itemsToAdd.isNotEmpty) ...[
-                      const Divider(),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          const Text(
-                            'Additional Amount:',
-                            style: TextStyle(fontWeight: FontWeight.bold),
-                          ),
-                          Text(
-                            '₱${additionalTotal.toStringAsFixed(2)}',
-                            style: const TextStyle(
-                              fontWeight: FontWeight.bold,
-                              color: Colors.green,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(context).pop(false),
-                  child: const Text('Cancel'),
-                ),
-                if (itemsToAdd.isNotEmpty)
-                  FilledButton.icon(
-                    onPressed: () => Navigator.of(context).pop(true),
-                    icon: const Icon(Icons.save),
-                    label: const Text('Add Items'),
-                  ),
-              ],
-            );
-          },
-        );
-      },
-    );
-
-    if (result == true && itemsToAdd.isNotEmpty && mounted) {
-      try {
-        await ApiService.addItemsToOrder(orderId, itemsToAdd);
-        // Refresh the page
-        setState(() {});
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Items added to order successfully')),
-        );
-      } catch (e) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to add items: $e')),
-        );
-      }
-    }
-  }
-}
-
 class _DashboardScreenState extends State<DashboardScreen> {
-  static const String _selectedIndexKey = 'dashboard_selected_index';
+  // Tab layout. Both dashboards render an Orders tab, so the two orderings are
+  // spelled out here rather than sprinkled as bare literals — inserting or
+  // reordering a tab is a one-line change instead of a sweep.
+  static const int _adminTabCount = 7;
+  static const int _staffTabCount = 3;
+
+  // Admin: Home, Menu, Orders, Inventory, Analytics, Finance, Staff
+  static const int _adminHomeTab = AdminTabIndex.home;
+  static const int _adminMenuTab = AdminTabIndex.menu;
+  static const int _adminOrdersTab = AdminTabIndex.orders;
+  static const int _adminInventoryTab = AdminTabIndex.inventory;
+  static const int _adminAnalyticsTab = AdminTabIndex.analytics;
+  static const int _adminFinanceTab = AdminTabIndex.finance;
+  static const int _adminStaffTab = AdminTabIndex.staff;
+
+  // Staff: POS, Orders, Menu
+  static const int _staffPosTab = 0;
+  static const int _staffOrdersTab = 1;
+  static const int _staffMenuTab = 2;
+
+  // The remembered tab is scoped per dashboard. A single shared key let one
+  // role's index leak into the other's layout, where it silently fell out of
+  // range and reset to 0.
+  static const String _adminSelectedIndexKey = 'dashboard_selected_index_admin';
+  static const String _staffSelectedIndexKey = 'dashboard_selected_index_staff';
+
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
   int _selectedIndex = 0;
+
+  // Lazy tab mounting. A tab's State is only created once the tab is first
+  // visited, instead of the IndexedStack eagerly building all of them. Returning
+  // to a tab whose data is older than [_tabStaleAfter] bumps its generation,
+  // which changes its key and forces a fresh State (and reload). Kept at 5
+  // minutes to limit Firestore reads against the free-tier daily quota; users
+  // can still force a refresh with pull-to-refresh.
+  static const Duration _tabStaleAfter = Duration(minutes: 5);
+  final Set<int> _visitedTabs = <int>{0};
+  final Map<int, DateTime> _tabLoadedAt = <int, DateTime>{
+    0: DateTime.now(),
+  };
+  final Map<int, int> _tabGenerations = <int, int>{};
   bool _isRoleLoading = true;
   String? _roleError;
   bool _isAdmin = false;
@@ -1315,6 +111,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   bool get _canSwitchDashboard {
     return _isAdmin;
+  }
+
+  /// Keeps the Sage overlay in sync with what is on screen. The assistant is
+  /// only mounted for admins viewing the admin dashboard, so staff users (and
+  /// admins who switched to the staff view) never see it. Role loading counts
+  /// as restricted so nothing flashes before the role is known.
+  void _syncAssistantAccess() {
+    if (!mounted) return;
+    final restricted = _isRoleLoading || !(_isAdmin && _adminViewEnabled);
+    context.read<AIAssistantProvider>().setStaffDashboardActive(restricted);
   }
 
   @override
@@ -1402,9 +208,20 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Future<void> _initializeDashboard() async {
     await _loadRole();
     if (mounted) {
-      await _loadSavedTabIndex();
+      // Defer restoring the remembered tab until after the first frame so the
+      // shell (Home tab) paints immediately instead of blocking startup on a
+      // heavy deep tab (finance, staff, …) building its data views.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _loadSavedTabIndex();
+      });
     }
   }
+
+  /// Key holding the remembered tab for whichever dashboard is on screen.
+  String get _selectedIndexKey =>
+      _isAdminRole ? _adminSelectedIndexKey : _staffSelectedIndexKey;
+
+  int get _tabCount => _isAdminRole ? _adminTabCount : _staffTabCount;
 
   Future<void> _loadSavedTabIndex() async {
     try {
@@ -1413,9 +230,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
       if (savedIndex != null && mounted) {
         // Wait for role to be loaded first, then validate the saved index
         // _isAdmin is set by _loadRole() which runs in initState
-        final maxTabs = _isAdmin ? 6 : 3;
-        if (savedIndex >= 0 && savedIndex < maxTabs) {
-          setState(() => _selectedIndex = savedIndex);
+        if (savedIndex >= 0 && savedIndex < _tabCount) {
+          setState(() {
+            _selectedIndex = savedIndex;
+            _visitedTabs.add(savedIndex);
+            _tabLoadedAt[savedIndex] = DateTime.now();
+          });
         }
       }
     } catch (e) {}
@@ -1454,6 +274,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       if (_isRoleLoading) {
         setState(() => _isRoleLoading = false);
       }
+      _syncAssistantAccess();
       return;
     }
     if (_aiNavigationSub == null) {
@@ -1487,6 +308,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         _isRoleLoading = true;
         _roleError = null;
       });
+      _syncAssistantAccess();
     }
 
     try {
@@ -1512,16 +334,30 @@ class _DashboardScreenState extends State<DashboardScreen> {
       final lastName = (profile['lastName'] ?? '').toString().trim();
       final displayName = ('$firstName $lastName').trim();
       if (!mounted) return;
+      final roleChanged = isAdmin != _isAdmin;
       setState(() {
         _isAdmin = isAdmin;
         _isApprovedStaff = approved;
         _eateryName = eateryName;
         _eateryId = eateryId;
         _displayName = displayName;
+        if (roleChanged) {
+          // Tab layout differs per role; drop all lazy-tab state so stale
+          // indices never bleed across dashboards.
+          _selectedIndex = 0;
+          _visitedTabs
+            ..clear()
+            ..add(0);
+          _tabLoadedAt
+            ..clear()
+            ..[0] = DateTime.now();
+          _tabGenerations.clear();
+        }
         if (setLoadingState) {
           _isRoleLoading = false;
         }
       });
+      _syncAssistantAccess();
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -1531,6 +367,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           _isRoleLoading = false;
         }
       });
+      _syncAssistantAccess();
     }
   }
 
@@ -1557,17 +394,43 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
     try {
       // Validate index against available tabs
-      final isAdmin = _isAdminRole;
-      final maxTabs = isAdmin ? 6 : 3;
-      if (index < 0 || index >= maxTabs) {
+      if (index < 0 || index >= _tabCount) {
         return;
       }
-      setState(() => _selectedIndex = index);
+      final now = DateTime.now();
+      final firstVisit = !_visitedTabs.contains(index);
+      final loadedAt = _tabLoadedAt[index];
+      final isStale = !firstVisit &&
+          loadedAt != null &&
+          now.difference(loadedAt) > _tabStaleAfter;
+      setState(() {
+        _selectedIndex = index;
+        _visitedTabs.add(index);
+        if (firstVisit || isStale) {
+          if (isStale) {
+            _tabGenerations[index] = (_tabGenerations[index] ?? 0) + 1;
+          }
+          _tabLoadedAt[index] = now;
+        }
+      });
       _saveTabIndex(index);
       context
           .read<AIAssistantProvider>()
           .setActivePage(_activePageNameForIndex(index));
     } catch (e) {}
+  }
+
+  /// Builds a tab lazily. Unvisited, inactive tabs collapse to an inert
+  /// placeholder so their State never mounts until first shown.
+  Widget _lazyTab(int index, Widget Function(Key key) builder,
+      {Key? fixedKey}) {
+    final active = index == _selectedIndex;
+    if (!active && !_visitedTabs.contains(index)) {
+      return const SizedBox.shrink();
+    }
+    final key =
+        fixedKey ?? ValueKey('tab_$index#${_tabGenerations[index] ?? 0}');
+    return builder(key);
   }
 
   void _setAdminViewEnabled(bool enabled) {
@@ -1580,7 +443,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
       setState(() {
         _adminViewEnabled = enabled;
         _selectedIndex = 0;
+        _visitedTabs
+          ..clear()
+          ..add(0);
+        _tabLoadedAt
+          ..clear()
+          ..[0] = DateTime.now();
+        _tabGenerations.clear();
       });
+      _syncAssistantAccess();
       _saveTabIndex(0);
     } catch (e) {}
   }
@@ -1596,15 +467,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
       // Navigate based on result type
       switch (result.type) {
         case 'menu':
-          _goToTab(_isAdminRole ? 1 : 2);
+          _goToTab(_isAdminRole ? _adminMenuTab : _staffMenuTab);
           break;
         case 'inventory':
           if (_isAdminRole) {
-            _goToTab(2);
+            _goToTab(_adminInventoryTab);
           }
           break;
         case 'order':
-          _goToTab(0);
+          _goToTab(_isAdminRole ? _adminOrdersTab : _staffOrdersTab);
           break;
       }
     }
@@ -1613,17 +484,19 @@ class _DashboardScreenState extends State<DashboardScreen> {
   String _pageTitleForIndex(int index) {
     if (_isAdminRole) {
       switch (index) {
-        case 0:
+        case _adminHomeTab:
           return 'Home';
-        case 1:
+        case _adminMenuTab:
           return 'Menu';
-        case 2:
+        case _adminOrdersTab:
+          return 'Orders';
+        case _adminInventoryTab:
           return 'Inventory';
-        case 3:
+        case _adminAnalyticsTab:
           return 'Analytics Dashboard';
-        case 4:
+        case _adminFinanceTab:
           return 'Finance';
-        case 5:
+        case _adminStaffTab:
           return 'Staff';
         default:
           return 'Smart Eat';
@@ -1631,11 +504,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
 
     switch (index) {
-      case 0:
+      case _staffPosTab:
         return 'POS';
-      case 1:
-        return 'Home';
-      case 2:
+      case _staffOrdersTab:
+        return 'Orders';
+      case _staffMenuTab:
         return 'Menu';
       default:
         return 'Smart Eat';
@@ -1645,17 +518,19 @@ class _DashboardScreenState extends State<DashboardScreen> {
   String _activePageNameForIndex(int index) {
     if (_isAdminRole) {
       switch (index) {
-        case 0:
+        case _adminHomeTab:
           return 'dashboard';
-        case 1:
+        case _adminMenuTab:
           return 'menu';
-        case 2:
+        case _adminOrdersTab:
+          return 'orders';
+        case _adminInventoryTab:
           return 'inventory';
-        case 3:
+        case _adminAnalyticsTab:
           return 'reports';
-        case 4:
+        case _adminFinanceTab:
           return 'finance';
-        case 5:
+        case _adminStaffTab:
           return 'staff';
         default:
           return 'general';
@@ -1663,11 +538,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
 
     switch (index) {
-      case 0:
+      case _staffPosTab:
         return 'orders';
-      case 1:
-        return 'dashboard';
-      case 2:
+      case _staffOrdersTab:
+        return 'orders';
+      case _staffMenuTab:
         return 'menu';
       default:
         return 'general';
@@ -1685,26 +560,28 @@ class _DashboardScreenState extends State<DashboardScreen> {
     if (_isAdminRole) {
       switch (pageName) {
         case 'dashboard':
-          return 0;
+          return _adminHomeTab;
         case 'menu':
-          return 1;
+          return _adminMenuTab;
+        case 'orders':
+          return _adminOrdersTab;
         case 'inventory':
-          return 2;
+          return _adminInventoryTab;
         case 'reports':
-          return 3;
+          return _adminAnalyticsTab;
         case 'finance':
-          return 4;
+          return _adminFinanceTab;
         case 'staff':
-          return 5;
+          return _adminStaffTab;
       }
     } else {
+      // Staff has no dashboard tab any more, so 'dashboard' intentionally has
+      // no mapping here — POS and Orders both report 'orders'.
       switch (pageName) {
         case 'orders':
-          return 0;
-        case 'dashboard':
-          return 1;
+          return _staffOrdersTab;
         case 'menu':
-          return 2;
+          return _staffMenuTab;
       }
     }
     return null;
@@ -1794,45 +671,61 @@ class _DashboardScreenState extends State<DashboardScreen> {
       );
     }
 
-    final tabs = _isAdminRole
-        ? <Widget>[
-            DashboardHomeTab(
-                key: const ValueKey('dashboard_home'), onNavigate: _goToTab),
-            MenuScreen(
-                key: const ValueKey('menu'),
+    final adminTabs = <Widget>[
+      _lazyTab(
+          _adminHomeTab, (k) => DashboardHomeTab(key: k, onNavigate: _goToTab)),
+      _lazyTab(
+          _adminMenuTab,
+          (k) => MenuScreen(
+                key: k,
                 globalSearchQuery: _globalSearchQuery,
-                showAppBar: false),
-            InventoryScreen(
-              key: _inventoryKey,
-              globalSearchQuery: _globalSearchQuery,
-              showAppBar: false,
-              onBackNeeded: () => setState(() => _inventoryInDetailView = true),
-              onOpenDrawer: () =>
-                  setState(() => _inventoryInDetailView = false),
-            ),
-            const AnalyticsScreen(
-                key: ValueKey('analytics'), showAppBar: false),
-            FinanceScreen(
-              key: const ValueKey('finance'),
-              globalSearchQuery: _globalSearchQuery,
-              showAppBar: false,
-              onNavigate: _goToTab,
-            ),
-            StaffManagementScreen(
-              key: const ValueKey('staff'),
-              globalSearchQuery: _globalSearchQuery,
-              showAppBar: false,
-            ),
-          ]
-        : <Widget>[
-            const POSScreen(key: ValueKey('pos'), showAppBar: false),
-            StaffHomeTab(
-                key: const ValueKey('staff_home'), onNavigate: _goToTab),
-            MenuScreen(
-                key: const ValueKey('menu'),
+                showAppBar: false,
+              )),
+      _lazyTab(_adminOrdersTab, (k) => OrdersScreen(key: k, isAdmin: true)),
+      _lazyTab(
+          _adminInventoryTab,
+          (k) => InventoryScreen(
+                key: k,
                 globalSearchQuery: _globalSearchQuery,
-                showAppBar: false),
-          ];
+                showAppBar: false,
+                onBackNeeded: () =>
+                    setState(() => _inventoryInDetailView = true),
+                onOpenDrawer: () =>
+                    setState(() => _inventoryInDetailView = false),
+              ),
+          fixedKey: _inventoryKey),
+      _lazyTab(_adminAnalyticsTab,
+          (k) => AnalyticsScreen(key: k, showAppBar: false)),
+      _lazyTab(
+          _adminFinanceTab,
+          (k) => FinanceScreen(
+                key: k,
+                globalSearchQuery: _globalSearchQuery,
+                showAppBar: false,
+                onNavigate: _goToTab,
+              )),
+      _lazyTab(
+          _adminStaffTab,
+          (k) => StaffManagementScreen(
+                key: k,
+                globalSearchQuery: _globalSearchQuery,
+                showAppBar: false,
+              )),
+    ];
+
+    final staffTabs = <Widget>[
+      _lazyTab(_staffPosTab, (k) => POSScreen(key: k, showAppBar: false)),
+      _lazyTab(_staffOrdersTab, (k) => OrdersScreen(key: k)),
+      _lazyTab(
+          _staffMenuTab,
+          (k) => MenuScreen(
+                key: k,
+                globalSearchQuery: _globalSearchQuery,
+                showAppBar: false,
+              )),
+    ];
+
+    final tabs = _isAdminRole ? adminTabs : staffTabs;
 
     if (_selectedIndex >= tabs.length) {
       _selectedIndex = 0;
@@ -1848,8 +741,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
       appBar: AppBar(
         leading: Builder(
           builder: (context) {
-            final showBackButton =
-                _selectedIndex == 2 && _inventoryInDetailView;
+            final showBackButton = _isAdminRole &&
+                _selectedIndex == _adminInventoryTab &&
+                _inventoryInDetailView;
             return IconButton(
               tooltip: showBackButton
                   ? 'Back'
@@ -1862,7 +756,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   : () {
                       if (showBackButton) {
                         setState(() => _inventoryInDetailView = false);
-                        _inventoryKey.currentState?.resetToGrid();
+                        null;
                       } else {
                         setState(() => _sidebarVisible = !_sidebarVisible);
                       }
@@ -2056,19 +950,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
             bottom: Radius.circular(16),
           ),
         ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.chat_bubble_outline),
-            tooltip: 'AI Assistant',
-            onPressed: () {
-              Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (context) => const ChatbotScreen(),
-                ),
-              );
-            },
-          ),
-          const SizedBox(width: 4),
+        actions: const [
+          // Chatbot entry point intentionally removed from the header. The
+          // ChatbotScreen import is retained for the code to be re-wired later.
+          SizedBox(width: 4),
         ],
       ),
       body: LayoutBuilder(
@@ -2237,51 +1122,85 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   _buildNavItem(
                     icon: Icons.dashboard_outlined,
                     label: 'Home',
-                    index: 0,
+                    index: _adminHomeTab,
                   ),
                   _buildNavItem(
                     icon: Icons.restaurant_menu,
                     label: 'Menu',
-                    index: 1,
+                    index: _adminMenuTab,
+                  ),
+                  _buildNavItem(
+                    icon: Icons.receipt_long_outlined,
+                    label: 'Orders',
+                    index: _adminOrdersTab,
                   ),
                   _buildNavItem(
                     icon: Icons.inventory,
                     label: 'Inventory',
-                    index: 2,
+                    index: _adminInventoryTab,
                   ),
                   _buildNavItem(
                     icon: Icons.analytics,
                     label: 'Analytics',
-                    index: 3,
+                    index: _adminAnalyticsTab,
                   ),
                   _buildNavItem(
                     icon: Icons.account_balance_wallet_outlined,
                     label: 'Finance',
-                    index: 4,
+                    index: _adminFinanceTab,
                   ),
                   _buildNavItem(
                     icon: Icons.group_outlined,
                     label: 'Staff',
-                    index: 5,
+                    index: _adminStaffTab,
                   ),
                 ] else ...[
                   _buildNavItem(
                     icon: Icons.shopping_cart,
                     label: 'POS',
-                    index: 0,
+                    index: _staffPosTab,
                   ),
                   _buildNavItem(
-                    icon: Icons.home_outlined,
-                    label: 'Home',
-                    index: 1,
+                    icon: Icons.receipt_long_outlined,
+                    label: 'Orders',
+                    index: _staffOrdersTab,
                   ),
                   _buildNavItem(
                     icon: Icons.restaurant_menu,
                     label: 'Menu',
-                    index: 2,
+                    index: _staffMenuTab,
+                  ),
+                  ListTile(
+                    leading: Icon(
+                      Icons.lunch_dining_outlined,
+                      color: Colors.grey.shade600,
+                    ),
+                    title: const Text('Staff meal'),
+                    onTap: () => showDialog<void>(
+                      context: context,
+                      builder: (_) => const StaffMealDialog(),
+                    ),
+                  ),
+                  ListTile(
+                    leading: Icon(
+                      Icons.payments_outlined,
+                      color: Colors.grey.shade600,
+                    ),
+                    title: const Text('My payroll'),
+                    onTap: () => Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => const MyPayrollScreen(),
+                      ),
+                    ),
                   ),
                 ],
                 const Divider(height: 24),
+                ListTile(
+                  leading: const Icon(Icons.notifications_outlined),
+                  title: const Text('Notifications'),
+                  onTap: () =>
+                      Navigator.of(context).pushNamed('/notifications'),
+                ),
                 ListTile(
                   leading: const Icon(Icons.settings_outlined),
                   title: const Text('Settings'),
@@ -2348,77 +1267,35 @@ class DashboardHomeTab extends StatefulWidget {
 class _DashboardHomeTabState extends State<DashboardHomeTab> {
   bool _isLoading = true;
   String? _error;
-  Map<String, dynamic>? _summary;
   List<Map<String, dynamic>> _todayOrders = const [];
-  List<Map<String, dynamic>> _incompleteOrders = const [];
   List<Map<String, dynamic>> _lowStock = const [];
   List<Map<String, dynamic>> _payables = const [];
   List<Map<String, dynamic>> _expenses = const [];
-  String _eateryName = '';
-  String _completingOrderId = '';
-  bool _isAdmin = false;
-  bool _isApprovedStaff = true;
+  List<Map<String, dynamic>> _itemPerformance = const [];
+  List<Map<String, dynamic>> _dailySales = const [];
+  List<Map<String, dynamic>> _stockMovements = const [];
+  List<Map<String, dynamic>> _inventoryItems = const [];
+  List<Map<String, dynamic>> _damagedItems = const [];
 
-  // Notes state
-  List<Map<String, dynamic>> _notes = [];
-  static const String _notesKey = 'admin_notes';
+  // Aggregated KPIs. Single source of truth for every metric tile.
+  DashboardModel? _model;
 
+  String? _eateryId;
+
+  // Health score lives on BusinessContext, not DashboardModel, so it needs its
+  // own call (analytics_service.dart:583).
+  double _healthScore = 0;
+  String _healthLabel = '';
+
+  // Seven-day revenue series + next-peak forecast for the Sales Trend card.
+  // Loaded once per [_loadDashboard]; never fetched from build().
+  List<TrendPoint> _trendPoints = const [];
+  String _trendForecast = '';
+
+  @override
   void initState() {
     super.initState();
     _loadDashboard();
-    _loadNotes();
-  }
-
-  Future<void> _loadNotes() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final notesJson = prefs.getString(_notesKey);
-      if (notesJson != null && notesJson.isNotEmpty) {
-        final List<dynamic> decoded = jsonDecode(notesJson);
-        setState(() {
-          _notes = List<Map<String, dynamic>>.from(decoded);
-        });
-      }
-    } catch (e) {}
-  }
-
-  Future<void> _saveNotes() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final notesJson = jsonEncode(_notes);
-      await prefs.setString(_notesKey, notesJson);
-    } catch (e) {}
-  }
-
-  Future<void> _addNote(String header, String body) async {
-    final newNote = {
-      'id': DateTime.now().millisecondsSinceEpoch.toString(),
-      'header': header,
-      'body': body,
-      'createdAt': DateTime.now().toIso8601String(),
-    };
-    setState(() {
-      _notes.add(newNote);
-    });
-    await _saveNotes();
-  }
-
-  Future<void> _updateNote(String id, String header, String body) async {
-    setState(() {
-      final index = _notes.indexWhere((note) => note['id'] == id);
-      if (index != -1) {
-        _notes[index]['header'] = header;
-        _notes[index]['body'] = body;
-      }
-    });
-    await _saveNotes();
-  }
-
-  Future<void> _deleteNote(String id) async {
-    setState(() {
-      _notes.removeWhere((note) => note['id'] == id);
-    });
-    await _saveNotes();
   }
 
   Future<void> _loadDashboard() async {
@@ -2428,58 +1305,128 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
     });
 
     try {
-      final profile =
-          await context.read<AuthProvider>().getCurrentUserProfile();
-      final eateryName = (profile?['eateryName'] ?? '').toString().trim();
-      final role = (profile?['role'] ?? '').toString().trim().toLowerCase();
-      final dynamic isAdminRaw = profile?['isAdmin'];
-      final bool isAdminFlag = isAdminRaw == true ||
-          isAdminRaw == 1 ||
-          (isAdminRaw is String && isAdminRaw.toLowerCase().trim() == 'true');
-      final isAdmin = isAdminFlag || role == 'admin';
-      final bool approved = profile?['approved'] != false;
+      String? eateryId;
+      try {
+        eateryId = await FirebaseService.getCurrentEateryId();
+      } catch (e) {
+        debugPrint('getCurrentEateryId failed: $e');
+      }
 
-      final results = await Future.wait([
-        ApiService.getSummaryStats(),
-        ApiService.getTodayOrders(),
-        ApiService.getPendingOrders(limit: 50),
-        ApiService.getLowStockItems(),
-        ApiService.getPayables(),
-        ApiService.getExpenses(),
+      dynamic safe(Future<dynamic> f, String label) async {
+        try {
+          return await f;
+        } catch (e) {
+          debugPrint('$label failed: $e');
+          return <String, dynamic>{'data': const []};
+        }
+      }
+
+      final results = await Future.wait<dynamic>([
+        safe(ApiService.getTodayOrders(), 'getTodayOrders'),
+        safe(ApiService.getLowStockItems(), 'getLowStockItems'),
+        safe(ApiService.getPayables(), 'getPayables'),
+        safe(ApiService.getExpenses(), 'getExpenses'),
+        safe(ApiService.getItemPerformance(), 'getItemPerformance'),
+        safe(ApiService.getDailySalesAnalytics(days: 62),
+            'getDailySalesAnalytics'),
+        safe(ApiService.getStockMovements(), 'getStockMovements'),
+        safe(ApiService.getInventoryItems(), 'getInventoryItems'),
+        safe(ApiService.getDamagedItems(), 'getDamagedItems'),
       ]);
+      ;
 
-      final summary = results[0]['data'] as Map<String, dynamic>?;
-      final orders =
-          List<Map<String, dynamic>>.from(results[1]['data'] ?? const []);
-      final pendingOrders =
-          List<Map<String, dynamic>>.from(results[2]['data'] ?? const []);
-      final lowStock =
-          List<Map<String, dynamic>>.from(results[3]['data'] ?? const []);
-      final payables =
-          List<Map<String, dynamic>>.from(results[4]['data'] ?? const []);
-      final expenses =
-          List<Map<String, dynamic>>.from(results[5]['data'] ?? const []);
+      List<Map<String, dynamic>> asList(dynamic raw) {
+        try {
+          if (raw is List)
+            return raw
+                .whereType<Map>()
+                .map((e) => Map<String, dynamic>.from(e))
+                .toList();
+          if (raw is! Map) return const [];
+          final data = raw['data'];
+          if (data is List)
+            return data
+                .whereType<Map>()
+                .map((e) => Map<String, dynamic>.from(e))
+                .toList();
+          if (data is Map) {
+            for (final k in const ['items', 'orders', 'dailySales']) {
+              final v = data[k];
+              if (v is List)
+                return v
+                    .whereType<Map>()
+                    .map((e) => Map<String, dynamic>.from(e))
+                    .toList();
+            }
+          }
+        } catch (_) {}
+        return const [];
+      }
 
-      // Filter incomplete orders (pending orders from before today)
-      final now = DateTime.now();
-      final todayStart = DateTime(now.year, now.month, now.day);
-      final incompleteOrders = pendingOrders.where((o) {
-        final createdAt = _asDate(o['createdAt']);
-        if (createdAt == null) return false;
-        return createdAt.isBefore(todayStart);
-      }).toList();
+      final orders = asList(results[0]);
+      final lowStock = asList(results[1]);
+      final payables = asList(results[2]);
+      final expenses = asList(results[3]);
+      final itemPerfRaw = results[4] as Map<String, dynamic>? ?? const {};
+      final itemPerformance = List<Map<String, dynamic>>.from(
+          itemPerfRaw['data']?['items'] ?? itemPerfRaw['items'] ?? const []);
+      final salesRaw = results[5] as Map<String, dynamic>? ?? const {};
+      final dailySales = List<Map<String, dynamic>>.from(salesRaw['data']
+              ?['dailySales'] ??
+          salesRaw['dailySales'] ??
+          const []);
+      final stockMovements = asList(results[6]);
+      final inventoryItems = asList(results[7]);
+      final damagedItems = asList(results[8]);
+
+      // Aggregated KPI model. Skipped when eateryId is unavailable so the
+      // list cards below still render rather than failing the whole load.
+      DashboardModel? model;
+      double healthScore = 0;
+      String healthLabel = '';
+      if (eateryId != null && eateryId.isNotEmpty) {
+        try {
+          model = await AnalyticsService.getDashboardModel(eateryId);
+        } catch (e) {
+          debugPrint('DashboardModel fetch failed: $e');
+        }
+        try {
+          final health =
+              await AnalyticsService.getBusinessHealthScore(eateryId);
+          healthScore = (health['score'] as num?)?.toDouble() ?? 0;
+          healthLabel = (health['label'] ?? '').toString();
+        } catch (e) {
+          debugPrint('BusinessHealthScore fetch failed: $e');
+        }
+      }
+
+      // Incomplete orders now live on the Orders tab, not here.
+
+      List<TrendPoint> trendPoints = const [];
+      String trendForecast = '';
+      if (eateryId != null && eateryId.isNotEmpty) {
+        final trend = await _loadTrendSeries(eateryId);
+        trendPoints = trend.points;
+        trendForecast = trend.forecast;
+      }
 
       if (!mounted) return;
       setState(() {
-        _summary = summary;
+        _eateryId = eateryId;
+        _model = model;
+        _healthScore = healthScore;
+        _healthLabel = healthLabel;
         _todayOrders = orders;
-        _incompleteOrders = incompleteOrders;
         _lowStock = lowStock;
         _payables = payables;
         _expenses = expenses;
-        _eateryName = eateryName;
-        _isAdmin = isAdmin;
-        _isApprovedStaff = approved;
+        _itemPerformance = itemPerformance;
+        _dailySales = dailySales;
+        _stockMovements = stockMovements;
+        _inventoryItems = inventoryItems;
+        _damagedItems = damagedItems;
+        _trendPoints = trendPoints;
+        _trendForecast = trendForecast;
         _isLoading = false;
       });
     } catch (e) {
@@ -2490,1608 +1437,738 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
     }
   }
 
-  Future<void> _completeOrder(String orderId) async {
-    if (orderId.isEmpty) return;
-    setState(() => _completingOrderId = orderId);
-    try {
-      await ApiService.completeOrder(orderId);
-      if (!mounted) return;
-      await _loadDashboard();
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Order completed. Stocks updated.')),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      String message;
-      if (e is FirebaseException) {
-        final code = (e.code).toString();
-        final details = (e.message ?? '').toString();
-        message = details.trim().isEmpty
-            ? 'Firebase error: $code'
-            : 'Firebase error: $code — $details';
-      } else {
-        // Aggressive Flutter web error extraction
-        dynamic current = e;
-        String? bestMessage;
-        for (int i = 0; i < 5; i++) {
-          if (current is FirebaseException) {
-            final code = (current.code).toString();
-            final details = (current.message ?? '').toString();
-            bestMessage = details.trim().isEmpty
-                ? 'Firebase error: $code'
-                : 'Firebase error: $code — $details';
-            break;
-          }
-          try {
-            // Try various properties that might contain the real error
-            final next = current.error;
-            final msg = current.message ??
-                current.details ??
-                current.code ??
-                current.description;
-            if (msg != null &&
-                msg.toString().isNotEmpty &&
-                !msg
-                    .toString()
-                    .contains('Dart exception thrown from converted Future')) {
-              bestMessage = msg.toString();
+  Widget _buildStaffCard(BuildContext context) {
+    final eateryId = _eateryId;
+    if (eateryId == null || eateryId.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    final todayKey = staffFormatYmd(DateTime.now());
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: StaffService.usersStream(eateryId),
+      builder: (context, usersSnap) {
+        if (usersSnap.hasError) {
+          return _staffCardShell(
+            child: Text('Failed to load staff: ${usersSnap.error}'),
+          );
+        }
+        if (!usersSnap.hasData) {
+          return _staffCardShell(
+            child: const SizedBox(
+              height: 56,
+              child: Center(child: CircularProgressIndicator()),
+            ),
+          );
+        }
+
+        final staff = <Map<String, dynamic>>[];
+        for (final doc in usersSnap.data!.docs) {
+          final data = doc.data();
+          if (isAdminUser(data) || !isApprovedUser(data)) continue;
+          staff.add({'uid': doc.id, ...data});
+        }
+
+        return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+          stream: StaffService.attendanceStream(
+            eateryId,
+            startKey: todayKey,
+            endKey: todayKey,
+          ),
+          builder: (context, attendanceSnap) {
+            final presentUids = <String>{};
+            for (final doc in attendanceSnap.data?.docs ?? const []) {
+              final data = doc.data();
+              final uid = (data['uid'] ?? '').toString().trim();
+              if (uid.isEmpty) continue;
+              final rawUnit = data['workUnit'];
+              final workUnit = rawUnit is num ? rawUnit.toDouble() : 0.0;
+              if (data['present'] == true || workUnit > 0) {
+                presentUids.add(uid);
+              }
             }
-            if (next == null || next == current) break;
-            current = next;
-          } catch (_) {
-            break;
-          }
-        }
-        message = bestMessage ?? current.toString();
-      }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to complete order: $message')),
-      );
-    } finally {
-      if (!mounted) return;
-      setState(() => _completingOrderId = '');
-    }
-  }
 
-  Future<void> _completeAllOrders() async {
-    final pendingOrders = _todayOrders.where((o) {
-      final status = (o['status'] ?? '').toString().trim().toLowerCase();
-      return status == 'pending';
-    }).toList();
+            final presentCount =
+                staff.where((s) => presentUids.contains(s['uid'])).length;
 
-    if (pendingOrders.isEmpty) return;
+            final ordered = [...staff]..sort((a, b) {
+                final aPresent = presentUids.contains(a['uid']) ? 0 : 1;
+                final bPresent = presentUids.contains(b['uid']) ? 0 : 1;
+                if (aPresent != bPresent) return aPresent.compareTo(bPresent);
+                final aName =
+                    staffDisplayName(a, a['uid'] as String).toLowerCase();
+                final bName =
+                    staffDisplayName(b, b['uid'] as String).toLowerCase();
+                return aName.compareTo(bName);
+              });
 
-    // Show confirmation dialog
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Complete All Orders'),
-        content: Text(
-          'Are you sure you want to complete all ${pendingOrders.length} pending orders?',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.green,
-              foregroundColor: Colors.white,
-            ),
-            child: const Text('Complete All'),
-          ),
-        ],
-      ),
-    );
+            final visible = ordered.take(6).toList();
+            final hidden = ordered.length - visible.length;
 
-    if (confirmed != true || !mounted) return;
-
-    setState(() => _completingOrderId = 'all');
-    int completedCount = 0;
-    int failedCount = 0;
-
-    for (final order in pendingOrders) {
-      final id = (order['id'] ?? '').toString();
-      if (id.isEmpty) continue;
-
-      try {
-        await ApiService.completeOrder(id);
-        completedCount++;
-      } catch (e) {
-        failedCount++;
-      }
-    }
-
-    if (!mounted) return;
-    await _loadDashboard();
-
-    if (!mounted) return;
-    if (completedCount > 0) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Completed $completedCount orders${failedCount > 0 ? ', $failedCount failed' : ''}. Stocks updated.',
-          ),
-        ),
-      );
-    } else if (failedCount > 0) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to complete $failedCount orders.')),
-      );
-    }
-
-    setState(() => _completingOrderId = '');
-  }
-
-  Future<void> _completeAllIncompleteOrders() async {
-    if (_incompleteOrders.isEmpty) return;
-
-    // Show confirmation dialog
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Complete All Incomplete Orders'),
-        content: Text(
-          'Are you sure you want to complete all ${_incompleteOrders.length} incomplete orders?',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.green,
-              foregroundColor: Colors.white,
-            ),
-            child: const Text('Complete All'),
-          ),
-        ],
-      ),
-    );
-
-    if (confirmed != true || !mounted) return;
-
-    setState(() => _completingOrderId = 'incomplete_all');
-    int completedCount = 0;
-    int failedCount = 0;
-
-    for (final order in _incompleteOrders) {
-      final id = (order['id'] ?? '').toString();
-      if (id.isEmpty) continue;
-
-      try {
-        await ApiService.completeOrder(id);
-        completedCount++;
-      } catch (e) {
-        failedCount++;
-      }
-    }
-
-    if (!mounted) return;
-    await _loadDashboard();
-
-    if (!mounted) return;
-    if (completedCount > 0) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Completed $completedCount incomplete orders${failedCount > 0 ? ', $failedCount failed' : ''}. Stocks updated.',
-          ),
-        ),
-      );
-    } else if (failedCount > 0) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to complete $failedCount orders.')),
-      );
-    }
-
-    setState(() => _completingOrderId = '');
-  }
-
-  Future<void> _showEditOrderDialog(Map<String, dynamic> order) async {
-    final orderId = (order['id'] ?? '').toString();
-    if (orderId.isEmpty) return;
-
-    // Get current items
-    final itemsRaw = order['items'] as List<dynamic>? ?? [];
-    final currentItems = List<Map<String, dynamic>>.from(
-      itemsRaw.where((item) => item is Map).cast<Map<String, dynamic>>(),
-    );
-
-    // Track items to void (for partial void)
-    final List<Map<String, dynamic>> itemsToVoid = [];
-
-    // Load available menu items
-    List<Map<String, dynamic>> menuItems = [];
-    Map<String, List<Map<String, dynamic>>> categorizedMenuItems = {};
-    String selectedCategory = 'All';
-
-    try {
-      final response = await ApiService.getMenuItems();
-      if (response['data'] != null) {
-        final items = response['data'] as List<dynamic>;
-        menuItems = items
-            .where((item) => item is Map)
-            .cast<Map<String, dynamic>>()
-            .toList();
-
-        // Categorize menu items
-        categorizedMenuItems['All'] = menuItems;
-        for (final item in menuItems) {
-          final category = (item['category'] ?? 'Other').toString();
-          if (!categorizedMenuItems.containsKey(category)) {
-            categorizedMenuItems[category] = [];
-          }
-          categorizedMenuItems[category]!.add(item);
-        }
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to load menu: $e')),
-        );
-      }
-      return;
-    }
-
-    // Track items to add
-    final List<Map<String, dynamic>> itemsToAdd = [];
-    double additionalTotal = 0.0;
-
-    final result = await showDialog<Map<String, dynamic>>(
-      context: context,
-      builder: (context) {
-        return StatefulBuilder(
-          builder: (context, setLocalState) {
-            final categories = categorizedMenuItems.keys.toList();
-            final displayItems = selectedCategory == 'All'
-                ? menuItems
-                : categorizedMenuItems[selectedCategory] ?? [];
-
-            return AlertDialog(
-              title: Row(
-                children: [
-                  const Icon(Icons.edit),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'Edit Order #${orderId.substring(0, orderId.length > 6 ? 6 : orderId.length)}',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                ],
-              ),
-              content: SizedBox(
-                width: 450,
-                height: 550,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // Current items section with void buttons
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            return _staffCardShell(
+              presentCount: presentCount,
+              totalCount: staff.length,
+              child: staff.isEmpty
+                  ? Text(
+                      'No staff accounts yet. Add staff from Staff Management.',
+                      style: TextStyle(color: Colors.grey.shade700),
+                    )
+                  : Column(
                       children: [
-                        const Text(
-                          'Current Items',
-                          style: TextStyle(
-                              fontWeight: FontWeight.bold, fontSize: 14),
-                        ),
-                        // Void All button
-                        TextButton.icon(
-                          onPressed: () async {
-                            final confirmed = await showDialog<bool>(
-                              context: context,
-                              builder: (context) => AlertDialog(
-                                title: const Text('Void Entire Order'),
-                                content: const Text(
-                                  'Are you sure you want to void this entire order? This will restore all stock.',
-                                ),
-                                actions: [
-                                  TextButton(
-                                    onPressed: () =>
-                                        Navigator.of(context).pop(false),
-                                    child: const Text('Cancel'),
-                                  ),
-                                  ElevatedButton(
-                                    onPressed: () =>
-                                        Navigator.of(context).pop(true),
-                                    style: ElevatedButton.styleFrom(
-                                      backgroundColor: Colors.red,
-                                      foregroundColor: Colors.white,
-                                    ),
-                                    child: const Text('Void Order'),
-                                  ),
-                                ],
-                              ),
-                            );
-                            if (confirmed == true) {
-                              Navigator.of(context).pop({'action': 'void_all'});
-                            }
-                          },
-                          icon: const Icon(Icons.delete_forever,
-                              size: 18, color: Colors.red),
-                          label: const Text('Void All',
-                              style: TextStyle(color: Colors.red)),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: Colors.grey.shade100,
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Column(
-                        children: currentItems.map((item) {
-                          final name = (item['name'] ?? 'Unknown').toString();
-                          final qty = (item['quantity'] as num?)?.toInt() ?? 1;
-                          final price =
-                              (item['price'] as num?)?.toDouble() ?? 0.0;
-                          final menuItemId =
-                              (item['menuItemId'] ?? '').toString();
-
-                          // Check if already marked for voiding
-                          final voidIndex = itemsToVoid.indexWhere(
-                            (v) =>
-                                (v['menuItemId'] ?? '').toString() ==
-                                menuItemId,
-                          );
-                          final voidQty = voidIndex >= 0
-                              ? (itemsToVoid[voidIndex]['quantity'] as num?)
-                                      ?.toInt() ??
-                                  0
-                              : 0;
-                          final remainingQty = qty - voidQty;
-
-                          if (remainingQty <= 0) {
-                            return const SizedBox.shrink();
-                          }
-
-                          return Row(
-                            children: [
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text('$remainingQty x $name'),
-                                    if (voidQty > 0)
-                                      Text(
-                                        '${voidQty} voided',
-                                        style: TextStyle(
-                                          color: Colors.red.shade400,
-                                          fontSize: 12,
-                                          fontStyle: FontStyle.italic,
-                                        ),
-                                      ),
-                                  ],
-                                ),
-                              ),
-                              Text(
-                                  '₱${(price * remainingQty).toStringAsFixed(2)}'),
-                              const SizedBox(width: 8),
-                              // Void item button
-                              IconButton(
-                                icon: Icon(Icons.remove_circle,
-                                    size: 20, color: Colors.red.shade400),
-                                onPressed: () async {
-                                  final voidQuantity = await showDialog<int>(
-                                    context: context,
-                                    builder: (context) {
-                                      int qtyToVoid = remainingQty;
-                                      return AlertDialog(
-                                        title: Text('Void $name'),
-                                        content: StatefulBuilder(
-                                          builder: (context, setQtyState) {
-                                            return Column(
-                                              mainAxisSize: MainAxisSize.min,
-                                              children: [
-                                                const Text('Quantity to void:'),
-                                                const SizedBox(height: 16),
-                                                Row(
-                                                  mainAxisAlignment:
-                                                      MainAxisAlignment.center,
-                                                  children: [
-                                                    IconButton(
-                                                      icon: const Icon(
-                                                          Icons.remove_circle),
-                                                      onPressed: qtyToVoid > 1
-                                                          ? () => setQtyState(
-                                                              () => qtyToVoid--)
-                                                          : null,
-                                                    ),
-                                                    Text('$qtyToVoid',
-                                                        style: const TextStyle(
-                                                            fontSize: 20)),
-                                                    IconButton(
-                                                      icon: const Icon(
-                                                          Icons.add_circle),
-                                                      onPressed: qtyToVoid <
-                                                              remainingQty
-                                                          ? () => setQtyState(
-                                                              () => qtyToVoid++)
-                                                          : null,
-                                                    ),
-                                                  ],
-                                                ),
-                                              ],
-                                            );
-                                          },
-                                        ),
-                                        actions: [
-                                          TextButton(
-                                            onPressed: () =>
-                                                Navigator.of(context).pop(0),
-                                            child: const Text('Cancel'),
-                                          ),
-                                          ElevatedButton(
-                                            onPressed: () =>
-                                                Navigator.of(context)
-                                                    .pop(qtyToVoid),
-                                            style: ElevatedButton.styleFrom(
-                                              backgroundColor: Colors.red,
-                                              foregroundColor: Colors.white,
-                                            ),
-                                            child: const Text('Void'),
-                                          ),
-                                        ],
-                                      );
-                                    },
-                                  );
-                                  if (voidQuantity != null &&
-                                      voidQuantity > 0) {
-                                    setLocalState(() {
-                                      if (voidIndex >= 0) {
-                                        itemsToVoid[voidIndex]['quantity'] =
-                                            (itemsToVoid[voidIndex]['quantity']
-                                                        as num)
-                                                    .toInt() +
-                                                voidQuantity;
-                                      } else {
-                                        itemsToVoid.add({
-                                          'menuItemId': menuItemId,
-                                          'name': name,
-                                          'quantity': voidQuantity,
-                                          'price': price,
-                                        });
-                                      }
-                                    });
-                                  }
-                                },
-                                tooltip: 'Void item',
-                              ),
-                            ],
-                          );
-                        }).toList(),
-                      ),
-                    ),
-                    const Divider(height: 24),
-
-                    // Add items section with category filter
-                    Row(
-                      children: [
-                        const Text(
-                          'Add Items',
-                          style: TextStyle(
-                              fontWeight: FontWeight.bold, fontSize: 14),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: DropdownButtonHideUnderline(
-                            child: DropdownButton<String>(
-                              value: selectedCategory,
-                              isDense: true,
-                              isExpanded: true,
-                              hint: const Text('Category'),
-                              onChanged: (value) {
-                                if (value != null) {
-                                  setLocalState(() {
-                                    selectedCategory = value;
-                                  });
-                                }
-                              },
-                              items: categories.map((cat) {
-                                return DropdownMenuItem<String>(
-                                  value: cat,
-                                  child: Text(cat),
-                                );
-                              }).toList(),
-                            ),
+                        for (var i = 0; i < visible.length; i++) ...[
+                          if (i > 0) const Divider(height: 16),
+                          _buildStaffRow(
+                            context,
+                            visible[i]['uid'] as String,
+                            visible[i],
+                            isPresent: presentUids.contains(visible[i]['uid']),
                           ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Expanded(
-                      child: ListView.builder(
-                        itemCount: displayItems.length,
-                        itemBuilder: (context, index) {
-                          final item = displayItems[index];
-                          final name = (item['name'] ?? 'Unknown').toString();
-                          final price =
-                              (item['price'] as num?)?.toDouble() ?? 0.0;
-                          final itemId = (item['id'] ?? '').toString();
-
-                          // Find if this item is already in itemsToAdd
-                          final existingIndex = itemsToAdd.indexWhere(
-                            (i) =>
-                                (i['menuId'] ?? i['id'] ?? '').toString() ==
-                                itemId,
-                          );
-                          final existingQty = existingIndex >= 0
-                              ? (itemsToAdd[existingIndex]['quantity'] as num?)
-                                      ?.toInt() ??
-                                  0
-                              : 0;
-
-                          return ListTile(
-                            dense: true,
-                            title: Text(name),
-                            subtitle: Text('₱${price.toStringAsFixed(2)}'),
-                            trailing: existingQty > 0
-                                ? Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      IconButton(
-                                        icon: const Icon(Icons.remove_circle,
-                                            size: 20),
-                                        onPressed: () {
-                                          setLocalState(() {
-                                            if (existingIndex >= 0) {
-                                              final currentQty =
-                                                  (itemsToAdd[existingIndex]
-                                                                  ['quantity']
-                                                              as num?)
-                                                          ?.toInt() ??
-                                                      1;
-                                              if (currentQty <= 1) {
-                                                itemsToAdd
-                                                    .removeAt(existingIndex);
-                                              } else {
-                                                itemsToAdd[existingIndex]
-                                                        ['quantity'] =
-                                                    currentQty - 1;
-                                              }
-                                              additionalTotal -= price;
-                                            }
-                                          });
-                                        },
-                                      ),
-                                      Text('$existingQty'),
-                                      IconButton(
-                                        icon: const Icon(Icons.add_circle,
-                                            size: 20),
-                                        onPressed: () {
-                                          setLocalState(() {
-                                            if (existingIndex >= 0) {
-                                              final currentQty =
-                                                  (itemsToAdd[existingIndex]
-                                                                  ['quantity']
-                                                              as num?)
-                                                          ?.toInt() ??
-                                                      1;
-                                              itemsToAdd[existingIndex]
-                                                  ['quantity'] = currentQty + 1;
-                                            }
-                                            additionalTotal += price;
-                                          });
-                                        },
-                                      ),
-                                    ],
-                                  )
-                                : IconButton(
-                                    icon: const Icon(Icons.add_circle_outline,
-                                        size: 20),
-                                    onPressed: () {
-                                      setLocalState(() {
-                                        itemsToAdd.add({
-                                          'menuId': itemId,
-                                          'name': name,
-                                          'price': price,
-                                          'quantity': 1,
-                                        });
-                                        additionalTotal += price;
-                                      });
-                                    },
-                                  ),
-                          );
-                        },
-                      ),
-                    ),
-
-                    // Show void summary if items are marked for voiding
-                    if (itemsToVoid.isNotEmpty) ...[
-                      const Divider(),
-                      Container(
-                        padding: const EdgeInsets.all(8),
-                        decoration: BoxDecoration(
-                          color: Colors.red.shade50,
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(color: Colors.red.shade200),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                Icon(Icons.delete_forever,
-                                    size: 16, color: Colors.red.shade600),
-                                const SizedBox(width: 4),
-                                Text(
-                                  'Items to Void:',
-                                  style: TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    color: Colors.red.shade600,
-                                    fontSize: 12,
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 4),
-                            ...itemsToVoid.map((v) {
-                              final name = (v['name'] ?? 'Unknown').toString();
-                              final qty = (v['quantity'] as num?)?.toInt() ?? 0;
-                              final price =
-                                  (v['price'] as num?)?.toDouble() ?? 0.0;
-                              return Text(
-                                '$qty x $name (₱${(price * qty).toStringAsFixed(2)})',
-                                style: TextStyle(
-                                    fontSize: 12, color: Colors.red.shade700),
-                              );
-                            }).toList(),
-                          ],
-                        ),
-                      ),
-                    ],
-
-                    // Additional total
-                    if (itemsToAdd.isNotEmpty) ...[
-                      const Divider(),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          const Text(
-                            'Additional Amount:',
-                            style: TextStyle(fontWeight: FontWeight.bold),
-                          ),
-                          Text(
-                            '₱${additionalTotal.toStringAsFixed(2)}',
-                            style: const TextStyle(
-                              fontWeight: FontWeight.bold,
-                              color: Colors.green,
+                        ],
+                        if (hidden > 0) ...[
+                          const SizedBox(height: 8),
+                          Align(
+                            alignment: Alignment.centerLeft,
+                            child: Text(
+                              '+$hidden more staff',
+                              style: TextStyle(
+                                color: Colors.grey.shade700,
+                                fontSize: 12,
+                              ),
                             ),
                           ),
                         ],
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () =>
-                      Navigator.of(context).pop({'action': 'cancel'}),
-                  child: const Text('Cancel'),
-                ),
-                if (itemsToVoid.isNotEmpty)
-                  FilledButton.icon(
-                    onPressed: () => Navigator.of(context)
-                        .pop({'action': 'void_items', 'items': itemsToVoid}),
-                    style: FilledButton.styleFrom(backgroundColor: Colors.red),
-                    icon: const Icon(Icons.delete_forever),
-                    label: const Text('Void Selected'),
-                  ),
-                if (itemsToAdd.isNotEmpty)
-                  FilledButton.icon(
-                    onPressed: () => Navigator.of(context)
-                        .pop({'action': 'add_items', 'items': itemsToAdd}),
-                    icon: const Icon(Icons.save),
-                    label: const Text('Add Items'),
-                  ),
-              ],
+                      ],
+                    ),
             );
           },
         );
       },
     );
-
-    if (result == null || result['action'] == 'cancel') return;
-
-    // Handle void all order
-    if (result['action'] == 'void_all') {
-      try {
-        await ApiService.voidOrder(orderId, reason: 'Voided from edit dialog');
-        await _loadDashboard();
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-              content: Text('Order voided successfully. Stock restored.')),
-        );
-      } catch (e) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to void order: $e')),
-        );
-      }
-      return;
-    }
-
-    // Handle void items
-    if (result['action'] == 'void_items') {
-      final itemsToVoidList = result['items'] as List<Map<String, dynamic>>;
-      try {
-        await ApiService.voidOrderItems(orderId, itemsToVoidList,
-            reason: 'Partial void from edit dialog');
-        await _loadDashboard();
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-              content: Text('Items voided successfully. Stock restored.')),
-        );
-      } catch (e) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to void items: $e')),
-        );
-      }
-      return;
-    }
-
-    // Handle add items
-    if (result['action'] == 'add_items') {
-      final items = result['items'] as List<Map<String, dynamic>>;
-      try {
-        await ApiService.addItemsToOrder(orderId, items);
-        await _loadDashboard();
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Items added to order successfully')),
-        );
-      } catch (e) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to add items: $e')),
-        );
-      }
-    }
   }
 
-  void _showAllOrdersDialog(
-    BuildContext context, {
-    required String title,
-    required List<Map<String, dynamic>> orders,
-    required String emptyMessage,
+  Widget _staffCardShell({
+    required Widget child,
+    int? presentCount,
+    int? totalCount,
   }) {
-    showDialog<void>(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: Row(
+    return SectionCard(
+      title: 'Staff on duty',
+      icon: Icons.groups_outlined,
+      iconColor: Colors.deepPurple,
+      badge: totalCount == null ? null : '$presentCount/$totalCount',
+      action: TextButton(
+        onPressed: () => widget.onNavigate(AdminTabIndex.staff),
+        child: const Text('View all'),
+      ),
+      child: child,
+    );
+  }
+
+  Widget _buildStaffRow(
+    BuildContext context,
+    String uid,
+    Map<String, dynamic> data, {
+    required bool isPresent,
+  }) {
+    final name = staffDisplayName(data, uid);
+    final phone = staffPhone(data);
+    final subtitle =
+        phone.isNotEmpty ? phone : (data['email'] ?? '').toString().trim();
+    final scheme = Theme.of(context).colorScheme;
+    final color = isPresent ? Colors.green : scheme.outline;
+    final textColor =
+        isPresent ? Colors.green.shade800 : scheme.onSurfaceVariant;
+    return Row(
+      children: [
+        CircleAvatar(
+          radius: 18,
+          backgroundColor: color.withValues(alpha: 0.15),
+          child: Text(
+            staffInitials(name),
+            style: TextStyle(
+              color: textColor,
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Icon(Icons.receipt_long_outlined),
-              const SizedBox(width: 12),
-              Expanded(child: Text(title)),
-            ],
-          ),
-          content: SizedBox(
-            width: 500,
-            height: 500,
-            child: orders.isEmpty
-                ? Center(child: Text(emptyMessage))
-                : ListView.separated(
-                    itemCount: orders.length,
-                    separatorBuilder: (_, __) => const Divider(height: 1),
-                    itemBuilder: (context, index) {
-                      final order = orders[index];
-                      final id = (order['id'] ?? '').toString();
-                      final total =
-                          (order['totalAmount'] as num?)?.toDouble() ?? 0.0;
-                      final status = (order['status'] ?? 'unknown').toString();
-                      final createdAt = _asDate(order['createdAt']);
-
-                      String dateText = 'Unknown date';
-                      if (createdAt != null) {
-                        final daysAgo =
-                            DateTime.now().difference(createdAt).inDays;
-                        dateText = daysAgo == 0
-                            ? 'Today'
-                            : daysAgo == 1
-                                ? 'Yesterday'
-                                : '$daysAgo days ago';
-                      }
-
-                      return ListTile(
-                        contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 8, vertical: 4),
-                        leading: const Icon(Icons.receipt_outlined),
-                        title: Text(
-                          id.isEmpty
-                              ? 'Order'
-                              : 'Order #${id.substring(0, id.length > 8 ? 8 : id.length)}',
-                          style: const TextStyle(fontWeight: FontWeight.w600),
-                        ),
-                        subtitle: Text('$status • $dateText'),
-                        trailing: Text(
-                          '₱${total.toStringAsFixed(2)}',
-                          style: const TextStyle(fontWeight: FontWeight.w700),
-                        ),
-                        onTap: (_isAdmin || _isApprovedStaff)
-                            ? () {
-                                Navigator.of(context).pop();
-                                _showOrderDetails(order);
-                              }
-                            : null,
-                      );
-                    },
-                  ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Close'),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  void _showOrderDetails(Map<String, dynamic> order) {
-    // Allow both admin and approved staff to view order details
-    if (!_isAdmin && !_isApprovedStaff) return;
-
-    String formatTimestamp(dynamic value) {
-      if (value == null) return '';
-      if (value is Timestamp) {
-        final d = value.toDate();
-        final hour = d.hour;
-        final minute = d.minute.toString().padLeft(2, '0');
-        final amPm = hour >= 12 ? 'PM' : 'AM';
-        final displayHour = hour == 0 ? 12 : (hour > 12 ? hour - 12 : hour);
-        final monthNames = [
-          'Jan',
-          'Feb',
-          'Mar',
-          'Apr',
-          'May',
-          'Jun',
-          'Jul',
-          'Aug',
-          'Sep',
-          'Oct',
-          'Nov',
-          'Dec'
-        ];
-        return '${monthNames[d.month - 1]} ${d.day}, ${d.year} at $displayHour:$minute $amPm';
-      }
-      return value.toString();
-    }
-
-    final id = (order['id'] ?? '').toString();
-    final status = (order['status'] ?? '').toString();
-    final paymentMethod = (order['paymentMethod'] ?? '').toString();
-    final notes = (order['notes'] ?? '').toString();
-    final rejectReason = (order['rejectReason'] ?? '').toString();
-    final voidReason = (order['voidReason'] ?? '').toString();
-    final total = (order['totalAmount'] as num?)?.toDouble() ?? 0.0;
-    final createdAt = formatTimestamp(order['createdAt']);
-    final completedAt = formatTimestamp(order['completedAt']);
-    final voidedAt = formatTimestamp(order['voidedAt']);
-    final createdByName = (order['createdByName'] ?? '').toString();
-
-    final itemsRaw = order['items'];
-    final items = itemsRaw is List ? itemsRaw : const [];
-
-    final lastAddedRaw = order['lastAddedItems'];
-    final lastAdded = lastAddedRaw is List ? lastAddedRaw : const [];
-
-    showDialog(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: Text(
-            id.isEmpty
-                ? 'Order Details'
-                : 'Order #${id.substring(0, id.length > 6 ? 6 : id.length)}',
-          ),
-          content: SizedBox(
-            width: 520,
-            child: SingleChildScrollView(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    'Status: $status',
-                    style: const TextStyle(fontWeight: FontWeight.w700),
-                  ),
-                  const SizedBox(height: 8),
-                  Text('Total: ₱${total.toStringAsFixed(2)}'),
-                  if (paymentMethod.trim().isNotEmpty)
-                    Text('Payment: $paymentMethod'),
-                  if (createdAt.isNotEmpty) Text('Created: $createdAt'),
-                  if (createdByName.isNotEmpty)
-                    Text('Created by: $createdByName'),
-                  if (completedAt.isNotEmpty) Text('Completed: $completedAt'),
-                  if (notes.trim().isNotEmpty) ...[
-                    const SizedBox(height: 8),
-                    Text('Notes: $notes'),
-                  ],
-                  if (rejectReason.trim().isNotEmpty) ...[
-                    const SizedBox(height: 8),
-                    Text(
-                      'Reject reason: $rejectReason',
-                      style: const TextStyle(color: Colors.red),
-                    ),
-                  ],
-                  if (voidReason.trim().isNotEmpty) ...[
-                    const SizedBox(height: 8),
-                    Text(
-                      'Void reason: $voidReason',
-                      style: const TextStyle(color: Colors.red),
-                    ),
-                  ],
-                  if (voidedAt.isNotEmpty) ...[
-                    const SizedBox(height: 4),
-                    Text('Voided: $voidedAt'),
-                  ],
-                  const SizedBox(height: 12),
-                  const Divider(),
-                  const SizedBox(height: 8),
-                  const Text(
-                    'Items',
-                    style: TextStyle(fontWeight: FontWeight.w800),
-                  ),
-                  const SizedBox(height: 8),
-                  if (items.isEmpty)
-                    Text(
-                      'No items',
-                      style: TextStyle(color: Colors.grey.shade700),
-                    )
-                  else
-                    ...items.map((raw) {
-                      final it = raw is Map ? raw : const {};
-                      final name = (it['name'] ?? '').toString();
-                      final qtyRaw = it['quantity'];
-                      final qty = qtyRaw is num
-                          ? qtyRaw.toInt()
-                          : int.tryParse(qtyRaw?.toString() ?? '') ?? 0;
-                      final priceRaw = it['price'];
-                      final price = priceRaw is num
-                          ? priceRaw.toDouble()
-                          : double.tryParse(priceRaw?.toString() ?? '') ?? 0.0;
-                      final lineTotal = price * qty;
-                      return Padding(
-                        padding: const EdgeInsets.only(bottom: 8),
-                        child: Row(
-                          children: [
-                            Expanded(
-                              child: Text(
-                                name.isEmpty ? 'Item' : name,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            Text('x$qty'),
-                            const SizedBox(width: 12),
-                            Text('₱${lineTotal.toStringAsFixed(2)}'),
-                          ],
-                        ),
-                      );
-                    }),
-                  if (lastAdded.isNotEmpty) ...[
-                    const SizedBox(height: 12),
-                    const Divider(),
-                    const SizedBox(height: 8),
-                    const Text(
-                      'Newly added items',
-                      style: TextStyle(fontWeight: FontWeight.w800),
-                    ),
-                    const SizedBox(height: 8),
-                    ...lastAdded.map((raw) {
-                      final it = raw is Map ? raw : const {};
-                      final name = (it['name'] ?? '').toString();
-                      final qtyRaw = it['quantity'];
-                      final qty = qtyRaw is num
-                          ? qtyRaw.toInt()
-                          : int.tryParse(qtyRaw?.toString() ?? '') ?? 0;
-                      final priceRaw = it['price'];
-                      final price = priceRaw is num
-                          ? priceRaw.toDouble()
-                          : double.tryParse(priceRaw?.toString() ?? '') ?? 0.0;
-                      final lineTotal = price * qty;
-                      return Padding(
-                        padding: const EdgeInsets.only(bottom: 8),
-                        child: Row(
-                          children: [
-                            Expanded(
-                              child: Text(
-                                name.isEmpty ? 'Item' : name,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            Text('x$qty'),
-                            const SizedBox(width: 12),
-                            Text('₱${lineTotal.toStringAsFixed(2)}'),
-                          ],
-                        ),
-                      );
-                    }),
-                  ],
-                ],
+              Text(
+                name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontWeight: FontWeight.w600),
               ),
-            ),
-          ),
-          actions: [
-            if (status.trim().toLowerCase() == 'pending') ...[
-              // Complete Order button - available for both admin and staff
-              FilledButton.icon(
-                onPressed: () async {
-                  try {
-                    await ApiService.completeOrder(id);
-                    // Play success sound
-                    await SoundService.playOrderCompleted();
-                    if (!mounted) return;
-                    await _loadDashboard();
-                    if (!mounted) return;
-                    Navigator.of(context).pop();
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                          content: Text('Order completed successfully.')),
-                    );
-                  } catch (e) {
-                    if (!mounted) return;
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('Failed to complete order: $e')),
-                    );
-                  }
-                },
-                icon: const Icon(Icons.check_circle),
-                label: const Text('Complete Order'),
-                style: FilledButton.styleFrom(
-                  backgroundColor: Colors.green,
-                ),
-              ),
-              // Edit Order button - only for admin
-              if (_isAdmin)
-                FilledButton.icon(
-                  onPressed: () {
-                    Navigator.of(context).pop();
-                    _showEditOrderDialog(order);
-                  },
-                  icon: const Icon(Icons.edit),
-                  label: const Text('Edit Order'),
-                ),
-              // Void button - available for both admin and staff
-              if (_isAdmin || _isApprovedStaff)
-                TextButton(
-                  onPressed: () async {
-                    final controller = TextEditingController();
-                    try {
-                      final confirmed = await showDialog<bool>(
-                        context: context,
-                        builder: (context) {
-                          return AlertDialog(
-                            title: const Text('Void Order'),
-                            content: SizedBox(
-                              width: 520,
-                              child: Column(
-                                mainAxisSize: MainAxisSize.min,
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  const Text(
-                                    'This will mark the order as voided. Stocks will not be updated.',
-                                  ),
-                                  const SizedBox(height: 12),
-                                  TextField(
-                                    controller: controller,
-                                    decoration: const InputDecoration(
-                                      labelText: 'Reason (optional)',
-                                      border: OutlineInputBorder(),
-                                    ),
-                                    maxLines: 2,
-                                  ),
-                                ],
-                              ),
-                            ),
-                            actions: [
-                              TextButton(
-                                onPressed: () =>
-                                    Navigator.of(context).pop(false),
-                                child: const Text('Cancel'),
-                              ),
-                              ElevatedButton(
-                                onPressed: () =>
-                                    Navigator.of(context).pop(true),
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: Colors.red,
-                                  foregroundColor: Colors.white,
-                                ),
-                                child: const Text('Void'),
-                              ),
-                            ],
-                          );
-                        },
-                      );
-                      if (confirmed != true) return;
-                      await ApiService.voidOrder(id, reason: controller.text);
-                      if (!mounted) return;
-                      await _loadDashboard();
-                      if (!mounted) return;
-                      Navigator.of(context).pop();
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Order voided.')),
-                      );
-                    } catch (e) {
-                      if (!mounted) return;
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text('Failed to void order: $e')),
-                      );
-                    } finally {
-                      controller.dispose();
-                    }
-                  },
-                  child: const Text(
-                    'Void',
-                    style: TextStyle(color: Colors.red),
+              if (subtitle.isNotEmpty)
+                Text(
+                  subtitle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: scheme.onSurfaceVariant,
                   ),
                 ),
             ],
-            if (status.trim().toLowerCase() == 'rejected')
-              TextButton(
-                onPressed: () async {
-                  try {
-                    await ApiService.restoreOrderToPending(id);
-                    if (!mounted) return;
-                    await _loadDashboard();
-                    if (!mounted) return;
-                    Navigator.of(context).pop();
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                          content: Text('Order restored to pending.')),
-                    );
-                  } catch (e) {
-                    if (!mounted) return;
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('Failed to restore order: $e')),
-                    );
-                  }
-                },
-                child: const Text('Restore to pending'),
-              ),
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Close'),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.12),
+            borderRadius: BorderRadius.circular(999),
+          ),
+          child: Text(
+            isPresent ? 'On duty' : 'Not in yet',
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+              color: textColor,
             ),
-          ],
-        );
-      },
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return RefreshIndicator(
-      onRefresh: _loadDashboard,
-      child: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : _error != null
-              ? ListView(
-                  padding: const EdgeInsets.all(16),
-                  children: [
-                    Text(
-                      'Failed to load dashboard: $_error',
-                      style: const TextStyle(fontWeight: FontWeight.w600),
-                    ),
-                    const SizedBox(height: 12),
-                    ElevatedButton(
-                      onPressed: _loadDashboard,
-                      child: const Text('Retry'),
-                    ),
-                  ],
-                )
-              : ListView(
-                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-                  children: [
-                    _buildKpis(context),
-                    const SizedBox(height: 16),
-                    _buildQuickActions(context),
-                    const SizedBox(height: 16),
-                    _buildFinanceOverview(context),
-                    const SizedBox(height: 16),
-                    _buildNotesCard(context),
-                    const SizedBox(height: 16),
-                    LayoutBuilder(
-                      builder: (context, constraints) {
-                        final isWide = constraints.maxWidth >= 900;
-                        if (isWide) {
-                          return Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Expanded(child: _buildTodayOrders(context)),
-                              const SizedBox(width: 16),
-                              Expanded(child: _buildLowStock(context)),
-                            ],
-                          );
-                        }
-
-                        return Column(
-                          children: [
-                            _buildTodayOrders(context),
-                            const SizedBox(height: 16),
-                            _buildLowStock(context),
-                          ],
-                        );
-                      },
-                    ),
-                    const SizedBox(height: 16),
-                    if (_incompleteOrders.isNotEmpty) ...[
-                      _buildIncompleteOrders(context),
-                    ],
-                  ],
-                ),
+          ),
+        ),
+      ],
     );
   }
 
   Widget _buildKpis(BuildContext context) {
-    final today = (_summary?['today'] as Map<String, dynamic>?) ?? const {};
-    final orders = (today['orders'] as num?)?.toInt() ?? 0;
-    final revenue = (today['revenue'] as num?)?.toDouble() ?? 0.0;
-    final menuItems = (_summary?['menuItems'] as num?)?.toInt() ?? 0;
-    final lowStockCount = _lowStock.length;
+    final m = _model;
+
+    final todayRevenue = m?.todayRevenue ?? 0.0;
+    final dayChange = m?.dayChangePercent ?? 0.0;
+    final ordersToday = m?.todayTotalOrders ?? _todayOrders.length;
+    final pendingToday = m?.todayPendingCount ?? 0;
+    final aov = m?.averageOrderValue ?? 0.0;
+    final weekRevenue = m?.weekRevenue ?? 0.0;
+    final itemsSold = m?.todayTotalItemsSold ?? 0;
+    final totalMenuItems = m?.totalMenuItems ?? 0;
+    final zeroSales = m?.zeroSalesItemCount ?? 0;
+    final lowStockCount = m?.lowStockCount ?? _lowStock.length;
+    final criticalStock = m?.criticalStockCount ?? 0;
+
+    final now = DateTime.now();
+    double mtdNetSales = 0;
+    for (final sale in _dailySales) {
+      final date = DateTime.tryParse(sale['date']?.toString() ?? '');
+      if (date == null) continue;
+      if (date.year != now.year || date.month != now.month) continue;
+      mtdNetSales += (sale['revenue'] as num?)?.toDouble() ??
+          (sale['totalAmount'] as num?)?.toDouble() ??
+          0;
+    }
+    final mtdEnd = DateTime(now.year, now.month + 1, 0, 23, 59, 59, 999);
+    final mtdStart = DateTime(now.year, now.month, 1);
+    final opExMtd =
+        BusinessKpis.operatingExpenses(_expenses, start: mtdStart, end: mtdEnd);
+    final cogs = BusinessKpis.resolveCogs(
+        stockMovements: _stockMovements, itemPerformance: _itemPerformance);
+    final menuRows = BusinessKpis.menuProfitRows(_itemPerformance);
+    final costed = menuRows.where((r) => r.hasCosting).length;
+    final recipeMargin = menuRows
+        .where((r) => r.hasCosting)
+        .fold<double>(0, (s, r) => s + r.profit);
+    final recipeRevenue = menuRows
+        .where((r) => r.hasCosting)
+        .fold<double>(0, (s, r) => s + r.revenue);
+    final recipeCogs = menuRows
+        .where((r) => r.hasCosting)
+        .fold<double>(0, (s, r) => s + r.estimatedCogs);
+    final netProfitMtd = cogs.isEstimated
+        ? (mtdNetSales -
+            opExMtd -
+            (recipeRevenue > 0
+                ? mtdNetSales * (recipeCogs / recipeRevenue)
+                : 0))
+        : (mtdNetSales - opExMtd - cogs.amount);
+    final inv = BusinessKpis.inventoryKpi(
+        inventoryItems: _inventoryItems,
+        stockMovements: _stockMovements,
+        damagedItems: _damagedItems);
+    final payablesKpi = BusinessKpis.payablesKpi(_payables, now: now);
+
+    final currency = NumberFormat.currency(symbol: '\u20B1', decimalDigits: 2);
+    final peso = NumberFormat.currency(symbol: '\u20B1', decimalDigits: 0);
+
+    final tiles = <Widget>[
+      KpiCard(
+          title: 'Today\'s Sales',
+          value: peso.format(todayRevenue),
+          icon: Icons.payments_outlined,
+          color: Colors.blue,
+          trendPercent: m == null ? null : dayChange,
+          description:
+              'Total sales from orders placed today. Trend compares today to yesterday when available.'),
+      KpiCard(
+          title: 'Orders Today',
+          value: ordersToday.toString(),
+          icon: Icons.receipt_long_outlined,
+          color: Colors.indigo,
+          subtitle:
+              pendingToday > 0 ? '$pendingToday pending' : 'All completed',
+          description:
+              'Number of orders created today, with pending/incomplete orders shown in the subtitle.'),
+      KpiCard(
+          title: 'Avg Order Value',
+          value: currency.format(aov),
+          icon: Icons.calculate_outlined,
+          color: Colors.teal,
+          description:
+              'Average amount spent per completed order (AOV), based on available order totals.'),
+      KpiCard(
+          title: 'Net Profit (MTD)',
+          value: peso.format(netProfitMtd),
+          icon: Icons.savings_outlined,
+          color: netProfitMtd >= 0 ? Colors.green : Colors.red,
+          subtitle:
+              'Uses ${cogs.sourceLabel}${cogs.isEstimated ? " ratio estimate" : ""}; discounts/order-level gross may be unavailable here',
+          description:
+              'Month-to-date net profit estimate: net sales minus operating expenses and COGS. Uses Actual sale-consumption COGS when available; otherwise uses Estimated recipe/menu costing.'),
+      KpiCard(
+          title: 'Gross Margin (Menu Costing)',
+          value: peso.format(recipeMargin),
+          icon: Icons.calculate_outlined,
+          color: recipeMargin >= 0 ? Colors.green : Colors.red,
+          subtitle:
+              '$costed/${_itemPerformance.length} costed \u00B7 separate from Actual COGS',
+          description:
+              'Recipe/menu-costing gross margin for costed items. Separate from Actual COGS (stock movements/sale consumption when available).'),
+      KpiCard(
+          title: 'Inventory Value / Waste',
+          value: peso.format(inv.inventoryValue),
+          icon: Icons.inventory_2_outlined,
+          color: Colors.brown,
+          subtitle:
+              'Waste ${currency.format(inv.wasteCost)} \u00B7 ${inv.hasActualConsumption ? "consumption tracked" : "consumption N/A"}',
+          description:
+              'Current inventory value from on-hand stock and unit costs. Waste comes from damaged/write-off records; consumption appears only when sale-consumption movements exist.'),
+      KpiCard(
+          title: 'Outstanding Payables',
+          value: peso.format(payablesKpi.outstanding),
+          icon: Icons.payment,
+          color: Colors.orange,
+          subtitle:
+              'Overdue ${currency.format(payablesKpi.overdue)} \u00B7 Due 30d ${payablesKpi.dueThisMonth}',
+          description:
+              'Total unpaid payables currently outstanding, including overdue amounts and bills due in the next 30 days.'),
+      KpiCard(
+          title: 'Week Revenue',
+          value: peso.format(weekRevenue),
+          icon: Icons.calendar_view_week_outlined,
+          color: Colors.deepPurple,
+          description:
+              'Total revenue for the current week based on completed order/sales data.'),
+      KpiCard(
+          title: 'Low Stock / Menu',
+          value: lowStockCount.toString(),
+          icon: Icons.warning_amber_rounded,
+          color: Colors.orange,
+          subtitle: criticalStock > 0
+              ? '$criticalStock critical \u00B7 Menu $totalMenuItems'
+              : 'Items sold today $itemsSold \u00B7 Menu $totalMenuItems${zeroSales > 0 ? " ($zeroSales no sales)" : ""}',
+          description:
+              'Inventory and menu health: low/critical stock items, total menu items, and menu items with no recorded sales.'),
+    ];
 
     return LayoutBuilder(
       builder: (context, constraints) {
         final width = constraints.maxWidth;
-        final crossAxisCount = width >= 1100
-            ? 4
-            : width >= 760
-                ? 3
-                : 2;
-
-        final isPhoneNarrow = width < 420;
+        final crossAxisCount = width >= 1100 ? 4 : (width >= 560 ? 2 : 1);
 
         return GridView.builder(
           shrinkWrap: true,
           physics: const NeverScrollableScrollPhysics(),
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: crossAxisCount,
-            crossAxisSpacing: 12,
-            mainAxisSpacing: 12,
-            childAspectRatio: crossAxisCount == 2
-                ? (isPhoneNarrow ? 1.35 : 1.55)
-                : crossAxisCount == 3
-                    ? 2.0
-                    : 2.2,
+            crossAxisSpacing: 10,
+            mainAxisSpacing: 10,
+            // Wider ratio = shorter tiles, closer to Finance/Inventory KPI density.
+            childAspectRatio: crossAxisCount == 1 ? 3.2 : 2.9,
           ),
-          itemCount: 4,
-          itemBuilder: (context, index) {
-            switch (index) {
-              case 0:
-                return _KpiCard(
-                  title: 'Today\'s Sales',
-                  value: '₱${revenue.toStringAsFixed(2)}',
-                  icon: Icons.payments_outlined,
-                  color: Colors.blue,
-                );
-              case 1:
-                return _KpiCard(
-                  title: 'Orders Today',
-                  value: orders.toString(),
-                  icon: Icons.receipt_long_outlined,
-                  color: Colors.indigo,
-                );
-              case 2:
-                return _KpiCard(
-                  title: 'Menu Items',
-                  value: menuItems.toString(),
-                  icon: Icons.restaurant_menu,
-                  color: Colors.teal,
-                );
-              default:
-                return _KpiCard(
-                  title: 'Low Stock',
-                  value: lowStockCount.toString(),
-                  icon: Icons.warning_amber_rounded,
-                  color: Colors.orange,
-                );
-            }
-          },
+          itemCount: tiles.length,
+          itemBuilder: (context, index) => tiles[index],
         );
       },
     );
   }
 
-  Widget _buildQuickActions(BuildContext context) {
-    return Card(
-      elevation: 0,
-      color: Colors.white,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(16),
-        side: BorderSide(color: Colors.grey.shade200),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
+  /// Seven-day revenue line chart with a next-peak forecast line.
+  ///
+  /// Reads the series cached on state by [_loadTrendSeries]; performant because
+  /// build() stays synchronous and never triggers a fetch.
+  Widget _buildSalesTrend(BuildContext context) {
+    final points = _trendPoints;
+    final forecastText = _trendForecast;
+
+    return SectionCard(
+      title: 'Sales Trend',
+      icon: Icons.show_chart_rounded,
+      iconColor: const Color(0xFF1E88E5),
+      badge: 'Last 7 days',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          RevenueTrendChart(points: points, height: 170),
+          if (forecastText.isNotEmpty) ...[
+            const SizedBox(height: 10),
             Row(
               children: [
-                const Expanded(
+                const Icon(Icons.auto_graph_outlined,
+                    size: 14, color: Colors.blue),
+                const SizedBox(width: 6),
+                Expanded(
                   child: Text(
-                    'Quick Actions',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                  ),
-                ),
-                Text(
-                  'Management',
-                  style: TextStyle(
-                    color: Colors.grey.shade700,
-                    fontWeight: FontWeight.w600,
+                    forecastText,
+                    style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: 12),
-            LayoutBuilder(
-              builder: (context, constraints) {
-                final width = constraints.maxWidth;
-                final isWide = width >= 720;
-
-                final primary = FilledButton.icon(
-                  onPressed: () => widget.onNavigate(1),
-                  icon: const Icon(Icons.restaurant_menu),
-                  label: const Text('Menu Management'),
-                );
-
-                final secondary = Wrap(
-                  spacing: 12,
-                  runSpacing: 12,
-                  children: [
-                    OutlinedButton.icon(
-                      onPressed: () => widget.onNavigate(2),
-                      icon: const Icon(Icons.inventory),
-                      label: const Text('Inventory'),
-                    ),
-                    OutlinedButton.icon(
-                      onPressed: () => widget.onNavigate(3),
-                      icon: const Icon(Icons.analytics),
-                      label: const Text('Analytics'),
-                    ),
-                    OutlinedButton.icon(
-                      onPressed: () => widget.onNavigate(4),
-                      icon: const Icon(Icons.account_balance_wallet_outlined),
-                      label: const Text('Finance'),
-                    ),
-                    OutlinedButton.icon(
-                      onPressed: () => widget.onNavigate(5),
-                      icon: const Icon(Icons.group_outlined),
-                      label: const Text('Staff'),
-                    ),
-                  ],
-                );
-
-                if (isWide) {
-                  return Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(child: primary),
-                      const SizedBox(width: 12),
-                      Expanded(flex: 2, child: secondary),
-                    ],
-                  );
-                }
-
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    SizedBox(width: double.infinity, child: primary),
-                    const SizedBox(height: 12),
-                    secondary,
-                  ],
-                );
-              },
-            ),
           ],
-        ),
+        ],
       ),
+    );
+  }
+
+  /// Fetches the trend series and forecast off the critical path and returns
+  /// them. Awaited by [_loadDashboard] so the fetch happens exactly once per
+  /// load rather than on every rebuild.
+  Future<({List<TrendPoint> points, String forecast})> _loadTrendSeries(
+    String eateryId,
+  ) async {
+    var points = <TrendPoint>[];
+    var forecast = '';
+    try {
+      final results = await Future.wait<dynamic>([
+        AnalyticsService.getSalesTrend(eateryId, days: 7),
+        AnalyticsService.getSalesForecast(eateryId),
+      ]);
+
+      final trendRaw = results[0]['dailyTrend'];
+      if (trendRaw is List) {
+        points = trendRaw
+            .map((raw) {
+              final m = raw is Map ? raw : const {};
+              final date = DateTime.tryParse((m['date'] ?? '').toString());
+              return TrendPoint(
+                label: date != null ? DateFormat('EEE').format(date) : '',
+                value: (m['revenue'] as num?)?.toDouble() ?? 0,
+              );
+            })
+            .where((p) => p.label.isNotEmpty)
+            .toList();
+      }
+
+      final forecastRaw = results[1]['forecast'];
+      if (forecastRaw is List && forecastRaw.isNotEmpty) {
+        final next = forecastRaw.first;
+        if (next is Map) {
+          final predicted = (next['predictedRevenue'] as num?)?.toDouble() ?? 0;
+          final dayName = (next['dayName'] ?? '').toString();
+          if (predicted > 0) {
+            final peso = NumberFormat.currency(symbol: '₱', decimalDigits: 0);
+            forecast = 'Forecast for $dayName: ${peso.format(predicted)}';
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('Sales trend fetch failed: $e');
+    }
+    return (points: points, forecast: forecast);
+  }
+
+  /// Compact menu health: top five sellers by revenue, plus category and
+  /// zero-sales counts. No equivalent summary exists elsewhere in the app.
+  Widget _buildMenuPerformance(BuildContext context) {
+    final m = _model;
+    final top = (m?.topFiveItems ?? const [])
+        .cast<Map<String, dynamic>>()
+        .take(5)
+        .toList();
+    final maxRevenue = top.isEmpty
+        ? 0.0
+        : top
+            .map((e) => (e['revenue'] as num?)?.toDouble() ?? 0)
+            .reduce((a, b) => a > b ? a : b);
+    final peso = NumberFormat.currency(symbol: '₱', decimalDigits: 0);
+
+    return SectionCard(
+      title: 'Menu Performance',
+      icon: Icons.restaurant_menu,
+      iconColor: const Color(0xFF0EA5A4),
+      badge: 'Last 30 days',
+      child: top.isEmpty
+          ? const EmptyState(
+              icon: Icons.restaurant_menu,
+              title: 'No sales data yet',
+              subtitle: 'Top sellers appear once orders start coming in.',
+            )
+          : Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                for (final item in top) ...[
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                (item['name'] ?? 'Item').toString(),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              '${item['qty'] ?? 0} sold',
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: Colors.grey.shade600,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              peso.format(
+                                  (item['revenue'] as num?)?.toDouble() ?? 0),
+                              style: const TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 4),
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(999),
+                          child: LinearProgressIndicator(
+                            value: maxRevenue <= 0
+                                ? 0
+                                : ((item['revenue'] as num?)?.toDouble() ?? 0) /
+                                    maxRevenue,
+                            minHeight: 4,
+                            backgroundColor: Colors.grey.shade200,
+                            valueColor:
+                                const AlwaysStoppedAnimation(Color(0xFF0EA5A4)),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+                if ((m?.zeroSalesItemCount ?? 0) > 0) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    '${m!.zeroSalesItemCount} menu item'
+                    '${m.zeroSalesItemCount == 1 ? '' : 's'} with no sales',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: Colors.orange.shade800,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ],
+            ),
     );
   }
 
   Widget _buildFinanceOverview(BuildContext context) {
-    // Calculate upcoming bills (due within 7 days and unpaid)
     final now = DateTime.now();
-    final weekFromNow = now.add(const Duration(days: 7));
-
-    final upcomingPayables = _payables.where((p) {
-      final status = (p['status'] ?? '').toString().toLowerCase();
-      if (status == 'paid') return false;
-      final dueDate = _asDate(p['dueDate']);
-      if (dueDate == null) return false;
-      return dueDate.isBefore(weekFromNow) &&
-          dueDate.isAfter(now.subtract(const Duration(days: 1)));
-    }).toList();
-
-    upcomingPayables.sort((a, b) {
-      final ad = _asDate(a['dueDate']);
-      final bd = _asDate(b['dueDate']);
-      if (ad == null || bd == null) return 0;
-      return ad.compareTo(bd);
-    });
-
-    // Calculate this month's expenses
+    final payablesKpi = BusinessKpis.payablesKpi(_payables, now: now);
+    final overdue = payablesKpi.overdue;
+    final upcomingPayables =
+        FinanceMetrics.upcomingPayables(_payables, days: 7, now: now)
+          ..sort((a, b) {
+            final ad = FinanceFormat.asDate(a['dueDate']);
+            final bd = FinanceFormat.asDate(b['dueDate']);
+            if (ad == null && bd == null) return 0;
+            if (ad == null) return 1;
+            if (bd == null) return -1;
+            return ad.compareTo(bd);
+          });
+    final unpaidCount =
+        _payables.where((p) => !FinanceMetrics.isPaid(p)).length;
     final monthStart = DateTime(now.year, now.month, 1);
-    final monthlyExpenses = _expenses.where((e) {
-      final date = _asDate(e['date']) ?? _asDate(e['createdAt']);
-      if (date == null) return false;
-      return date.isAfter(monthStart.subtract(const Duration(days: 1))) &&
-          date.isBefore(now.add(const Duration(days: 1)));
-    }).toList();
+    final monthEnd = DateTime(now.year, now.month + 1, 0, 23, 59, 59, 999);
+    final totalMonthlyExpenses = BusinessKpis.operatingExpenses(_expenses,
+        start: monthStart, end: monthEnd);
+    double mtdNetSales = 0;
+    for (final sale in _dailySales) {
+      final date = DateTime.tryParse(sale['date']?.toString() ?? '');
+      if (date == null || date.year != now.year || date.month != now.month)
+        continue;
+      mtdNetSales += (sale['revenue'] as num?)?.toDouble() ??
+          (sale['totalAmount'] as num?)?.toDouble() ??
+          0;
+    }
+    final cogs = BusinessKpis.resolveCogs(
+        stockMovements: _stockMovements, itemPerformance: _itemPerformance);
+    final menuRows = BusinessKpis.menuProfitRows(_itemPerformance);
+    final recipeRevenue = menuRows
+        .where((r) => r.hasCosting)
+        .fold<double>(0, (s, r) => s + r.revenue);
+    final recipeCogs = menuRows
+        .where((r) => r.hasCosting)
+        .fold<double>(0, (s, r) => s + r.estimatedCogs);
+    final cogsValue = cogs.isEstimated
+        ? (recipeRevenue > 0 ? mtdNetSales * (recipeCogs / recipeRevenue) : 0.0)
+        : cogs.amount;
+    final netProfitMtd = mtdNetSales - totalMonthlyExpenses - cogsValue;
+    final margin = mtdNetSales > 0 ? netProfitMtd / mtdNetSales * 100 : 0.0;
+    final peso = NumberFormat.currency(symbol: '\u20B1', decimalDigits: 0);
+    final currency = NumberFormat.currency(symbol: '\u20B1', decimalDigits: 2);
+    final upcomingLabel =
+        upcomingPayables.isEmpty ? null : '${upcomingPayables.length} due';
 
-    final totalMonthlyExpenses = monthlyExpenses.fold<double>(
-      0,
-      (sum, e) => sum + ((e['amount'] as num?)?.toDouble() ?? 0.0),
-    );
-
-    // Count unpaid bills
-    final unpaidCount = _payables.where((p) {
-      final status = (p['status'] ?? '').toString().toLowerCase();
-      return status != 'paid';
-    }).length;
-
-    return Card(
-      elevation: 0,
-      color: Colors.white,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(16),
-        side: BorderSide(color: Colors.grey.shade200),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Row(
-                    children: [
-                      const Icon(Icons.account_balance_wallet_outlined,
-                          color: Colors.green),
-                      const SizedBox(width: 8),
-                      const Text(
-                        'Finance Overview',
-                        style: TextStyle(
-                            fontSize: 16, fontWeight: FontWeight.bold),
-                      ),
-                      const SizedBox(width: 8),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 8, vertical: 3),
-                        decoration: BoxDecoration(
-                          color: Colors.green.withValues(alpha: 0.12),
-                          borderRadius: BorderRadius.circular(999),
-                        ),
-                        child: Text(
-                          upcomingPayables.length.toString(),
-                          style: const TextStyle(fontWeight: FontWeight.w700),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                TextButton(
-                  onPressed: () => widget.onNavigate(4),
-                  child: const Text('Open Finance'),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            // KPI Row
-            Row(
-              children: [
-                Expanded(
-                  child: _FinanceKpiItem(
-                    label: 'Monthly Expenses',
-                    value: '₱${totalMonthlyExpenses.toStringAsFixed(2)}',
-                    icon: Icons.trending_down,
-                    color: Colors.red,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: _FinanceKpiItem(
-                    label: 'Unpaid Bills',
-                    value: unpaidCount.toString(),
-                    icon: Icons.schedule_outlined,
-                    color: Colors.orange,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: _FinanceKpiItem(
-                    label: 'Upcoming Due',
-                    value: upcomingPayables.length.toString(),
-                    icon: Icons.calendar_today,
-                    color: Colors.blue,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            const Divider(height: 1),
-            const SizedBox(height: 12),
-            // Upcoming bills list
-            if (upcomingPayables.isEmpty)
-              Text(
-                'No bills due within 7 days.',
-                style: TextStyle(color: Colors.grey.shade700),
-              )
-            else
-              ...upcomingPayables.take(3).map((p) {
-                final name = (p['name'] ?? 'Unknown').toString();
-                final amount = (p['amount'] as num?)?.toDouble() ?? 0.0;
-                final hasAmount =
-                    (p['amount'] is num) && (p['amount'] as num) > 0;
-                final due = _asDate(p['dueDate']);
-                final frequency = (p['frequency'] ?? '').toString();
-
-                String dueText = 'No due date';
-                if (due != null) {
-                  final daysUntil = due.difference(now).inDays;
-                  if (daysUntil == 0) {
-                    dueText = 'Due today';
-                  } else if (daysUntil == 1) {
-                    dueText = 'Due tomorrow';
-                  } else {
-                    dueText = 'Due in $daysUntil days';
-                  }
-                }
-
-                return ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  dense: true,
-                  title: Text(
-                    name,
-                    style: const TextStyle(fontWeight: FontWeight.w600),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  subtitle: Text(
-                    '$dueText${frequency.isEmpty ? '' : ' • $frequency'}',
-                    style: TextStyle(color: Colors.grey.shade700),
-                  ),
-                  trailing: Text(
-                    hasAmount ? '₱${amount.toStringAsFixed(2)}' : 'Variable',
-                    style: TextStyle(
+    return SectionCard(
+      title: 'Finance Overview',
+      icon: Icons.account_balance_wallet_outlined,
+      iconColor: const Color(0xFF16A34A),
+      badge: upcomingLabel,
+      action: TextButton(
+          onPressed: () =>
+              widget.onNavigate(_DashboardScreenState._adminFinanceTab),
+          child: const Text('Open')),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Wrap(spacing: 8, runSpacing: 8, children: [
+          SizedBox(
+              width: 150,
+              child: _MiniMetric(
+                  label: 'MTD Net Sales*',
+                  value: peso.format(mtdNetSales),
+                  color: Colors.green,
+                  description:
+                      'Month-to-date net sales from daily sales data. Order-level discounts/gross may be unavailable in this source.')),
+          SizedBox(
+              width: 150,
+              child: _MiniMetric(
+                  label: 'COGS*',
+                  value: peso.format(cogsValue),
+                  color: Colors.blue,
+                  description:
+                      'COGS for this snapshot: Actual sale-consumption movements when available; otherwise Estimated recipe/menu costing fallback.')),
+          SizedBox(
+              width: 150,
+              child: _MiniMetric(
+                  label: 'OpEx (MTD)',
+                  value: peso.format(totalMonthlyExpenses),
+                  color: Colors.red,
+                  description:
+                      'Month-to-date operating expenses using an expense-category heuristic.')),
+          SizedBox(
+              width: 150,
+              child: _MiniMetric(
+                  label: 'Net Profit*',
+                  value: peso.format(netProfitMtd),
+                  color: netProfitMtd >= 0 ? Colors.teal : Colors.red,
+                  description:
+                      'Estimated month-to-date net profit (net sales minus COGS* and operating expenses).')),
+          SizedBox(
+              width: 150,
+              child: _MiniMetric(
+                  label: 'Margin*',
+                  value: '${margin.toStringAsFixed(1)}%',
+                  color: netProfitMtd >= 0 ? Colors.teal : Colors.red,
+                  description:
+                      'Net profit margin based on the COGS* source shown above.')),
+          SizedBox(
+              width: 150,
+              child: _MiniMetric(
+                  label: 'Payables Due',
+                  value: peso.format(payablesKpi.outstanding),
+                  color: Colors.orange,
+                  description:
+                      'Outstanding payables/bills due, including overdue/upcoming amounts when available.')),
+          SizedBox(
+              width: 150,
+              child: _MiniMetric(
+                  label: overdue > 0 ? 'Overdue' : 'Unpaid',
+                  value: overdue > 0 ? peso.format(overdue) : '$unpaidCount',
+                  color: overdue > 0 ? Colors.red : Colors.purple)),
+        ]),
+        Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: Text(
+                '*Net sales from daily sales (discount/gross may be unavailable). COGS: ${cogs.sourceLabel}${cogs.isEstimated ? ' (estimated fallback)' : ''}; separate from menu-costing gross margin. Operating expenses heuristic.',
+                style: TextStyle(fontSize: 11, color: Colors.grey.shade600))),
+        const SizedBox(height: 12),
+        const Divider(height: 1),
+        const SizedBox(height: 8),
+        if (upcomingPayables.isEmpty)
+          Text('No bills due within 7 days.',
+              style: TextStyle(color: Colors.grey.shade700, fontSize: 12))
+        else
+          ...upcomingPayables.take(3).map((p) {
+            final name = (p['name'] ?? 'Unknown').toString();
+            final isVariable = FinanceMetrics.isVariablePayable(p);
+            final amount = FinanceMetrics.amountOf(p);
+            final estimate = FinanceMetrics.estimatedAmountOf(p);
+            final due = _asDate(p['dueDate']);
+            final frequency = (p['frequency'] ?? '').toString();
+            String dueText = 'No due date';
+            if (due != null) {
+              final daysUntil = due.difference(now).inDays;
+              if (daysUntil < 0)
+                dueText = '${daysUntil.abs()} days overdue';
+              else if (daysUntil == 0)
+                dueText = 'Due today';
+              else if (daysUntil == 1)
+                dueText = 'Due tomorrow';
+              else
+                dueText = 'Due in $daysUntil days';
+            }
+            final amountText = isVariable
+                ? (amount > 0
+                    ? currency.format(amount)
+                    : (estimate > 0
+                        ? '~${currency.format(estimate)} est.'
+                        : 'Amount varies'))
+                : currency.format(amount);
+            return ListTile(
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+              title: Text(name,
+                  style: const TextStyle(
+                      fontWeight: FontWeight.w600, fontSize: 13)),
+              subtitle: Text(
+                  '$dueText${frequency.isNotEmpty ? ' · $frequency' : ''}',
+                  style: const TextStyle(fontSize: 12)),
+              trailing: Text(amountText,
+                  style: TextStyle(
                       fontWeight: FontWeight.w700,
-                      color: hasAmount ? null : Colors.grey,
-                    ),
-                  ),
-                );
-              }),
-          ],
-        ),
-      ),
+                      color:
+                          (isVariable && estimate <= 0) ? Colors.grey : null)),
+            );
+          }),
+      ]),
     );
   }
 
-  Widget _buildNotesCard(BuildContext context) {
+  /// Inline Sage briefing summary for the dashboard.
+  ///
+  /// Renders the latest persisted briefing from [AIAssistantProvider] rather
+  /// than the modal [SageBriefingCard] dialog, which cannot be embedded in a
+  /// scroll view. "Open Sage" hands off to the side panel for the full view.
+  Widget _buildSageBriefingCard(BuildContext context) {
+    final assistant = context.watch<AIAssistantProvider>();
+    final briefing = assistant.latestBriefing;
+
     return Card(
       elevation: 0,
       color: Colors.white,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(16),
-        side: BorderSide(color: Colors.grey.shade200),
+        side: BorderSide(color: Colors.blue.shade200),
       ),
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -4100,330 +2177,130 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
           children: [
             Row(
               children: [
-                Icon(
-                  Icons.sticky_note_2_outlined,
-                  color: Colors.amber.shade600,
-                  size: 20,
-                ),
+                const Icon(Icons.auto_awesome_rounded,
+                    color: Color(0xFF2563EB), size: 20),
                 const SizedBox(width: 8),
-                Text(
-                  'Notes',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.grey.shade800,
-                  ),
+                const Text(
+                  'Sage Briefing',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                 ),
                 const Spacer(),
-                if (_notes.isNotEmpty)
+                if (briefing != null)
                   Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 4,
-                    ),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                     decoration: BoxDecoration(
-                      color: Colors.grey.shade100,
+                      color: Colors.blue.shade50,
                       borderRadius: BorderRadius.circular(999),
                     ),
                     child: Text(
-                      '${_notes.length} note${_notes.length != 1 ? 's' : ''}',
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.grey.shade700,
+                      briefing.periodLabel,
+                      style: const TextStyle(
+                        color: Color(0xFF2563EB),
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
                       ),
                     ),
                   ),
-                const SizedBox(width: 8),
-                IconButton(
-                  onPressed: () => _showAddNoteDialog(context),
-                  icon: Icon(Icons.add_circle_outline,
-                      color: Colors.amber.shade600),
-                  iconSize: 24,
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(),
-                  tooltip: 'Add note',
-                ),
               ],
             ),
             const SizedBox(height: 12),
-            if (_notes.isEmpty)
-              Container(
-                padding: const EdgeInsets.all(24),
-                decoration: BoxDecoration(
-                  color: Colors.grey.shade50,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Center(
-                  child: Column(
-                    children: [
-                      Icon(
-                        Icons.sticky_note_2_outlined,
-                        size: 40,
-                        color: Colors.grey.shade400,
+            if (briefing == null)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'No Sage briefing yet.',
+                      style: TextStyle(
+                        color: Colors.grey.shade800,
+                        fontWeight: FontWeight.w600,
                       ),
-                      const SizedBox(height: 8),
-                      Text(
-                        'No notes yet',
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Check back during the next scheduled briefing window.',
+                      style:
+                          TextStyle(color: Colors.grey.shade700, fontSize: 12),
+                    ),
+                  ],
+                ),
+              )
+            else ...[
+              Text(
+                DateFormat('MMM d, yyyy • h:mm a').format(briefing.generatedAt),
+                style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
+              ),
+              const SizedBox(height: 10),
+              Text(
+                briefing.summary,
+                maxLines: 4,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 13,
+                  height: 1.6,
+                  color: Colors.grey.shade800,
+                ),
+              ),
+              if (briefing.recommendation.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.amber.shade50,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.amber.shade200),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        "Today's Recommendation",
                         style: TextStyle(
-                          color: Colors.grey.shade600,
-                          fontWeight: FontWeight.w500,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 0.5,
+                          color: Colors.amber,
                         ),
                       ),
                       const SizedBox(height: 4),
                       Text(
-                        'Tap + to add a note',
-                        style: TextStyle(
-                          color: Colors.grey.shade500,
+                        briefing.recommendation,
+                        style: const TextStyle(
                           fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xFF334155),
                         ),
                       ),
                     ],
                   ),
                 ),
-              )
-            else
-              LayoutBuilder(
-                builder: (context, constraints) {
-                  final isVeryNarrow = constraints.maxWidth < 400;
-                  final isNarrow = constraints.maxWidth < 600;
-                  final crossAxisCount = isVeryNarrow ? 1 : (isNarrow ? 2 : 4);
-
-                  return Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: _notes.reversed.map((note) {
-                      final header = note['header']?.toString() ?? 'Untitled';
-                      final body = note['body']?.toString() ?? '';
-                      final createdAt = DateTime.tryParse(
-                              note['createdAt']?.toString() ?? '') ??
-                          DateTime.now();
-                      final dateStr =
-                          '${createdAt.month.toString().padLeft(2, '0')}/${createdAt.day.toString().padLeft(2, '0')}/${createdAt.year}';
-                      final timeStr =
-                          '${createdAt.hour.toString().padLeft(2, '0')}:${createdAt.minute.toString().padLeft(2, '0')}';
-
-                      final bodyPreview = body.length > 50
-                          ? '${body.substring(0, 50)}...'
-                          : body;
-
-                      final itemWidth =
-                          (constraints.maxWidth - (crossAxisCount - 1) * 8) /
-                              crossAxisCount;
-
-                      return SizedBox(
-                        width: itemWidth,
-                        child: InkWell(
-                          onTap: () => _showEditNoteDialog(context, note),
-                          borderRadius: BorderRadius.circular(12),
-                          child: Container(
-                            padding: const EdgeInsets.all(12),
-                            decoration: BoxDecoration(
-                              color: Colors.amber.shade50,
-                              borderRadius: BorderRadius.circular(12),
-                              border: Border.all(color: Colors.amber.shade100),
-                            ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
-                                  children: [
-                                    Icon(
-                                      Icons.sticky_note_2_outlined,
-                                      color: Colors.amber.shade600,
-                                      size: 16,
-                                    ),
-                                    const SizedBox(width: 8),
-                                    Expanded(
-                                      child: Text(
-                                        header,
-                                        style: const TextStyle(
-                                          fontWeight: FontWeight.w700,
-                                          fontSize: 14,
-                                        ),
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                      ),
-                                    ),
-                                    Text(
-                                      '$dateStr $timeStr',
-                                      style: TextStyle(
-                                        fontSize: 10,
-                                        color: Colors.grey.shade600,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                                if (body.isNotEmpty) ...[
-                                  const SizedBox(height: 6),
-                                  Text(
-                                    bodyPreview,
-                                    style: TextStyle(
-                                      fontSize: 12,
-                                      color: Colors.grey.shade700,
-                                    ),
-                                    maxLines: 2,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ],
-                              ],
-                            ),
-                          ),
-                        ),
-                      );
-                    }).toList(),
-                  );
-                },
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Future<void> _showAddNoteDialog(BuildContext context) async {
-    final headerController = TextEditingController();
-    final bodyController = TextEditingController();
-
-    await showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Add Note'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: headerController,
-              decoration: const InputDecoration(
-                labelText: 'Title',
-                hintText: 'Enter note title',
-                border: OutlineInputBorder(),
-              ),
-              maxLines: 1,
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: bodyController,
-              decoration: const InputDecoration(
-                labelText: 'Content',
-                hintText: 'Enter note content',
-                border: OutlineInputBorder(),
-              ),
-              maxLines: 5,
-              minLines: 3,
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () {
-              if (headerController.text.trim().isNotEmpty) {
-                _addNote(
-                  headerController.text.trim(),
-                  bodyController.text.trim(),
-                );
-                Navigator.of(context).pop();
-              }
-            },
-            child: const Text('Save'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _showEditNoteDialog(
-      BuildContext context, Map<String, dynamic> note) async {
-    final headerController =
-        TextEditingController(text: note['header']?.toString() ?? '');
-    final bodyController =
-        TextEditingController(text: note['body']?.toString() ?? '');
-    final noteId = note['id']?.toString() ?? '';
-
-    await showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Edit Note'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: headerController,
-              decoration: const InputDecoration(
-                labelText: 'Title',
-                hintText: 'Enter note title',
-                border: OutlineInputBorder(),
-              ),
-              maxLines: 1,
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: bodyController,
-              decoration: const InputDecoration(
-                labelText: 'Content',
-                hintText: 'Enter note content',
-                border: OutlineInputBorder(),
-              ),
-              maxLines: 5,
-              minLines: 3,
-            ),
-          ],
-        ),
-        actions: [
-          TextButton.icon(
-            onPressed: () async {
-              final confirmed = await showDialog<bool>(
-                context: context,
-                builder: (context) => AlertDialog(
-                  title: const Text('Delete Note?'),
-                  content:
-                      const Text('Are you sure you want to delete this note?'),
-                  actions: [
-                    TextButton(
-                      onPressed: () => Navigator.of(context).pop(false),
-                      child: const Text('Cancel'),
+              ],
+              const SizedBox(height: 14),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () =>
+                          assistant.openSageBriefingPanel(showHistory: false),
+                      child: const Text('Open Sage'),
                     ),
-                    FilledButton(
-                      style: FilledButton.styleFrom(
-                        backgroundColor: Colors.red,
-                      ),
-                      onPressed: () => Navigator.of(context).pop(true),
-                      child: const Text('Delete'),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: () =>
+                          assistant.openSageBriefingPanel(showHistory: true),
+                      child: const Text('View All Briefings'),
                     ),
-                  ],
-                ),
-              );
-              if (confirmed == true) {
-                _deleteNote(noteId);
-                Navigator.of(context).pop();
-              }
-            },
-            icon: const Icon(Icons.delete_forever, color: Colors.red),
-            label: const Text('Delete', style: TextStyle(color: Colors.red)),
-          ),
-          const Spacer(),
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () {
-              if (headerController.text.trim().isNotEmpty) {
-                _updateNote(
-                  noteId,
-                  headerController.text.trim(),
-                  bodyController.text.trim(),
-                );
-                Navigator.of(context).pop();
-              }
-            },
-            child: const Text('Save'),
-          ),
-        ],
+                  ),
+                ],
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }
@@ -4434,199 +2311,6 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
     if (value is Timestamp) return value.toDate();
     if (value is String) return DateTime.tryParse(value);
     return null;
-  }
-
-  Widget _buildIncompleteOrders(BuildContext context) {
-    // Calculate pending incomplete orders count for the Complete All button
-    final pendingCount = _incompleteOrders.length;
-    final canCompleteAll = _isAdmin && pendingCount > 0;
-    const displayLimit = 10;
-    final hasMore = _incompleteOrders.length > displayLimit;
-
-    return Card(
-      elevation: 0,
-      color: Colors.white,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(16),
-        side: BorderSide(color: Colors.red.shade200),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Row(
-                    children: [
-                      Icon(Icons.pending_actions_outlined, color: Colors.red),
-                      const SizedBox(width: 8),
-                      const Text(
-                        'Incomplete Orders',
-                        style: TextStyle(
-                            fontSize: 16, fontWeight: FontWeight.bold),
-                      ),
-                      const SizedBox(width: 8),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 8, vertical: 3),
-                        decoration: BoxDecoration(
-                          color: Colors.red.withValues(alpha: 0.12),
-                          borderRadius: BorderRadius.circular(999),
-                        ),
-                        child: Text(
-                          _incompleteOrders.length.toString(),
-                          style: const TextStyle(fontWeight: FontWeight.w700),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                if (canCompleteAll && _completingOrderId != 'incomplete_all')
-                  TextButton.icon(
-                    onPressed: _completeAllIncompleteOrders,
-                    icon: const Icon(Icons.done_all, size: 18),
-                    label: const Text('Complete All'),
-                    style: TextButton.styleFrom(
-                      foregroundColor: Colors.green,
-                      padding: const EdgeInsets.symmetric(horizontal: 8),
-                    ),
-                  )
-                else if (_completingOrderId == 'incomplete_all')
-                  const SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Orders from previous days that need completion:',
-              style: TextStyle(color: Colors.grey.shade700, fontSize: 12),
-            ),
-            const SizedBox(height: 8),
-            ..._incompleteOrders.take(displayLimit).map((order) {
-              final id = (order['id'] ?? '').toString();
-              final total = (order['totalAmount'] as num?)?.toDouble() ?? 0.0;
-              final createdAt = _asDate(order['createdAt']);
-              final isCompleting = _completingOrderId == id;
-              final isNarrow = MediaQuery.of(context).size.width < 420;
-
-              String dateText = 'Unknown date';
-              if (createdAt != null) {
-                final daysAgo = DateTime.now().difference(createdAt).inDays;
-                dateText = daysAgo == 1 ? 'Yesterday' : '$daysAgo days ago';
-              }
-
-              return ListTile(
-                contentPadding: EdgeInsets.zero,
-                minVerticalPadding: 10,
-                leading:
-                    const Icon(Icons.receipt_long_outlined, color: Colors.red),
-                title: Text(
-                  id.isEmpty
-                      ? 'Order'
-                      : 'Order #${id.substring(0, id.length > 6 ? 6 : id.length)}',
-                  style: const TextStyle(fontWeight: FontWeight.w600),
-                ),
-                subtitle: Text('Created: $dateText'),
-                onTap: (_isAdmin || _isApprovedStaff)
-                    ? () => _showOrderDetails(order)
-                    : null,
-                trailing: ConstrainedBox(
-                  constraints: BoxConstraints(
-                    maxWidth: isNarrow ? 88 : 140,
-                  ),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Text('₱${total.toStringAsFixed(2)}'),
-                      const SizedBox(height: 4),
-                      SizedBox(
-                        height: 28,
-                        child: isNarrow
-                            ? IconButton(
-                                tooltip: 'Complete',
-                                onPressed: isCompleting
-                                    ? null
-                                    : () => _completeOrder(id),
-                                icon: isCompleting
-                                    ? const SizedBox(
-                                        width: 16,
-                                        height: 16,
-                                        child: CircularProgressIndicator(
-                                          strokeWidth: 2,
-                                        ),
-                                      )
-                                    : const Icon(Icons.check_circle,
-                                        color: Colors.green),
-                              )
-                            : FittedBox(
-                                fit: BoxFit.scaleDown,
-                                alignment: Alignment.centerRight,
-                                child: SizedBox(
-                                  height: 28,
-                                  child: ElevatedButton(
-                                    onPressed: isCompleting
-                                        ? null
-                                        : () => _completeOrder(id),
-                                    style: ElevatedButton.styleFrom(
-                                      backgroundColor: Colors.green,
-                                      foregroundColor: Colors.white,
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 10,
-                                      ),
-                                      tapTargetSize:
-                                          MaterialTapTargetSize.shrinkWrap,
-                                      visualDensity: VisualDensity.compact,
-                                    ),
-                                    child: isCompleting
-                                        ? const SizedBox(
-                                            width: 14,
-                                            height: 14,
-                                            child: CircularProgressIndicator(
-                                              strokeWidth: 2,
-                                              color: Colors.white,
-                                            ),
-                                          )
-                                        : const Text(
-                                            'Complete',
-                                            style: TextStyle(fontSize: 12),
-                                          ),
-                                  ),
-                                ),
-                              ),
-                      ),
-                    ],
-                  ),
-                ),
-              );
-            }),
-            if (hasMore) ...[
-              const SizedBox(height: 8),
-              const Divider(height: 1),
-              const SizedBox(height: 8),
-              Center(
-                child: TextButton.icon(
-                  onPressed: () => _showAllOrdersDialog(
-                    context,
-                    title: 'All Incomplete Orders',
-                    orders: _incompleteOrders,
-                    emptyMessage: 'No incomplete orders.',
-                  ),
-                  icon: const Icon(Icons.expand_more),
-                  label: Text('View All (${_incompleteOrders.length})'),
-                ),
-              ),
-            ],
-          ],
-        ),
-      ),
-    );
   }
 
   Widget _buildLowStock(BuildContext context) {
@@ -4641,140 +2325,128 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
       return current <= 0;
     }).toList();
 
-    return Card(
-      elevation: 0,
-      color: Colors.white,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(16),
-        side: BorderSide(color: Colors.grey.shade200),
+    return SectionCard(
+      title: 'Inventory Overview',
+      icon: Icons.inventory_2_outlined,
+      iconColor: const Color(0xFFF59E0B),
+      badge: _lowStock.isEmpty
+          ? null
+          : '${lowStockItems.length + outOfStockItems.length} alerts',
+      action: TextButton(
+        onPressed: () =>
+            widget.onNavigate(_DashboardScreenState._adminInventoryTab),
+        child: const Text('Open'),
       ),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Row(
-                    children: [
-                      const Icon(Icons.warning_amber_rounded,
-                          color: Colors.orange),
-                      const SizedBox(width: 8),
-                      const Text(
-                        'Low Stock',
-                        style: TextStyle(
-                            fontSize: 16, fontWeight: FontWeight.bold),
-                      ),
-                      const SizedBox(width: 8),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 8, vertical: 3),
-                        decoration: BoxDecoration(
-                          color: Colors.orange.withValues(alpha: 0.12),
-                          borderRadius: BorderRadius.circular(999),
-                        ),
-                        child: Text(
-                          lowStockItems.length.toString(),
-                          style: const TextStyle(fontWeight: FontWeight.w700),
-                        ),
-                      ),
-                    ],
-                  ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Same dense metric strip as the Finance Overview, so the two
+          // side-by-side cards read as a matched pair.
+          Row(
+            children: [
+              Expanded(
+                child: _MiniMetric(
+                  label: 'Tracked Items',
+                  value: '${_model?.totalInventoryItems ?? _lowStock.length}',
+                  color: Colors.blueGrey,
                 ),
-                TextButton(
-                  onPressed: () => widget.onNavigate(2),
-                  child: const Text('Open'),
+              ),
+              Expanded(
+                child: _MiniMetric(
+                  label: 'Low Stock',
+                  value: '${lowStockItems.length}',
+                  color: Colors.orange,
                 ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            if (lowStockItems.isEmpty && outOfStockItems.isEmpty)
-              Text(
-                'All good — no stock issues.',
-                style: TextStyle(color: Colors.grey.shade700),
-              )
-            else ...[
-              // Out of Stock section
-              if (outOfStockItems.isNotEmpty) ...[
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: Colors.red.withValues(alpha: 0.08),
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: Colors.red.shade200),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(Icons.inventory_2_outlined,
-                          color: Colors.red, size: 18),
-                      const SizedBox(width: 8),
-                      Text(
-                        'Out of Stock (${outOfStockItems.length})',
-                        style: TextStyle(
-                          color: Colors.red.shade700,
-                          fontWeight: FontWeight.w600,
-                          fontSize: 13,
-                        ),
-                      ),
-                    ],
-                  ),
+              ),
+              Expanded(
+                child: _MiniMetric(
+                  label: 'Out of Stock',
+                  value: '${outOfStockItems.length}',
+                  color: Colors.red,
                 ),
-                const SizedBox(height: 8),
-                ...outOfStockItems.take(3).map(
-                    (item) => _buildStockItemTile(item, isOutOfStock: true)),
-                if (outOfStockItems.length > 3) ...[
-                  const SizedBox(height: 4),
+              ),
+              Expanded(
+                child: _MiniMetric(
+                  label: 'Stock Value',
+                  value: NumberFormat.currency(symbol: '₱', decimalDigits: 0)
+                      .format(_model?.totalInventoryValue ?? 0),
+                  color: const Color(0xFF16A34A),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          const Divider(height: 1),
+          const SizedBox(height: 8),
+          if (lowStockItems.isEmpty && outOfStockItems.isEmpty)
+            Text(
+              'All good — no stock issues.',
+              style: TextStyle(color: Colors.grey.shade700, fontSize: 12),
+            )
+          else ...[
+            // Out of Stock section
+            if (outOfStockItems.isNotEmpty) ...[
+              Row(
+                children: [
+                  Icon(Icons.inventory_2_outlined,
+                      color: Colors.red.shade700, size: 16),
+                  const SizedBox(width: 6),
                   Text(
+                    'Out of Stock (${outOfStockItems.length})',
+                    style: TextStyle(
+                      color: Colors.red.shade700,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              ...outOfStockItems
+                  .take(3)
+                  .map((item) => _buildStockItemTile(item, isOutOfStock: true)),
+              if (outOfStockItems.length > 3)
+                Padding(
+                  padding: const EdgeInsets.only(top: 2, left: 20),
+                  child: Text(
                     '+${outOfStockItems.length - 3} more',
-                    style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
-                  ),
-                ],
-                const SizedBox(height: 12),
-              ],
-
-              // Low Stock section
-              if (lowStockItems.isNotEmpty) ...[
-                if (outOfStockItems.isNotEmpty) const Divider(height: 1),
-                if (outOfStockItems.isNotEmpty) const SizedBox(height: 12),
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: Colors.orange.withValues(alpha: 0.08),
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: Colors.orange.shade200),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(Icons.trending_down, color: Colors.orange, size: 18),
-                      const SizedBox(width: 8),
-                      Text(
-                        'Low Stock (${lowStockItems.length})',
-                        style: TextStyle(
-                          color: Colors.orange.shade700,
-                          fontWeight: FontWeight.w600,
-                          fontSize: 13,
-                        ),
-                      ),
-                    ],
+                    style: TextStyle(color: Colors.grey.shade600, fontSize: 11),
                   ),
                 ),
-                const SizedBox(height: 8),
-                ...lowStockItems.take(3).map(
-                    (item) => _buildStockItemTile(item, isOutOfStock: false)),
-                if (lowStockItems.length > 3) ...[
-                  const SizedBox(height: 4),
+              const SizedBox(height: 10),
+            ],
+
+            // Low Stock section
+            if (lowStockItems.isNotEmpty) ...[
+              Row(
+                children: [
+                  Icon(Icons.trending_down,
+                      color: Colors.orange.shade700, size: 16),
+                  const SizedBox(width: 6),
                   Text(
-                    '+${lowStockItems.length - 3} more',
-                    style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
+                    'Low Stock (${lowStockItems.length})',
+                    style: TextStyle(
+                      color: Colors.orange.shade700,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 12,
+                    ),
                   ),
                 ],
-              ],
+              ),
+              const SizedBox(height: 6),
+              ...lowStockItems.take(3).map(
+                  (item) => _buildStockItemTile(item, isOutOfStock: false)),
+              if (lowStockItems.length > 3)
+                Padding(
+                  padding: const EdgeInsets.only(top: 2, left: 20),
+                  child: Text(
+                    '+${lowStockItems.length - 3} more',
+                    style: TextStyle(color: Colors.grey.shade600, fontSize: 11),
+                  ),
+                ),
             ],
           ],
-        ),
+        ],
       ),
     );
   }
@@ -4789,7 +2461,7 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
       onTap: () => _showInventoryItemDetails(item),
       borderRadius: BorderRadius.circular(8),
       child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
+        padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
         child: Row(
           children: [
             Container(
@@ -4935,7 +2607,8 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
             FilledButton.icon(
               onPressed: () {
                 Navigator.of(context).pop();
-                widget.onNavigate(2); // Navigate to Inventory
+                widget.onNavigate(_DashboardScreenState
+                    ._adminInventoryTab); // Navigate to Inventory
               },
               icon: const Icon(Icons.inventory, size: 18),
               label: const Text('View Inventory'),
@@ -4971,468 +2644,361 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
     );
   }
 
-  Widget _buildTodayOrders(BuildContext context) {
-    // Calculate pending orders count for the Complete All button
-    final pendingCount = _todayOrders.where((o) {
-      final status = (o['status'] ?? '').toString().trim().toLowerCase();
-      return status == 'pending';
-    }).length;
-    final canCompleteAll = _isAdmin && pendingCount > 0;
-    const displayLimit = 10;
-    final hasMore = _todayOrders.length > displayLimit;
+  @override
+  Widget build(BuildContext context) {
+    return RefreshIndicator(
+      onRefresh: _loadDashboard,
+      child: _isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : _error != null
+              ? ListView(
+                  padding: const EdgeInsets.all(16),
+                  children: [
+                    Text(
+                      'Failed to load dashboard: $_error',
+                      style: const TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                    const SizedBox(height: 12),
+                    ElevatedButton(
+                      onPressed: _loadDashboard,
+                      child: const Text('Retry'),
+                    ),
+                  ],
+                )
+              : ListView(
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+                  children: [
+                    _buildKpis(context),
+                    const SizedBox(height: 16),
+                    _buildSageBriefingCard(context),
+                    const SizedBox(height: 16),
+                    // Finance – Inventory at ≥900px, stacked below that.
+                    LayoutBuilder(
+                      builder: (context, constraints) {
+                        final isWide = constraints.maxWidth >= 900;
+                        if (isWide) {
+                          return Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Expanded(child: _buildFinanceOverview(context)),
+                              const SizedBox(width: 16),
+                              Expanded(child: _buildLowStock(context)),
+                            ],
+                          );
+                        }
+                        return Column(
+                          children: [
+                            _buildFinanceOverview(context),
+                            const SizedBox(height: 16),
+                            _buildLowStock(context),
+                          ],
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 16),
+                    _buildStaffCard(context),
+                    const SizedBox(height: 16),
+                    // Menu performance – Sales trend at ≥900px.
+                    LayoutBuilder(
+                      builder: (context, constraints) {
+                        final isWide = constraints.maxWidth >= 900;
+                        if (isWide) {
+                          return Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Expanded(child: _buildMenuPerformance(context)),
+                              const SizedBox(width: 16),
+                              Expanded(child: _buildSalesTrend(context)),
+                            ],
+                          );
+                        }
+                        return Column(
+                          children: [
+                            _buildMenuPerformance(context),
+                            const SizedBox(height: 16),
+                            _buildSalesTrend(context),
+                          ],
+                        );
+                      },
+                    ),
+                  ],
+                ),
+    );
+  }
+}
 
-    return Card(
-      elevation: 0,
-      color: Colors.white,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(16),
-        side: BorderSide(color: Colors.grey.shade200),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
+/// One row of the "Incomplete Orders" card on the admin home dashboard.
+///
+/// Deliberately not a [ListTile]. ListTile's trailing slot is height-
+/// constrained, so stacking an amount above a button overflowed its box by a
+/// few pixels. Here the amount and the action sit side by side in a single
+/// [Row], so there is no vertical budget to miss and the row grows with its
+/// text instead of clipping it.
+class IncompleteOrderRow extends StatelessWidget {
+  const IncompleteOrderRow({
+    super.key,
+    required this.orderId,
+    required this.total,
+    required this.dateText,
+    required this.isCompleting,
+    required this.onTap,
+    required this.onComplete,
+  });
+
+  final String orderId;
+  final double total;
+  final String dateText;
+  final bool isCompleting;
+  final VoidCallback? onTap;
+  final VoidCallback onComplete;
+
+  static const double _wideActionWidth = 92;
+  static const double _narrowActionWidth = 32;
+  static const double _actionHeight = 32;
+
+  /// Total width needed before the labelled "Complete" button is worth using:
+  /// icon + gaps + a usable slice for the order id and amount.
+  static const double _wideLayoutMinWidth = _wideActionWidth + 150;
+
+  @override
+  Widget build(BuildContext context) {
+    // Decide the action shape from the space this row actually gets, not from
+    // the window. The row lives inside a card that is sometimes one column of a
+    // split layout, so window width alone can promise space it never receives.
+    return LayoutBuilder(
+      builder: (context, constraints) => _buildRow(constraints.maxWidth),
+    );
+  }
+
+  Widget _buildRow(double availableWidth) {
+// Below this the "Complete" label plus icon cannot fit beside the amount,
+    // so switch to the icon-only action.
+    // A 200px-wide row is the narrowest this card is ever laid out at; it is
+    // covered by the overflow tests.
+    final isNarrow = availableWidth < _wideLayoutMinWidth;
+    final shortId = orderId.length > 6 ? orderId.substring(0, 6) : orderId;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(10),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+            child: Row(
               children: [
-                Expanded(
-                  child: Row(
+                const Icon(Icons.receipt_long_outlined,
+                    color: Colors.red, size: 22),
+                const SizedBox(width: 12),
+                // Flexible, not Expanded: the text column gives up width to
+                // the amount and action when space runs short.
+                Flexible(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
                     children: [
-                      const Icon(Icons.receipt_long_outlined,
-                          color: Colors.indigo),
-                      const SizedBox(width: 8),
-                      const Text(
-                        'Today\'s Orders',
-                        style: TextStyle(
-                            fontSize: 16, fontWeight: FontWeight.bold),
+                      Text(
+                        orderId.isEmpty ? 'Order' : 'Order #$shortId',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontWeight: FontWeight.w600),
                       ),
-                      const SizedBox(width: 8),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 8, vertical: 3),
-                        decoration: BoxDecoration(
-                          color: Colors.indigo.withValues(alpha: 0.10),
-                          borderRadius: BorderRadius.circular(999),
-                        ),
-                        child: Text(
-                          _todayOrders.length.toString(),
-                          style: const TextStyle(fontWeight: FontWeight.w700),
+                      const SizedBox(height: 2),
+                      Text(
+                        'Created: $dateText',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.grey.shade700,
                         ),
                       ),
                     ],
                   ),
                 ),
-                if (canCompleteAll && _completingOrderId != 'all')
-                  TextButton.icon(
-                    onPressed: _completeAllOrders,
-                    icon: const Icon(Icons.done_all, size: 18),
-                    label: const Text('Complete All'),
-                    style: TextButton.styleFrom(
-                      foregroundColor: Colors.green,
-                      padding: const EdgeInsets.symmetric(horizontal: 8),
-                    ),
-                  )
-                else if (_completingOrderId == 'all')
-                  const SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2),
+                const SizedBox(width: 12),
+                // Flexible so an unusually long amount ellipsizes instead of
+                // pushing the row into a horizontal overflow.
+                Flexible(
+                  child: Text(
+                    '₱${total.toStringAsFixed(2)}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.end,
+                    style: const TextStyle(fontWeight: FontWeight.w700),
                   ),
+                ),
+                const SizedBox(width: 8),
+                SizedBox(
+                  width: isNarrow ? _narrowActionWidth : _wideActionWidth,
+                  height: _actionHeight,
+                  child: isNarrow
+                      ? _CompleteIconButton(
+                          isCompleting: isCompleting,
+                          onPressed: onComplete,
+                        )
+                      : _CompleteButton(
+                          isCompleting: isCompleting,
+                          onPressed: onComplete,
+                        ),
+                ),
               ],
             ),
-            const SizedBox(height: 8),
-            if (_todayOrders.isEmpty)
-              Text(
-                'No orders yet today.',
-                style: TextStyle(color: Colors.grey.shade700),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The green "Complete" action shown on wide layouts.
+class _CompleteButton extends StatelessWidget {
+  const _CompleteButton({
+    required this.isCompleting,
+    required this.onPressed,
+  });
+
+  final bool isCompleting;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    // SizedBox.expand rather than a FittedBox: FittedBox reports its child's
+    // intrinsic size upward, which is what pushed this button past its slot.
+    // The caller already hands over an exactly-sized box.
+    return SizedBox.expand(
+      child: ElevatedButton(
+        onPressed: isCompleting ? null : onPressed,
+        style: ElevatedButton.styleFrom(
+          backgroundColor: Colors.green,
+          foregroundColor: Colors.white,
+          padding: const EdgeInsets.symmetric(horizontal: 6),
+          minimumSize: Size.zero,
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          visualDensity: VisualDensity.compact,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(8),
+          ),
+        ),
+        child: isCompleting
+            ? const SizedBox(
+                width: 14,
+                height: 14,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: Colors.white,
+                ),
               )
-            else
-              ..._todayOrders.take(displayLimit).map((order) {
-                final id = (order['id'] ?? '').toString();
-                final total = (order['totalAmount'] as num?)?.toDouble() ?? 0.0;
-                final status = (order['status'] ?? 'unknown').toString();
-                final statusKey = status.trim().toLowerCase();
-                final canComplete = _isAdmin && statusKey == 'pending';
-                final isCompleting = _completingOrderId == id;
-                final isNarrow = MediaQuery.of(context).size.width < 420;
-                return ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  minVerticalPadding: 10,
-                  leading: const Icon(Icons.receipt_long_outlined),
-                  title: Text(
-                    id.isEmpty
-                        ? 'Order'
-                        : 'Order #${id.substring(0, id.length > 6 ? 6 : id.length)}',
-                    style: const TextStyle(fontWeight: FontWeight.w600),
-                  ),
-                  subtitle: Text(status),
-                  onTap: (_isAdmin || _isApprovedStaff)
-                      ? () => _showOrderDetails(order)
-                      : null,
-                  trailing: canComplete
-                      ? ConstrainedBox(
-                          constraints: BoxConstraints(
-                            maxWidth: isNarrow ? 88 : 140,
-                          ),
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            crossAxisAlignment: CrossAxisAlignment.end,
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Text('₱${total.toStringAsFixed(2)}'),
-                              const SizedBox(height: 4),
-                              SizedBox(
-                                height: 28,
-                                child: isNarrow
-                                    ? IconButton(
-                                        tooltip: 'Complete',
-                                        onPressed: isCompleting
-                                            ? null
-                                            : () => _completeOrder(id),
-                                        icon: isCompleting
-                                            ? const SizedBox(
-                                                width: 16,
-                                                height: 16,
-                                                child:
-                                                    CircularProgressIndicator(
-                                                  strokeWidth: 2,
-                                                ),
-                                              )
-                                            : const Icon(Icons.check_circle),
-                                      )
-                                    : FittedBox(
-                                        fit: BoxFit.scaleDown,
-                                        alignment: Alignment.centerRight,
-                                        child: SizedBox(
-                                          height: 28,
-                                          child: ElevatedButton(
-                                            onPressed: isCompleting
-                                                ? null
-                                                : () => _completeOrder(id),
-                                            style: ElevatedButton.styleFrom(
-                                              padding:
-                                                  const EdgeInsets.symmetric(
-                                                horizontal: 10,
-                                              ),
-                                              tapTargetSize:
-                                                  MaterialTapTargetSize
-                                                      .shrinkWrap,
-                                              visualDensity:
-                                                  VisualDensity.compact,
-                                            ),
-                                            child: isCompleting
-                                                ? const SizedBox(
-                                                    width: 14,
-                                                    height: 14,
-                                                    child:
-                                                        CircularProgressIndicator(
-                                                      strokeWidth: 2,
-                                                    ),
-                                                  )
-                                                : const Text(
-                                                    'Complete',
-                                                    style:
-                                                        TextStyle(fontSize: 12),
-                                                  ),
-                                          ),
-                                        ),
-                                      ),
-                              ),
-                            ],
-                          ),
-                        )
-                      : Text('₱${total.toStringAsFixed(2)}'),
-                );
-              }),
-            if (hasMore) ...[
-              const SizedBox(height: 8),
-              const Divider(height: 1),
-              const SizedBox(height: 8),
-              Center(
-                child: TextButton.icon(
-                  onPressed: () => _showAllOrdersDialog(
-                    context,
-                    title: 'All Today\'s Orders',
-                    orders: _todayOrders,
-                    emptyMessage: 'No orders today.',
-                  ),
-                  icon: const Icon(Icons.expand_more),
-                  label: Text('View All (${_todayOrders.length})'),
+            : const FittedBox(
+                // Scaling the label is safe — a FittedBox inside an
+                // already-fixed button cannot change the button's height.
+                fit: BoxFit.scaleDown,
+                child: Text(
+                  'Complete',
+                  maxLines: 1,
+                  style: TextStyle(fontSize: 12),
                 ),
               ),
-            ],
-          ],
-        ),
       ),
     );
   }
 }
 
-class _FinanceKpiItem extends StatelessWidget {
-  const _FinanceKpiItem({
+/// Icon-only variant for narrow layouts, where "Complete" will not fit.
+class _CompleteIconButton extends StatelessWidget {
+  const _CompleteIconButton({
+    required this.isCompleting,
+    required this.onPressed,
+  });
+
+  final bool isCompleting;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox.expand(
+      child: IconButton(
+        tooltip: 'Complete',
+        padding: EdgeInsets.zero,
+        onPressed: isCompleting ? null : onPressed,
+        icon: isCompleting
+            ? const SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : const Icon(Icons.check_circle, color: Colors.green),
+      ),
+    );
+  }
+}
+
+/// A label/value pair for dense metric strips inside [SectionCard].
+///
+/// Deliberately not tappable and not boxed, so a row of these reads as one
+/// band of figures rather than a row of competing cards.
+class _MiniMetric extends StatelessWidget {
+  const _MiniMetric({
     required this.label,
     required this.value,
-    required this.icon,
     required this.color,
+    this.description,
   });
 
   final String label;
   final String value;
-  final IconData icon;
   final Color color;
+  final String? description;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(icon, color: color, size: 20),
-          const SizedBox(height: 8),
-          Text(
+    final content = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        FittedBox(
+          fit: BoxFit.scaleDown,
+          alignment: Alignment.centerLeft,
+          child: Text(
             value,
-            style: const TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.bold,
-            ),
             maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-          const SizedBox(height: 2),
-          Text(
-            label,
             style: TextStyle(
-              fontSize: 12,
-              color: Colors.grey.shade700,
-              fontWeight: FontWeight.w500,
-            ),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _KpiCard extends StatelessWidget {
-  const _KpiCard({
-    required this.title,
-    required this.value,
-    required this.icon,
-    required this.color,
-  });
-
-  final String title;
-  final String value;
-  final IconData icon;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    final isPhoneNarrow = MediaQuery.of(context).size.width < 420;
-
-    return Card(
-      elevation: 0,
-      color: Colors.white,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: Padding(
-        padding: EdgeInsets.all(isPhoneNarrow ? 10 : 12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Container(
-              width: isPhoneNarrow ? 36 : 40,
-              height: isPhoneNarrow ? 36 : 40,
-              decoration: BoxDecoration(
-                color: color.withValues(alpha: 0.12),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Icon(
-                icon,
-                color: color,
-                size: isPhoneNarrow ? 20 : 24,
-              ),
-            ),
-            Text(
-              value,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: isPhoneNarrow ? 16 : 18,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 2),
-            Text(
-              title,
-              style: TextStyle(
-                color: Colors.grey.shade700,
-                fontWeight: FontWeight.w600,
-                fontSize: isPhoneNarrow ? 12 : 13,
-              ),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _CompactStatCard extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final String value;
-  final Color color;
-
-  const _CompactStatCard({
-    required this.icon,
-    required this.label,
-    required this.value,
-    required this.color,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 8),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: color.withValues(alpha: 0.2)),
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, color: color, size: 18),
-          const SizedBox(height: 2),
-          Text(
-            value,
-            style: TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.bold,
+              fontSize: 15,
+              fontWeight: FontWeight.w800,
               color: color,
             ),
           ),
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: 10,
-              color: color.withValues(alpha: 0.8),
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _RevenueStatItem extends StatelessWidget {
-  final String label;
-  final String value;
-  final IconData icon;
-  final Color color;
-
-  const _RevenueStatItem({
-    required this.label,
-    required this.value,
-    required this.icon,
-    required this.color,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(icon, color: color, size: 20),
-        const SizedBox(height: 6),
-        Text(
-          value,
-          style: TextStyle(
-            fontSize: 16,
-            fontWeight: FontWeight.bold,
-            color: color,
-          ),
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
         ),
         const SizedBox(height: 2),
         Text(
           label,
-          style: TextStyle(
-            fontSize: 11,
-            color: Colors.grey.shade600,
-            fontWeight: FontWeight.w500,
-          ),
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
-          textAlign: TextAlign.center,
+          style: TextStyle(
+            fontSize: 11,
+            color: Colors.grey[600],
+            fontWeight: FontWeight.w500,
+          ),
         ),
       ],
     );
-  }
-}
-
-class _ActionChip extends StatelessWidget {
-  const _ActionChip({
-    required this.icon,
-    required this.label,
-    required this.onTap,
-    this.color,
-    this.compact = false,
-  });
-
-  final IconData icon;
-  final String label;
-  final VoidCallback onTap;
-  final Color? color;
-  final bool compact;
-
-  @override
-  Widget build(BuildContext context) {
-    final chipColor = color ?? Colors.blue;
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(compact ? 10 : 14),
-      child: Container(
-        padding: compact
-            ? const EdgeInsets.symmetric(horizontal: 10, vertical: 8)
-            : const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(compact ? 10 : 14),
-          border: Border.all(color: chipColor.withValues(alpha: 0.3)),
-          color: chipColor.withValues(alpha: 0.08),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, color: chipColor, size: compact ? 18 : 20),
-            const SizedBox(width: 6),
-            Text(
-              label,
-              style: TextStyle(
-                fontWeight: FontWeight.w700,
-                fontSize: compact ? 13 : 14,
-                color: chipColor.withValues(alpha: 0.9),
-              ),
-            ),
-          ],
-        ),
-      ),
+    if (description == null || description!.isEmpty) return content;
+    return Tooltip(
+      message: description!,
+      triggerMode: TooltipTriggerMode.tap,
+      preferBelow: false,
+      showDuration: const Duration(seconds: 4),
+      child: content,
     );
   }
 }
 
+/// Staff meal ordering, which writes to its own `staff_meals` subcollection via
+/// [ApiService.createStaffMealOrder] rather than to `orders`.
+///
+/// Opened from the staff sidebar's "Staff meal" action.
 class StaffMealDialog extends StatefulWidget {
   const StaffMealDialog({Key? key}) : super(key: key);
 
@@ -5688,6 +3254,7 @@ class _StaffMealDialogState extends State<StaffMealDialog> {
     );
   }
 }
+
 // Global search result model
 class _GlobalSearchResult {
   final String id;
@@ -5706,6 +3273,7 @@ class _GlobalSearchResult {
     this.data,
   });
 }
+
 // Global search dialog
 class _GlobalSearchDialog extends StatefulWidget {
   final String query;

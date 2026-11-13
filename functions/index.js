@@ -1,11 +1,14 @@
 const crypto = require('crypto');
 
 const { onCall, HttpsError } = require('firebase-functions/v2/https');
-const { onDocumentCreated } = require('firebase-functions/v2/firestore');
+const {
+  onDocumentCreated,
+  onDocumentWritten,
+} = require('firebase-functions/v2/firestore');
+const { onSchedule } = require('firebase-functions/v2/scheduler');
 const { defineSecret } = require('firebase-functions/params');
 const admin = require('firebase-admin');
 const { Resend } = require('resend');
-
 admin.initializeApp();
 
 const RESEND_API_KEY = defineSecret('RESEND_API_KEY');
@@ -233,6 +236,7 @@ exports.createAccountAfterEmailOtp = onCall(async (request) => {
   }
 
   const displayName = [firstName, lastName].filter(Boolean).join(' ');
+  const normalizedPhone = normalizePhMobile(phoneNumber) || phoneNumber;
 
   await admin
     .firestore()
@@ -244,7 +248,8 @@ exports.createAccountAfterEmailOtp = onCall(async (request) => {
         lastName,
         displayName,
         eateryName,
-        phoneNumber,
+        phone: normalizedPhone,
+        phoneNumber: normalizedPhone,
         email,
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
       },
@@ -587,4 +592,16 @@ exports.onOrderCreatedAdjustMenuServings = onDocumentCreated(
       );
     }
   }
+);
+
+Object.assign(
+  exports,
+  createSmsFunctions({
+    admin,
+    onCall,
+    HttpsError,
+    onDocumentWritten,
+    onSchedule,
+    PHILSMS_API_TOKEN,
+  })
 );
