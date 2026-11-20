@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../../../../../models/inventory_item.dart';
+import '../../../../../theme.dart';
 import '../../data/models/stock_movement.dart';
 import '../../domain/usecases/health_score.dart';
 import '../../domain/usecases/inventory_value.dart';
@@ -46,7 +47,8 @@ class InventoryOverviewScreen extends StatelessWidget {
       if (m.type == StockMovementType.saleConsumption) {
         hasSaleConsumption = true;
         consumptionCost += cost;
-      } else if (m.type == StockMovementType.damaged || m.type == StockMovementType.writeOff) {
+      } else if (m.type == StockMovementType.damaged ||
+          m.type == StockMovementType.writeOff) {
         wasteCost += cost;
       }
     }
@@ -75,58 +77,72 @@ class InventoryOverviewScreen extends StatelessWidget {
                 _StatChip(
                   label: 'Value',
                   value: _formatCurrency(value),
-                  description: 'Estimated current inventory value based on on-hand quantity and unit cost.',
+                  description:
+                      'Estimated current inventory value based on on-hand quantity and unit cost.',
                   icon: Icons.account_balance_wallet_outlined,
-                  color: Colors.green,
+                  color: AppTheme.sageSuccess,
                   onTap: onViewReports,
                 ),
                 _StatChip(
                   label: 'Items',
                   value: '${activeItems.length}',
                   icon: Icons.inventory_2_outlined,
-                  color: Colors.blue,
+                  color: AppTheme.sageAccent,
                   onTap: onViewLowStock,
                 ),
                 _StatChip(
                   label: 'Low stock',
                   value: '${lowStock.length}',
                   icon: Icons.warning_amber_rounded,
-                  color: Colors.orange,
+                  color: AppTheme.warning,
                   onTap: onViewLowStock,
                 ),
                 _StatChip(
                   label: 'Out of stock',
                   value: '$outOfStock',
                   icon: Icons.remove_shopping_cart_outlined,
-                  color: Colors.red,
+                  color: AppTheme.error,
                   onTap: onViewLowStock,
                 ),
                 _StatChip(
                   label: 'Waste',
                   value: _formatCurrency(wasteCost),
                   icon: Icons.delete_sweep_outlined,
-                  color: Colors.redAccent,
+                  color: AppTheme.error,
                   onTap: onViewReports,
-                  description: 'Inventory waste cost from damaged/write-off records.' ,
+                  description:
+                      'Inventory waste cost from damaged/write-off records.',
                 ),
                 _StatChip(
-                  label: hasSaleConsumption ? 'Consumption' : 'Consumption (N/A)',
+                  label: 'Consumption',
                   value: _formatCurrency(consumptionCost),
                   icon: Icons.point_of_sale,
-                  color: Colors.indigo,
+                  color: AppTheme.sageCyan,
                   onTap: onViewReports,
-                  description: 'Inventory consumption cost from sale-consumption stock movements. N/A when not recorded.',
+                  description: hasSaleConsumption
+                      ? 'Ingredient use recorded from sales.'
+                      : 'This appears once ingredient use is recorded from sales.',
                 ),
               ],
             ),
           ),
           const SizedBox(height: 24),
-          _sectionHeader(context, 'Recent Activity', Colors.indigo, onViewMovements),
+          _sectionHeader(
+              context, 'Recent Activity', AppTheme.sageAccent, onViewMovements),
           Card(
             child: recent.isEmpty
                 ? const Padding(
                     padding: EdgeInsets.all(16),
-                    child: Center(child: Text('No recent movements')),
+                    child: Column(
+                      children: const [
+                        Text('No recent movements yet'),
+                        SizedBox(height: 4),
+                        Text(
+                          'Stock changes will show up here.',
+                          style: TextStyle(fontSize: 12),
+                        ),
+                      ],
+                    ),
                   )
                 : Column(
                     children: recent
@@ -136,7 +152,8 @@ class InventoryOverviewScreen extends StatelessWidget {
                   ),
           ),
           const SizedBox(height: 24),
-          _sectionHeader(context, 'Restock Suggestions', Colors.brown, onViewReports),
+          _sectionHeader(
+              context, 'Restock Suggestions', AppTheme.warning, onViewReports),
           Card(
             child: Padding(
               padding: const EdgeInsets.all(16),
@@ -151,11 +168,26 @@ class InventoryOverviewScreen extends StatelessWidget {
                   ),
                   const SizedBox(height: 12),
                   if (restock.isEmpty)
-                    Text(
-                      'No restock suggestions',
-                      style: TextStyle(
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                      ),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Nothing to restock yet',
+                          style: TextStyle(
+                            color:
+                                Theme.of(context).colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          "We'll suggest items here when stock gets low.",
+                          style: TextStyle(
+                            color:
+                                Theme.of(context).colorScheme.onSurfaceVariant,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
                     )
                   else
                     ...restock.take(5).map(
@@ -169,7 +201,7 @@ class InventoryOverviewScreen extends StatelessWidget {
                                   '${s.suggestedQtyBase.toStringAsFixed(2)} ${s.item.unit}',
                                   style: const TextStyle(
                                     fontWeight: FontWeight.bold,
-                                    color: Colors.brown,
+                                    color: AppTheme.warning,
                                   ),
                                 ),
                               ],
@@ -239,7 +271,13 @@ class _StatChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    Widget withTip(Widget child) => description == null ? child : Tooltip(message: description!, preferBelow: false, waitDuration: const Duration(milliseconds: 300), child: child);
+    Widget withTip(Widget child) => description == null
+        ? child
+        : Tooltip(
+            message: description!,
+            preferBelow: false,
+            waitDuration: const Duration(milliseconds: 300),
+            child: child);
     return withTip(Padding(
       padding: const EdgeInsets.only(right: 8),
       child: Material(
@@ -303,19 +341,23 @@ class _MovementTile extends StatelessWidget {
   (String, IconData, Color) _typeInfo() {
     switch (movement.type) {
       case StockMovementType.purchase:
-        return ('Purchase', Icons.add_circle_outline, Colors.green);
+        return ('Purchase', Icons.add_circle_outline, AppTheme.sageSuccess);
       case StockMovementType.adjustIncrease:
-        return ('Adjust (+)', Icons.arrow_upward, Colors.teal);
+        return ('Adjust (+)', Icons.arrow_upward, AppTheme.sageCyan);
       case StockMovementType.adjustDecrease:
-        return ('Adjust (-)', Icons.arrow_downward, Colors.deepOrange);
+        return ('Adjust (-)', Icons.arrow_downward, Colors.deepOrangeAccent);
       case StockMovementType.saleConsumption:
-        return ('Consumption', Icons.point_of_sale, Colors.indigo);
+        return ('Consumption', Icons.point_of_sale, AppTheme.sageAccent);
       case StockMovementType.writeOff:
-        return ('Write-off', Icons.delete_outline, Colors.red);
+        return ('Write-off', Icons.delete_outline, AppTheme.error);
       case StockMovementType.damaged:
-        return ('Damaged', Icons.broken_image_outlined, Colors.red);
+        return ('Damaged', Icons.broken_image_outlined, AppTheme.error);
       case StockMovementType.countCorrection:
-        return ('Count Correction', Icons.fact_check_outlined, Colors.blueGrey);
+        return (
+          'Count Correction',
+          Icons.fact_check_outlined,
+          Colors.blueGrey.shade300
+        );
     }
   }
 

@@ -3,12 +3,15 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../config/app_downloads.dart';
+import '../utils/web_download_stub.dart'
+    if (dart.library.js_interop) '../utils/web_download_web.dart';
 
 /// Install entry points for the SmartEat apps.
 ///
 /// Android installs from a signed APK and Windows from a ZIP archive, both
-/// served by Firebase Hosting. iOS installs as a PWA via Safari's "Add to
-/// Home Screen" because a native `.ipa` needs App Store/TestFlight signing.
+/// published as GitHub Release assets. iOS installs as a PWA via Safari's
+/// "Add to Home Screen" because a native `.ipa` needs App Store/TestFlight
+/// signing.
 ///
 /// The rows adapt to where the app is already running so users are not asked
 /// to install the build they are holding. [isWebOverride] and
@@ -95,14 +98,31 @@ class DownloadAppsCard extends StatelessWidget {
   }
 
   Future<void> _download(BuildContext context, String url) async {
-    final launched = await launchUrl(
-      Uri.parse(url),
-      mode: LaunchMode.externalApplication,
-    );
-    if (!context.mounted || launched) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Could not start the download.')),
-    );
+    if (kIsWeb) {
+      if (startWebDownload(url)) return;
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not start the download.')),
+      );
+      return;
+    }
+
+    final uri = Uri.parse(url);
+    try {
+      final launched = await launchUrl(
+        uri,
+        mode: LaunchMode.externalApplication,
+      );
+      if (!context.mounted || launched) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not start the download.')),
+      );
+    } catch (_) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not start the download.')),
+      );
+    }
   }
 
   void _showIosInstructions(BuildContext context) {

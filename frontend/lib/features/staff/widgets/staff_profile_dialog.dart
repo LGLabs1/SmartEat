@@ -86,8 +86,9 @@ class _StaffProfileDialogState extends State<_StaffProfileDialog> {
           Row(
             children: [
               CircleAvatar(
-                backgroundColor:
-                    widget.isAdmin ? Colors.indigo : Colors.grey.shade400,
+                backgroundColor: widget.isAdmin
+                    ? AppTheme.sageBlue
+                    : Colors.white.withValues(alpha: 0.14),
                 child: Icon(
                   widget.isAdmin
                       ? Icons.admin_panel_settings
@@ -111,7 +112,7 @@ class _StaffProfileDialogState extends State<_StaffProfileDialog> {
                       widget.email.isNotEmpty ? widget.email : 'No email',
                       style: TextStyle(
                         fontSize: 13,
-                        color: Colors.grey.shade600,
+                        color: Colors.white.withValues(alpha: 0.6),
                       ),
                     ),
                   ],
@@ -165,7 +166,9 @@ class _StaffProfileDialogState extends State<_StaffProfileDialog> {
             Icons.circle,
             'Status',
             widget.status.isNotEmpty ? widget.status : 'active',
-            statusColor: widget.status == 'active' ? Colors.green : Colors.grey,
+            statusColor: widget.status == 'active'
+                ? AppTheme.sageSuccess
+                : Colors.white.withValues(alpha: 0.6),
           ),
         ],
       ),
@@ -176,7 +179,10 @@ class _StaffProfileDialogState extends State<_StaffProfileDialog> {
       {Color? statusColor}) {
     return Row(
       children: [
-        Icon(icon, size: 20, color: statusColor ?? Colors.grey.shade600),
+        Icon(icon,
+            size: 20,
+            color:
+                statusColor ?? Theme.of(context).colorScheme.onSurfaceVariant),
         const SizedBox(width: 12),
         Expanded(
           flex: 2,
@@ -184,7 +190,7 @@ class _StaffProfileDialogState extends State<_StaffProfileDialog> {
             label,
             style: TextStyle(
               fontSize: 14,
-              color: Colors.grey.shade700,
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
             ),
           ),
         ),
@@ -195,7 +201,7 @@ class _StaffProfileDialogState extends State<_StaffProfileDialog> {
             style: TextStyle(
               fontSize: 14,
               fontWeight: FontWeight.w600,
-              color: statusColor ?? Colors.grey.shade900,
+              color: statusColor ?? Colors.white,
             ),
           ),
         ),
@@ -259,6 +265,8 @@ class _StaffProfileDialogState extends State<_StaffProfileDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final errorColor = Theme.of(context).colorScheme.error;
+
     return AlertDialog(
       title: Text('Staff profile: ${widget.userName}'),
       content: _isEditing ? _buildEditView() : _buildReadOnlyView(),
@@ -271,8 +279,8 @@ class _StaffProfileDialogState extends State<_StaffProfileDialog> {
           if (widget.onRemove != null)
             TextButton.icon(
               onPressed: widget.onRemove,
-              icon: const Icon(Icons.delete_forever, color: Colors.red),
-              label: const Text('Remove', style: TextStyle(color: Colors.red)),
+              icon: Icon(Icons.delete_forever, color: errorColor),
+              label: Text('Remove', style: TextStyle(color: errorColor)),
             ),
           FilledButton.icon(
             onPressed: () => setState(() => _isEditing = true),
@@ -301,4 +309,3 @@ class _StaffProfileDialogState extends State<_StaffProfileDialog> {
     );
   }
 }
-

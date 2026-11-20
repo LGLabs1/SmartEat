@@ -72,8 +72,7 @@ class _StaffTabState extends State<_StaffTab> {
     return ValueListenableBuilder<String>(
       valueListenable: notifier,
       builder: (context, query, _) {
-        final effective =
-            _localQuery.trim().isNotEmpty ? _localQuery : query;
+        final effective = _localQuery.trim().isNotEmpty ? _localQuery : query;
         return _buildBody(context, effective);
       },
     );
@@ -210,8 +209,8 @@ class _StaffTabState extends State<_StaffTab> {
                   child: _StaffDirectoryCard(
                     uid: entry.key,
                     data: entry.value,
-                    profile: profileByUid[entry.key] ??
-                        const <String, dynamic>{},
+                    profile:
+                        profileByUid[entry.key] ?? const <String, dynamic>{},
                     onTap: () => widget.onEditProfile(entry.key, entry.value),
                   ),
                 ),
@@ -278,7 +277,7 @@ class _StaffInviteCard extends StatelessWidget {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               decoration: BoxDecoration(
-                color: Colors.white,
+                color: Colors.white.withValues(alpha: 0.06),
                 borderRadius: BorderRadius.circular(8),
                 border: Border.all(color: scheme.outlineVariant),
               ),
@@ -411,10 +410,10 @@ class _StaffDirectoryCard extends StatelessWidget {
 
     return Card(
       elevation: 0,
-      color: Colors.white,
+      color: AppTheme.sagePanel,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(12),
-        side: BorderSide(color: Colors.grey.shade200),
+        side: BorderSide(color: Colors.white.withValues(alpha: 0.1)),
       ),
       child: ListTile(
         onTap: onTap,
@@ -511,14 +510,15 @@ class _StaffEmptyState extends StatelessWidget {
       padding: const EdgeInsets.symmetric(vertical: 40),
       child: Column(
         children: [
-          Icon(Icons.group_outlined, size: 56, color: Colors.grey.shade300),
+          Icon(Icons.group_outlined,
+              size: 56, color: Colors.white.withValues(alpha: 0.3)),
           const SizedBox(height: 12),
           Text(
             isFiltering
                 ? 'No staff match your search or filter.'
                 : 'No staff yet. Share the invite code above.',
             textAlign: TextAlign.center,
-            style: TextStyle(color: Colors.grey.shade600),
+            style: TextStyle(color: Colors.white.withValues(alpha: 0.6)),
           ),
         ],
       ),
@@ -528,9 +528,21 @@ class _StaffEmptyState extends StatelessWidget {
 
 (Color, Color) _statusColors(StaffDirectoryFilter bucket) {
   return switch (bucket) {
-    StaffDirectoryFilter.active => (Colors.green.shade800, Colors.green.shade50),
-    StaffDirectoryFilter.pending => (Colors.orange.shade800, Colors.orange.shade50),
-    StaffDirectoryFilter.inactive => (Colors.blueGrey.shade700, Colors.blueGrey.shade50),
-    StaffDirectoryFilter.all => (Colors.blueGrey.shade700, Colors.blueGrey.shade50),
+    StaffDirectoryFilter.active => (
+        AppTheme.sageSuccess,
+        AppTheme.sageSuccess.withValues(alpha: 0.14)
+      ),
+    StaffDirectoryFilter.pending => (
+        AppTheme.warning,
+        AppTheme.warning.withValues(alpha: 0.14)
+      ),
+    StaffDirectoryFilter.inactive => (
+        AppTheme.sageAccent,
+        AppTheme.sageAccent.withValues(alpha: 0.14)
+      ),
+    StaffDirectoryFilter.all => (
+        AppTheme.sageCyan,
+        AppTheme.sageCyan.withValues(alpha: 0.14)
+      ),
   };
 }

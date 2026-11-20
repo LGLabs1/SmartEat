@@ -3,6 +3,7 @@ import 'package:intl/intl.dart';
 
 import '../../../../../models/inventory_item.dart';
 import '../../../../../services/api_service.dart';
+import '../../../../../theme.dart';
 import '../../data/models/stock_movement.dart';
 import '../../domain/usecases/cogs.dart';
 import '../../domain/usecases/health_score.dart';
@@ -58,7 +59,8 @@ class _ReportsScreenState extends State<ReportsScreen> {
   Widget build(BuildContext context) {
     final items = widget.items;
     final movements = widget.movements;
-    final health = InventoryHealthScoreUseCase().compute(items: items, movements: movements);
+    final health = InventoryHealthScoreUseCase()
+        .compute(items: items, movements: movements);
     final lowStock = LowStockReportUseCase().compute(items);
     final value = InventoryValueUseCase().computeTotalValue(items, null);
     final cogs = CogsUseCase().compute(movements);
@@ -72,7 +74,8 @@ class _ReportsScreenState extends State<ReportsScreen> {
         hasSaleConsumption = true;
         consumptionQty += qty;
         consumptionCost += cost;
-      } else if (m.type == StockMovementType.damaged || m.type == StockMovementType.writeOff) {
+      } else if (m.type == StockMovementType.damaged ||
+          m.type == StockMovementType.writeOff) {
         wasteQty += qty;
         wasteCost += cost;
       }
@@ -109,7 +112,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          sectionHeader('Key Metrics & Health', Colors.blue),
+          sectionHeader('Key Metrics & Health', AppTheme.sageAccent),
           HealthScoreCard(result: health),
           const SizedBox(height: 16),
           Card(
@@ -117,16 +120,18 @@ class _ReportsScreenState extends State<ReportsScreen> {
               leading: Container(
                 padding: const EdgeInsets.all(6),
                 decoration: BoxDecoration(
-                  color: Colors.green.withValues(alpha: 0.12),
+                  color: AppTheme.sageSuccess.withValues(alpha: 0.12),
                   borderRadius: BorderRadius.circular(8),
                 ),
-                child: const Icon(Icons.account_balance_wallet_outlined, color: Colors.green),
+                child: const Icon(Icons.account_balance_wallet_outlined,
+                    color: AppTheme.sageSuccess),
               ),
               title: const Text('Inventory Value'),
               subtitle: const Text('Total value of current stock'),
               trailing: Text(
                 _formatCurrency(value),
-                style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.green),
+                style: const TextStyle(
+                    fontWeight: FontWeight.bold, color: AppTheme.sageSuccess),
               ),
             ),
           ),
@@ -135,10 +140,11 @@ class _ReportsScreenState extends State<ReportsScreen> {
               leading: Container(
                 padding: const EdgeInsets.all(6),
                 decoration: BoxDecoration(
-                  color: Colors.deepPurple.withValues(alpha: 0.12),
+                  color: Colors.deepPurpleAccent.withValues(alpha: 0.12),
                   borderRadius: BorderRadius.circular(8),
                 ),
-                child: const Icon(Icons.trending_down, color: Colors.deepPurple),
+                child: const Icon(Icons.trending_down,
+                    color: Colors.deepPurpleAccent),
               ),
               title: const Text('Actual COGS (sale consumption)'),
               subtitle: Text(hasSaleConsumption
@@ -146,7 +152,9 @@ class _ReportsScreenState extends State<ReportsScreen> {
                   : 'No sale-consumption movements found; Actual COGS unavailable in this view.'),
               trailing: Text(
                 _formatCurrency(cogs),
-                style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.deepPurple),
+                style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    color: Colors.deepPurpleAccent),
               ),
             ),
           ),
@@ -155,16 +163,19 @@ class _ReportsScreenState extends State<ReportsScreen> {
               leading: Container(
                 padding: const EdgeInsets.all(6),
                 decoration: BoxDecoration(
-                  color: Colors.red.withValues(alpha: 0.12),
+                  color: AppTheme.error.withValues(alpha: 0.12),
                   borderRadius: BorderRadius.circular(8),
                 ),
-                child: const Icon(Icons.delete_sweep_outlined, color: Colors.red),
+                child: const Icon(Icons.delete_sweep_outlined,
+                    color: AppTheme.error),
               ),
               title: const Text('Inventory Waste'),
-              subtitle: Text('Damaged/write-off from movements · Qty ${_qty(wasteQty)}'),
+              subtitle: Text(
+                  'Damaged/write-off from movements · Qty ${_qty(wasteQty)}'),
               trailing: Text(
                 _formatCurrency(wasteCost),
-                style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.red),
+                style: const TextStyle(
+                    fontWeight: FontWeight.bold, color: AppTheme.error),
               ),
             ),
           ),
@@ -173,10 +184,11 @@ class _ReportsScreenState extends State<ReportsScreen> {
               leading: Container(
                 padding: const EdgeInsets.all(6),
                 decoration: BoxDecoration(
-                  color: Colors.indigo.withValues(alpha: 0.12),
+                  color: AppTheme.sageAccent.withValues(alpha: 0.12),
                   borderRadius: BorderRadius.circular(8),
                 ),
-                child: const Icon(Icons.point_of_sale, color: Colors.indigo),
+                child:
+                    const Icon(Icons.point_of_sale, color: AppTheme.sageAccent),
               ),
               title: const Text('Inventory Consumption'),
               subtitle: Text(hasSaleConsumption
@@ -184,19 +196,21 @@ class _ReportsScreenState extends State<ReportsScreen> {
                   : 'No sale-consumption movements recorded.'),
               trailing: Text(
                 _formatCurrency(consumptionCost),
-                style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.indigo),
+                style: const TextStyle(
+                    fontWeight: FontWeight.bold, color: AppTheme.sageAccent),
               ),
             ),
           ),
           const SizedBox(height: 24),
-          sectionHeader('Stock Status Reports', Colors.orange),
+          sectionHeader('Stock Status Reports', AppTheme.warning),
           Card(
             child: Padding(
               padding: const EdgeInsets.all(16),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('Low Stock Report', style: Theme.of(context).textTheme.titleMedium),
+                  Text('Low Stock Report',
+                      style: Theme.of(context).textTheme.titleMedium),
                   const SizedBox(height: 8),
                   Text(
                     'Items below reorder/minimum stock levels.',
@@ -209,7 +223,9 @@ class _ReportsScreenState extends State<ReportsScreen> {
                     Container(
                       padding: const EdgeInsets.all(16),
                       decoration: BoxDecoration(
-                        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                        color: Theme.of(context)
+                            .colorScheme
+                            .surfaceContainerHighest,
                         borderRadius: BorderRadius.circular(8),
                       ),
                       child: const Center(
@@ -226,7 +242,9 @@ class _ReportsScreenState extends State<ReportsScreen> {
                                 Expanded(child: Text(e.item.name)),
                                 Text(
                                   '${e.item.currentStock.toStringAsFixed(2)} / ${e.item.minStock.toStringAsFixed(2)} ${e.item.unit}',
-                                  style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.orange),
+                                  style: const TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      color: AppTheme.warning),
                                 ),
                               ],
                             ),
@@ -242,17 +260,21 @@ class _ReportsScreenState extends State<ReportsScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('Expiring Soon Report', style: Theme.of(context).textTheme.titleMedium),
+                  Text('Expiring Soon Report',
+                      style: Theme.of(context).textTheme.titleMedium),
                   const SizedBox(height: 8),
                   Container(
                     padding: const EdgeInsets.all(16),
                     decoration: BoxDecoration(
-                      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                      color:
+                          Theme.of(context).colorScheme.surfaceContainerHighest,
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: Text(
                       'Not configured',
-                      style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
+                      style: TextStyle(
+                          color:
+                              Theme.of(context).colorScheme.onSurfaceVariant),
                     ),
                   ),
                 ],
@@ -265,7 +287,8 @@ class _ReportsScreenState extends State<ReportsScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('Restock Suggestions (Max - Current)', style: Theme.of(context).textTheme.titleMedium),
+                  Text('Restock Suggestions (Max - Current)',
+                      style: Theme.of(context).textTheme.titleMedium),
                   const SizedBox(height: 8),
                   Text(
                     'Recommended reorder quantities based on max stock levels.',
@@ -278,7 +301,9 @@ class _ReportsScreenState extends State<ReportsScreen> {
                     Container(
                       padding: const EdgeInsets.all(16),
                       decoration: BoxDecoration(
-                        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                        color: Theme.of(context)
+                            .colorScheme
+                            .surfaceContainerHighest,
                         borderRadius: BorderRadius.circular(8),
                       ),
                       child: const Center(
@@ -295,7 +320,9 @@ class _ReportsScreenState extends State<ReportsScreen> {
                                 Expanded(child: Text(s.item.name)),
                                 Text(
                                   '${s.suggestedQtyBase.toStringAsFixed(2)} ${s.item.unit}',
-                                  style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.brown),
+                                  style: const TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      color: AppTheme.warning),
                                 ),
                               ],
                             ),
@@ -306,7 +333,8 @@ class _ReportsScreenState extends State<ReportsScreen> {
             ),
           ),
           const SizedBox(height: 24),
-          sectionHeader('Consumption & Usage (Recipe / Menu)', Colors.teal),
+          sectionHeader(
+              'Consumption & Usage (Recipe / Menu)', AppTheme.sageCyan),
           Card(
             child: Padding(
               padding: const EdgeInsets.all(16),
@@ -372,10 +400,12 @@ class _ReportsScreenState extends State<ReportsScreen> {
                           ...ingredients.take(10).map((ing) {
                             final name = (ing['name'] ?? '').toString();
                             final unit = (ing['unit'] ?? '').toString();
-                            final used = (ing['usedQty'] as num?)?.toDouble() ?? 0;
+                            final used =
+                                (ing['usedQty'] as num?)?.toDouble() ?? 0;
                             final cost =
                                 (ing['estimatedCost'] as num?)?.toDouble() ?? 0;
-                            final usedBy = (ing['menuItems'] as List?) ?? const [];
+                            final usedBy =
+                                (ing['menuItems'] as List?) ?? const [];
                             final byText = usedBy
                                 .take(2)
                                 .map((m) => (m['name'] ?? '').toString())
@@ -412,7 +442,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
                                       Text(_qty(used, unit),
                                           style: const TextStyle(
                                               fontWeight: FontWeight.w700,
-                                              color: Colors.teal)),
+                                              color: AppTheme.sageCyan)),
                                       Text(_formatCurrency(cost),
                                           style: Theme.of(context)
                                               .textTheme
@@ -466,16 +496,16 @@ class _ReportsScreenState extends State<ReportsScreen> {
             ),
           ),
           const SizedBox(height: 24),
-          sectionHeader('Movement & Adjustment History', Colors.indigo),
+          sectionHeader('Movement & Adjustment History', AppTheme.sageAccent),
           Card(
             child: ListTile(
               leading: Container(
                 padding: const EdgeInsets.all(6),
                 decoration: BoxDecoration(
-                  color: Colors.blue.withValues(alpha: 0.12),
+                  color: AppTheme.sageAccent.withValues(alpha: 0.12),
                   borderRadius: BorderRadius.circular(8),
                 ),
-                child: const Icon(Icons.history, color: Colors.blue),
+                child: const Icon(Icons.history, color: AppTheme.sageAccent),
               ),
               title: const Text('Inventory Movement History'),
               subtitle: const Text('All stock movements in one place'),
@@ -487,13 +517,14 @@ class _ReportsScreenState extends State<ReportsScreen> {
               leading: Container(
                 padding: const EdgeInsets.all(6),
                 decoration: BoxDecoration(
-                  color: Colors.brown.withValues(alpha: 0.12),
+                  color: AppTheme.warning.withValues(alpha: 0.12),
                   borderRadius: BorderRadius.circular(8),
                 ),
-                child: const Icon(Icons.tune, color: Colors.brown),
+                child: const Icon(Icons.tune, color: AppTheme.warning),
               ),
               title: const Text('Stock Adjustments'),
-              subtitle: const Text('Corrections, write-offs, and count adjustments'),
+              subtitle:
+                  const Text('Corrections, write-offs, and count adjustments'),
               onTap: () {},
             ),
           ),

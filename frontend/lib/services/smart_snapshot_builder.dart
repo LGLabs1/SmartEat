@@ -62,6 +62,13 @@ class SmartSnapshotBuilder {
     }
   }
 
+  static bool _isEarlyStage(BusinessContext ctx) {
+    return ctx.ordersMonth == 0 &&
+        ctx.todayNetSales <= 0 &&
+        ctx.netSalesMonth <= 0 &&
+        ctx.overallBestSellerQty == 0;
+  }
+
   // ── Header / footer ────────────────────────────────────────────────────
 
   static void _writeHeader(
@@ -84,7 +91,13 @@ class SmartSnapshotBuilder {
       sb.writeln('Confidence: ${analysis.confidence}');
     }
     sb.writeln('Restaurant: $name');
+    sb.writeln('Eatery ID : ${ctx.eateryId.isNotEmpty ? ctx.eateryId : 'N/A'}');
     sb.writeln('Generated : $ts');
+    if (_isEarlyStage(ctx)) {
+      sb.writeln('Stage     : Getting started — still building history');
+      sb.writeln(
+          'Stage note: Be warm and conversational, like a new friendship forming. Never claim patterns, rankings, top days, or trends from empty or zero data. Keep language plain and friendly.');
+    }
     sb.writeln('================================================');
     sb.writeln();
     sb.writeln('BUSINESS TERM DEFINITIONS');
@@ -159,16 +172,23 @@ class SmartSnapshotBuilder {
     // Trends & timing
     sb.writeln('TRENDS & TIMING');
     sb.writeln('14-day trend  : ${_capitalize(ctx.trendDirection)}');
-    sb.writeln('Best day      : ${ctx.bestDayOfWeek} '
-        '(₱${_fmt(ctx.bestDayRevenue)} avg revenue)');
-    sb.writeln('Peak hour     : ${ctx.peakHour} '
-        '(${ctx.peakHourOrderCount} orders avg)');
+    if (ctx.bestDayOfWeek != 'N/A' && ctx.bestDayRevenue > 0) {
+      sb.writeln('Best day      : ${ctx.bestDayOfWeek} '
+          '(₱${_fmt(ctx.bestDayRevenue)} avg revenue)');
+    } else {
+      sb.writeln('Best day      : Not enough sales yet');
+    }
+    if (ctx.peakHour != 'N/A' && ctx.peakHourOrderCount > 0) {
+      sb.writeln('Peak hour     : ${ctx.peakHour} '
+          '(${ctx.peakHourOrderCount} orders avg)');
+    } else {
+      sb.writeln('Peak hour     : Not enough orders yet');
+    }
     sb.writeln('Slowest hour  : ${ctx.slowestHour}');
     if (ctx.weeklyBreakdown.isNotEmpty) {
       sb.writeln('Weekly pattern:');
       for (final day in ctx.weeklyBreakdown) {
-        sb.writeln(
-            '  ${(day['day'] ?? '')}: ₱${_fmt(_n(day['revenue']))} '
+        sb.writeln('  ${(day['day'] ?? '')}: ₱${_fmt(_n(day['revenue']))} '
             '(${(day['orders'] ?? 0)} orders)');
       }
     }
@@ -177,7 +197,8 @@ class SmartSnapshotBuilder {
     // Forecast
     if (ctx.salesForecast.isNotEmpty) {
       sb.writeln('SALES FORECAST (next 7 days, ${ctx.forecastLabel})');
-      sb.writeln('  Forecast revenue: ₱${_fmt(ctx.forecastRevenue7d)} | est. ingredient cost: ₱${_fmt(ctx.forecastIngredientCost7d)} | est. profit: ₱${_fmt(ctx.forecastProfit7d)}');
+      sb.writeln(
+          '  Forecast revenue: ₱${_fmt(ctx.forecastRevenue7d)} | est. ingredient cost: ₱${_fmt(ctx.forecastIngredientCost7d)} | est. profit: ₱${_fmt(ctx.forecastProfit7d)}');
       for (final day in ctx.salesForecast.take(7)) {
         final weekend = day['isWeekend'] == true ? ' (weekend)' : '';
         sb.writeln('  ${(day['dayName'] ?? '')} ${(day['date'] ?? '')}: '
@@ -196,8 +217,10 @@ class SmartSnapshotBuilder {
     sb.writeln('Low stock           : ${ctx.lowStockCount}');
     sb.writeln('Out of stock (zero) : ${ctx.criticalStockCount}');
     sb.writeln('Total value         : ₱${_fmt(ctx.totalInventoryValue)}');
-    sb.writeln('Waste (period/cost data): ₱${_fmt(ctx.inventoryWasteCost)} (qty ${_fmt(ctx.inventoryWasteQty)})');
-    sb.writeln('Consumption: ${ctx.hasActualInventoryConsumption ? "₱${_fmt(ctx.inventoryConsumptionCost)} (qty ${_fmt(ctx.inventoryConsumptionQty)})" : "N/A (no sale-consumption records)"}');
+    sb.writeln(
+        'Waste (period/cost data): ₱${_fmt(ctx.inventoryWasteCost)} (qty ${_fmt(ctx.inventoryWasteQty)})');
+    sb.writeln(
+        'Consumption: ${ctx.hasActualInventoryConsumption ? "₱${_fmt(ctx.inventoryConsumptionCost)} (qty ${_fmt(ctx.inventoryConsumptionQty)})" : "N/A (no sale-consumption records)"}');
     sb.writeln();
 
     sb.writeln();
@@ -235,9 +258,12 @@ class SmartSnapshotBuilder {
         final days = (item['daysUntilExpiry'] as num?)?.toInt() ?? 0;
         final stock = _n(item['currentStock']).toStringAsFixed(1);
         final label = days <= 0
-            ? 'EXPIRED' : days == 1
-                ? 'expires TOMORROW' : 'expires in ${days}d';
-        sb.writeln('  - ${item['name']}: $stock ${(item['unit'] ?? '')} — $label '
+            ? 'EXPIRED'
+            : days == 1
+                ? 'expires TOMORROW'
+                : 'expires in ${days}d';
+        sb.writeln(
+            '  - ${item['name']}: $stock ${(item['unit'] ?? '')} — $label '
             '(${(item['expirationDate'] ?? '')})');
       }
       sb.writeln();
@@ -249,7 +275,8 @@ class SmartSnapshotBuilder {
       for (final item in ctx.suggestedRestocks.take(6)) {
         final priority = (item['priority'] ?? 'HIGH').toString();
         final qty = _n(item['suggestedOrderQty']).toStringAsFixed(1);
-        sb.writeln('  [$priority] ${item['name']}: order $qty ${(item['unit'] ?? '')}');
+        sb.writeln(
+            '  [$priority] ${item['name']}: order $qty ${(item['unit'] ?? '')}');
       }
       sb.writeln();
     }
@@ -257,14 +284,17 @@ class SmartSnapshotBuilder {
 
   static void _writeMenu(StringBuffer sb, BusinessContext ctx) {
     // Overview
-    sb.writeln('MENU PROFITABILITY (menu-costing estimates; separate from Actual COGS)');
+    sb.writeln(
+        'MENU PROFITABILITY (menu-costing estimates; separate from Actual COGS)');
     sb.writeln('Highest profit: ${ctx.highestProfitItem}');
     for (final i in ctx.menuHighestProfit.take(3)) {
-      sb.writeln('  + ${(i['name'] ?? 'Item')}: revenue ₱${_fmt(_n(i['revenue']))} | COGS ₱${_fmt(_n(i['cogs']))} | profit ₱${_fmt(_n(i['profit']))} (${_fmt(_n(i['marginPercent']))}%)');
+      sb.writeln(
+          '  + ${(i['name'] ?? 'Item')}: revenue ₱${_fmt(_n(i['revenue']))} | COGS ₱${_fmt(_n(i['cogs']))} | profit ₱${_fmt(_n(i['profit']))} (${_fmt(_n(i['marginPercent']))}%)');
     }
     sb.writeln('Lowest profit: ${ctx.lowestProfitItem}');
     for (final i in ctx.menuLowestProfit.take(3)) {
-      sb.writeln('  - ${(i['name'] ?? 'Item')}: revenue ₱${_fmt(_n(i['revenue']))} | COGS ₱${_fmt(_n(i['cogs']))} | profit ₱${_fmt(_n(i['profit']))} (${_fmt(_n(i['marginPercent']))}%)');
+      sb.writeln(
+          '  - ${(i['name'] ?? 'Item')}: revenue ₱${_fmt(_n(i['revenue']))} | COGS ₱${_fmt(_n(i['cogs']))} | profit ₱${_fmt(_n(i['profit']))} (${_fmt(_n(i['marginPercent']))}%)');
     }
     sb.writeln();
     sb.writeln('MENU OVERVIEW');
@@ -326,26 +356,40 @@ class SmartSnapshotBuilder {
 
   static void _writeFinance(StringBuffer sb, BusinessContext ctx) {
     sb.writeln('FINANCIAL SUMMARY (NET/GROSS labeled)');
-    sb.writeln('This Month net      : \u20B1${_fmt(ctx.netSalesMonth > 0 ? ctx.netSalesMonth : ctx.monthRevenue)} | gross: \u20B1${_fmt(ctx.grossSalesMonth)} | discounts: \u20B1${_fmt(ctx.discountsMonth)}');
-    sb.writeln('Revenue growth (MoM): ${_sign(ctx.revenueGrowthMonthPercent)}% vs last month');
-    sb.writeln('This Week net       : \u20B1${_fmt(ctx.netSalesWeek > 0 ? ctx.netSalesWeek : ctx.weekRevenue)} | gross: \u20B1${_fmt(ctx.grossSalesWeek)} | discounts: \u20B1${_fmt(ctx.discountsWeek)}');
-    sb.writeln('Today net           : \u20B1${_fmt(ctx.todayNetSales > 0 ? ctx.todayNetSales : ctx.todayRevenue)} | gross: \u20B1${_fmt(ctx.todayGrossSales)} | discounts: \u20B1${_fmt(ctx.todayDiscounts)}');
-    sb.writeln('Avg Order Value     : \u20B1${_fmt(ctx.averageOrderValueMonth > 0 ? ctx.averageOrderValueMonth : ctx.averageOrderValue)}');
-    sb.writeln('Avg item selling price: \u20B1${_fmt(ctx.averageItemSellingPriceMonth)}');
+    sb.writeln(
+        'This Month net      : \u20B1${_fmt(ctx.netSalesMonth > 0 ? ctx.netSalesMonth : ctx.monthRevenue)} | gross: \u20B1${_fmt(ctx.grossSalesMonth)} | discounts: \u20B1${_fmt(ctx.discountsMonth)}');
+    sb.writeln(
+        'Revenue growth (MoM): ${_sign(ctx.revenueGrowthMonthPercent)}% vs last month');
+    sb.writeln(
+        'This Week net       : \u20B1${_fmt(ctx.netSalesWeek > 0 ? ctx.netSalesWeek : ctx.weekRevenue)} | gross: \u20B1${_fmt(ctx.grossSalesWeek)} | discounts: \u20B1${_fmt(ctx.discountsWeek)}');
+    sb.writeln(
+        'Today net           : \u20B1${_fmt(ctx.todayNetSales > 0 ? ctx.todayNetSales : ctx.todayRevenue)} | gross: \u20B1${_fmt(ctx.todayGrossSales)} | discounts: \u20B1${_fmt(ctx.todayDiscounts)}');
+    sb.writeln(
+        'Avg Order Value     : \u20B1${_fmt(ctx.averageOrderValueMonth > 0 ? ctx.averageOrderValueMonth : ctx.averageOrderValue)}');
+    sb.writeln(
+        'Avg item selling price: \u20B1${_fmt(ctx.averageItemSellingPriceMonth)}');
     sb.writeln();
     sb.writeln('COGS / PROFIT (use labels)');
-    sb.writeln('COGS (${ctx.cogsSourceMonth}): \u20B1${_fmt(ctx.actualCogsMonth)}${ctx.cogsIsEstimatedMonth ? " [estimated]" : " [actual]"}');
-    sb.writeln('Gross Margin (by Menu Costing, estimate; separate from Actual COGS): ${_fmt(ctx.grossMarginByMenuCostingPercent)}% | menu-costing COGS est: \u20B1${_fmt(ctx.menuCostingCogsMonth)}');
-    sb.writeln('Operating expenses  : \u20B1${_fmt(ctx.operatingExpensesMonth)} (${_sign(ctx.expenseGrowthMonthPercent)}% MoM, heuristic)');
-    sb.writeln('Net profit          : \u20B1${_fmt(ctx.netProfitMonth)} | margin: ${_fmt(ctx.netProfitMarginMonth)}%');
+    sb.writeln(
+        'COGS (${ctx.cogsSourceMonth}): \u20B1${_fmt(ctx.actualCogsMonth)}${ctx.cogsIsEstimatedMonth ? " [estimated]" : " [actual]"}');
+    sb.writeln(
+        'Gross Margin (by Menu Costing, estimate; separate from Actual COGS): ${_fmt(ctx.grossMarginByMenuCostingPercent)}% | menu-costing COGS est: \u20B1${_fmt(ctx.menuCostingCogsMonth)}');
+    sb.writeln(
+        'Operating expenses  : \u20B1${_fmt(ctx.operatingExpensesMonth)} (${_sign(ctx.expenseGrowthMonthPercent)}% MoM, heuristic)');
+    sb.writeln(
+        'Net profit          : \u20B1${_fmt(ctx.netProfitMonth)} | margin: ${_fmt(ctx.netProfitMarginMonth)}%');
     sb.writeln();
     sb.writeln('PAYABLES');
-    sb.writeln('Outstanding         : \u20B1${_fmt(ctx.outstandingPayables)} | overdue: \u20B1${_fmt(ctx.overduePayables)}');
-    sb.writeln('Bills due           : today ${ctx.payablesDueToday}, this week ${ctx.payablesDueWeek}, this month ${ctx.payablesDueMonth}');
+    sb.writeln(
+        'Outstanding         : \u20B1${_fmt(ctx.outstandingPayables)} | overdue: \u20B1${_fmt(ctx.overduePayables)}');
+    sb.writeln(
+        'Bills due           : today ${ctx.payablesDueToday}, this week ${ctx.payablesDueWeek}, this month ${ctx.payablesDueMonth}');
     sb.writeln();
     sb.writeln('ORDERS');
-    sb.writeln('Completed This Month: ${ctx.ordersMonth > 0 ? ctx.ordersMonth : ctx.monthOrderCount}');
-    sb.writeln('Cancelled (7 days)  : ${ctx.cancelledLast7Days} (${ctx.cancellationRatePercent.toStringAsFixed(1)}% rate)');
+    sb.writeln(
+        'Completed This Month: ${ctx.ordersMonth > 0 ? ctx.ordersMonth : ctx.monthOrderCount}');
+    sb.writeln(
+        'Cancelled (7 days)  : ${ctx.cancelledLast7Days} (${ctx.cancellationRatePercent.toStringAsFixed(1)}% rate)');
     sb.writeln();
     sb.writeln('BUSINESS HEALTH');
     sb.writeln('Health Score: ${ctx.healthScore.toStringAsFixed(0)}/100 '
@@ -403,8 +447,10 @@ class SmartSnapshotBuilder {
     sb.writeln('Low stock    : ${ctx.lowStockCount}');
     sb.writeln('Out of stock : ${ctx.criticalStockCount}');
     if (ctx.lowStockItems.isNotEmpty) {
-      final names =
-          ctx.lowStockItems.take(3).map((i) => (i['name'] ?? 'Item') as String).join(', ');
+      final names = ctx.lowStockItems
+          .take(3)
+          .map((i) => (i['name'] ?? 'Item') as String)
+          .join(', ');
       sb.writeln('Affected     : $names'
           '${ctx.lowStockCount > 3 ? " and ${ctx.lowStockCount - 3} more" : ""}');
     }
@@ -413,9 +459,17 @@ class SmartSnapshotBuilder {
     // Trends
     sb.writeln('TRENDS & TIMING');
     sb.writeln('14-day trend: ${_capitalize(ctx.trendDirection)}');
-    sb.writeln('Best day    : ${ctx.bestDayOfWeek} '
-        '(₱${_fmt(ctx.bestDayRevenue)} avg)');
-    sb.writeln('Peak hour   : ${ctx.peakHour}');
+    if (ctx.bestDayOfWeek != 'N/A' && ctx.bestDayRevenue > 0) {
+      sb.writeln('Best day    : ${ctx.bestDayOfWeek} '
+          '(₱${_fmt(ctx.bestDayRevenue)} avg)');
+    } else {
+      sb.writeln('Best day    : Not enough sales yet');
+    }
+    if (ctx.peakHour != 'N/A' && ctx.peakHourOrderCount > 0) {
+      sb.writeln('Peak hour   : ${ctx.peakHour}');
+    } else {
+      sb.writeln('Peak hour   : Not enough orders yet');
+    }
     sb.writeln();
 
     // Next 3-day forecast
@@ -505,7 +559,7 @@ class SmartSnapshotBuilder {
       }
 
       // Best day insight
-      if (ctx.bestDayOfWeek != 'N/A') {
+      if (ctx.bestDayOfWeek != 'N/A' && ctx.bestDayRevenue > 0) {
         recs.add('📅 ${ctx.bestDayOfWeek} consistently generates the highest '
             'revenue — prepare extra staff and inventory for that day.');
       }
@@ -553,7 +607,8 @@ class SmartSnapshotBuilder {
   // ── Formatting helpers ─────────────────────────────────────────────────
 
   static String _fmt(double v) => v.toStringAsFixed(2);
-  static double _n(dynamic v) => v is num ? v.toDouble() : double.tryParse("$v") ?? 0.0;
+  static double _n(dynamic v) =>
+      v is num ? v.toDouble() : double.tryParse("$v") ?? 0.0;
 
   static String _sign(double v) =>
       v >= 0 ? '+${v.toStringAsFixed(1)}' : v.toStringAsFixed(1);
@@ -568,15 +623,29 @@ class SmartSnapshotBuilder {
 
   static String _monthName(int m) {
     const n = [
-      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
     ];
     return n[(m - 1).clamp(0, 11)];
   }
 
   static String _fmtTime(DateTime dt) {
     final h = dt.hour;
-    final hh = h == 0 ? 12 : h > 12 ? h - 12 : h;
+    final hh = h == 0
+        ? 12
+        : h > 12
+            ? h - 12
+            : h;
     final mm = dt.minute.toString().padLeft(2, '0');
     final ap = h < 12 ? 'AM' : 'PM';
     return '$hh:$mm $ap';

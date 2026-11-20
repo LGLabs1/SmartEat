@@ -215,7 +215,7 @@ class _RecipeListPageState extends State<RecipeListPage> {
                       ),
                     ),
                     Text(
-                      'Batch ingredients, cost per serving, and menu linkage.',
+                      'Per-serving ingredients, costing, and menu linkage.',
                       style: TextStyle(
                           fontSize: 12, color: scheme.onSurfaceVariant),
                     ),
@@ -291,9 +291,7 @@ class _RecipeCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final name = (recipe['name'] ?? 'Unnamed Recipe').toString();
-    final yieldVal = (recipe['batchYield'] ?? recipe['baseServings'] ?? 1);
     final cps = (recipe['costPerServing'] as num?)?.toDouble();
-    final batch = (recipe['batchCost'] as num?)?.toDouble();
     final linked = (recipe['linkedMenuItemIds'] as List?)
             ?.map((e) => e.toString())
             .where((e) => e.isNotEmpty)
@@ -345,7 +343,7 @@ class _RecipeCard extends StatelessWidget {
                         ),
                         const SizedBox(height: 2),
                         Text(
-                          '$ingredients ingredients • Yield $yieldVal • ${linked.length} menu item${linked.length == 1 ? '' : 's'}',
+                          '$ingredients ingredients • Per-serving costing • ${linked.length} menu item${linked.length == 1 ? '' : 's'}',
                           style: TextStyle(
                               fontSize: 12, color: scheme.onSurfaceVariant),
                         ),
@@ -368,12 +366,13 @@ class _RecipeCard extends StatelessWidget {
                 children: [
                   _MetricChip(
                     label: 'Cost / serving',
-                    value: cps != null ? '₱${cps.toStringAsFixed(2)}' : 'Not set',
+                    value:
+                        cps != null ? '₱${cps.toStringAsFixed(2)}' : 'Not set',
                     color: hasCost ? AppTheme.success : scheme.outline,
                   ),
                   _MetricChip(
-                    label: 'Batch cost',
-                    value: batch != null ? '₱${batch.toStringAsFixed(2)}' : '—',
+                    label: 'Ingredients',
+                    value: '$ingredients',
                     color: AppTheme.primary,
                   ),
                 ],
@@ -465,8 +464,7 @@ class _EmptyRecipes extends StatelessWidget {
       ),
       child: Column(
         children: [
-          Icon(Icons.restaurant_menu_rounded,
-              size: 52, color: scheme.outline),
+          Icon(Icons.restaurant_menu_rounded, size: 52, color: scheme.outline),
           const SizedBox(height: 12),
           const Text('No recipes yet',
               style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),

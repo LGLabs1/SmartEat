@@ -5,36 +5,29 @@ import 'firebase_service.dart';
 
 /// Eatery-level POS preferences, shared by all staff.
 ///
-/// Stored on `eateries/{eateryId}/settings/pos`. Receipt printing is a
-/// placeholder for a future wireless receipt printer integration: nothing
-/// prints yet, but the configuration surface exists.
+/// Stored on `eateries/{eateryId}/settings/pos`. Controls whether completed
+/// orders print to the Bluetooth receipt printer.
 class PosSettings {
   const PosSettings({
     this.receiptPrintingEnabled = false,
-    this.askForReceipt = false,
   });
 
-  /// Master switch for the receipt printer. Off until a printer is connected.
+  /// Master switch for the receipt printer. When enabled, the cart shows a
+  /// "Print receipt" toggle and completed orders print by default.
   final bool receiptPrintingEnabled;
-
-  /// When true, checkout offers a "print a receipt for this order?" option
-  /// before the order is completed.
-  final bool askForReceipt;
 
   factory PosSettings.fromMap(Map<String, dynamic>? data) {
     return PosSettings(
       receiptPrintingEnabled: data?['receiptPrintingEnabled'] == true,
-      askForReceipt: data?['askForReceipt'] == true,
     );
   }
 
   PosSettings copyWith({
     bool? receiptPrintingEnabled,
-    bool? askForReceipt,
   }) {
     return PosSettings(
-      receiptPrintingEnabled: receiptPrintingEnabled ?? this.receiptPrintingEnabled,
-      askForReceipt: askForReceipt ?? this.askForReceipt,
+      receiptPrintingEnabled:
+          receiptPrintingEnabled ?? this.receiptPrintingEnabled,
     );
   }
 }
@@ -44,8 +37,7 @@ class PosSettingsService {
 
   static final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
-  static DocumentReference<Map<String, dynamic>> _settingsRef(
-      String eateryId) {
+  static DocumentReference<Map<String, dynamic>> _settingsRef(String eateryId) {
     return _firestore
         .collection('eateries')
         .doc(eateryId)
@@ -74,7 +66,6 @@ class PosSettingsService {
       {
         'eateryId': eateryId.trim(),
         'receiptPrintingEnabled': settings.receiptPrintingEnabled,
-        'askForReceipt': settings.askForReceipt,
         'updatedBy': uid,
         'updatedAt': FieldValue.serverTimestamp(),
       },

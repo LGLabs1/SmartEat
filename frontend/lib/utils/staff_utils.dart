@@ -37,7 +37,9 @@ bool isPendingStaff(Map<String, dynamic> data) =>
 String staffDisplayName(Map<String, dynamic> data, String uid) {
   final firstName = (data['firstName'] ?? '').toString().trim();
   final lastName = (data['lastName'] ?? '').toString().trim();
-  final name = '$firstName $lastName'.trim();
+  final fullName = '$firstName $lastName'.trim();
+  if (fullName.isNotEmpty) return fullName;
+  final name = (data['name'] ?? data['displayName'] ?? '').toString().trim();
   if (name.isNotEmpty) return name;
   final email = (data['email'] ?? '').toString().trim();
   if (email.isNotEmpty) return email;

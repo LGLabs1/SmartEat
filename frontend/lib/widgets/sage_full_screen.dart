@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../services/ai_assistant_provider.dart';
-import 'floating_ai_button.dart';
+import 'sage_avatar.dart';
 import 'sage_markdown.dart';
 import 'sage_shared_views.dart';
 
@@ -69,8 +69,8 @@ class _SageFullScreenState extends State<SageFullScreen> {
 
     return CallbackShortcuts(
       bindings: {
-        const SingleActivator(LogicalKeyboardKey.escape):
-            () => provider.setFullScreen(false),
+        const SingleActivator(LogicalKeyboardKey.escape): () =>
+            provider.setFullScreen(false),
       },
       child: Focus(
         focusNode: _keyboardFocusNode,
@@ -287,34 +287,42 @@ class _SageFullScreenState extends State<SageFullScreen> {
       children: [
         Expanded(
           child: SelectionArea(
-            child: ListView(
+            child: Scrollbar(
               controller: _chatScrollController,
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-              cacheExtent: 4000,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 10, left: 4),
-                  child: Row(
-                    children: [
-                      Icon(
-                        Icons.assistant_outlined,
-                        color: Colors.blueAccent.shade100,
-                        size: 18,
-                      ),
-                      const SizedBox(width: 8),
-                      const Text(
-                        'Sage Business Assistant',
-                        style: TextStyle(
-                          color: Colors.white70,
-                          fontSize: 14,
-                          fontWeight: FontWeight.bold,
+              thumbVisibility: true,
+              interactive: true,
+              thickness: 4,
+              radius: const Radius.circular(6),
+              child: ListView(
+                controller: _chatScrollController,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                cacheExtent: 4000,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 10, left: 4),
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.assistant_outlined,
+                          color: Colors.blueAccent.shade100,
+                          size: 18,
                         ),
-                      ),
-                    ],
+                        const SizedBox(width: 8),
+                        const Text(
+                          'Sage Business Assistant',
+                          style: TextStyle(
+                            color: Colors.white70,
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-                _buildChatHistory(provider),
-              ],
+                  _buildChatHistory(provider),
+                ],
+              ),
             ),
           ),
         ),
@@ -338,7 +346,8 @@ class _SageFullScreenState extends State<SageFullScreen> {
         ),
         child: Column(
           children: [
-            Icon(Icons.chat_bubble_outline_rounded, color: Colors.white30, size: 40),
+            Icon(Icons.chat_bubble_outline_rounded,
+                color: Colors.white30, size: 40),
             const SizedBox(height: 12),
             const Text(
               'No messages yet — I\'m all ears! 🌿 Ask me how sales are '
@@ -362,8 +371,7 @@ class _SageFullScreenState extends State<SageFullScreen> {
     final streamingHasContent = lastMsg != null &&
         lastMsg['role'] == 'assistant' &&
         (lastMsg['content'] as String? ?? '').isNotEmpty;
-    final showThinking =
-        provider.isGeneratingResponse && !streamingHasContent;
+    final showThinking = provider.isGeneratingResponse && !streamingHasContent;
 
     return ListView.builder(
       shrinkWrap: true,

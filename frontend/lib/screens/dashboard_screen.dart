@@ -10,6 +10,7 @@ import '../services/ai_assistant_provider.dart';
 import '../services/analytics_service.dart';
 import '../services/firebase_service.dart';
 import '../services/notification_trigger_manager.dart';
+import '../theme.dart';
 
 import '../features/finance/data/business_kpis.dart';
 import '../features/finance/data/finance_format.dart';
@@ -17,11 +18,17 @@ import '../features/finance/data/finance_metrics.dart';
 import '../features/staff/data/staff_service.dart';
 import '../features/staff/presentation/screens/my_payroll_screen.dart';
 import '../utils/staff_utils.dart';
+import '../widgets/app_brand.dart';
+import '../widgets/sage_header_button.dart';
+import '../widgets/smart_eat_header.dart';
 import '../widgets/skeleton_loaders.dart';
 import '../widgets/dashboard/section_card.dart';
 import '../widgets/dashboard/kpi_card.dart';
 import '../widgets/dashboard/empty_state.dart';
 import '../widgets/dashboard/revenue_trend_chart.dart';
+import '../widgets/dashboard/dashboard_back_handler.dart';
+import '../widgets/dashboard/animated_dashboard_stack.dart';
+import '../widgets/dashboard/sage_nav_item.dart';
 import 'pos_screen.dart';
 import 'orders_screen.dart';
 import 'analytics_screen.dart';
@@ -32,6 +39,11 @@ import 'finance_screen.dart';
 import 'admin_tab_index.dart';
 // chatbot_screen.dart is intentionally not imported: the header button that
 // opened ChatbotScreen was removed. Re-add the import when it is re-wired.
+
+double dashboardSidebarWidth(double screenWidth) {
+  if (screenWidth >= 768) return 260;
+  return (screenWidth * 0.84).clamp(248.0, 320.0).toDouble();
+}
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({Key? key}) : super(key: key);
@@ -69,6 +81,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
   int _selectedIndex = 0;
+  final DashboardTabHistory _tabHistory = DashboardTabHistory(0);
+  final Map<int, DashboardBackHandler> _nestedBackHandlers =
+      <int, DashboardBackHandler>{};
 
   // Lazy tab mounting. A tab's State is only created once the tab is first
   // visited, instead of the IndexedStack eagerly building all of them. Returning
@@ -88,7 +103,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
   bool _isApprovedStaff = true;
   bool _isApprovalRefreshing = false;
   bool _adminViewEnabled = true;
-  bool _inventoryInDetailView = false;
   final GlobalKey<InventoryScreenState> _inventoryKey =
       GlobalKey<InventoryScreenState>();
   String _eateryName = '';
@@ -111,6 +125,76 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   bool get _canSwitchDashboard {
     return _isAdmin;
+  }
+
+  DashboardBackHandler? get _activeBackHandler =>
+      _nestedBackHandlers[_selectedIndex];
+
+  bool get _canGoBack => _hasNestedBack || _tabHistory.canGoBack;
+
+  bool get _hasNestedBack => _activeBackHandler?.canUnwind() ?? false;
+
+  void _registerBackHandler(int index, DashboardBackHandler? handler) {
+    if (handler == null) {
+      _nestedBackHandlers.remove(index);
+    } else {
+      _nestedBackHandlers[index] = handler;
+    }
+    if (mounted) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) setState(() {});
+      });
+    }
+  }
+
+  void _toggleSidebar() {
+    if (!mounted) return;
+    setState(() => _sidebarVisible = !_sidebarVisible);
+  }
+
+  bool _closeNarrowSidebar() {
+    if (MediaQuery.sizeOf(context).width < 768 && _sidebarVisible) {
+      setState(() => _sidebarVisible = false);
+      return true;
+    }
+    return false;
+  }
+
+  bool _closeSageOverlay() {
+    final assistant = context.read<AIAssistantProvider>();
+    if (assistant.staffDashboardActive) return false;
+    if (assistant.isFullScreen) {
+      assistant.setFullScreen(false);
+      return true;
+    }
+    if (assistant.showSageBriefing) {
+      assistant.dismissSageBriefing();
+      return true;
+    }
+    if (assistant.showPopup) {
+      assistant.dismissPopup();
+      return true;
+    }
+    if (assistant.isExpanded) {
+      assistant.setPanelExpanded(false);
+      return true;
+    }
+    return false;
+  }
+
+  bool _handleBack() {
+    if (_isRoleLoading) return false;
+    if (_closeNarrowSidebar()) return true;
+    if (_closeSageOverlay()) return true;
+    final handler = _activeBackHandler;
+    if (handler != null && handler.canUnwind() && handler.unwind()) {
+      return true;
+    }
+    if (_tabHistory.back()) {
+      _goToTab(_tabHistory.current, fromBack: true);
+      return true;
+    }
+    return false;
   }
 
   /// Keeps the Sage overlay in sync with what is on screen. The assistant is
@@ -233,6 +317,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         if (savedIndex >= 0 && savedIndex < _tabCount) {
           setState(() {
             _selectedIndex = savedIndex;
+            _tabHistory.reset(savedIndex);
             _visitedTabs.add(savedIndex);
             _tabLoadedAt[savedIndex] = DateTime.now();
           });
@@ -345,6 +430,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
           // Tab layout differs per role; drop all lazy-tab state so stale
           // indices never bleed across dashboards.
           _selectedIndex = 0;
+          _tabHistory.reset(0);
+          _nestedBackHandlers.clear();
           _visitedTabs
             ..clear()
             ..add(0);
@@ -362,7 +449,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       if (!mounted) return;
       setState(() {
         _roleError =
-            'Failed to load profile. Please check your connection and Firestore rules.\n\n$e';
+            "We couldn't load your details just now. Please refresh in a moment.";
         if (setLoadingState) {
           _isRoleLoading = false;
         }
@@ -386,7 +473,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
-  void _goToTab(int index) {
+  void _goToTab(int index, {bool fromBack = false}) {
     if (!mounted) return;
     // Prevent navigation while role is loading
     if (_isRoleLoading) {
@@ -396,6 +483,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
       // Validate index against available tabs
       if (index < 0 || index >= _tabCount) {
         return;
+      }
+      if (!fromBack && index == _selectedIndex) return;
+      if (!fromBack) {
+        _tabHistory.push(index);
       }
       final now = DateTime.now();
       final firstVisit = !_visitedTabs.contains(index);
@@ -443,6 +534,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
       setState(() {
         _adminViewEnabled = enabled;
         _selectedIndex = 0;
+        _tabHistory.reset(0);
+        _nestedBackHandlers.clear();
         _visitedTabs
           ..clear()
           ..add(0);
@@ -590,29 +683,35 @@ class _DashboardScreenState extends State<DashboardScreen> {
   @override
   Widget build(BuildContext context) {
     if (_isRoleLoading) {
-      return const SkeletonDashboard();
+      return Theme(
+        data: AppTheme.dashboardTheme,
+        child: const SkeletonDashboard(),
+      );
     }
 
     if (_roleError != null) {
-      return Scaffold(
-        backgroundColor: Colors.white,
-        appBar: AppBar(title: const Text('Smart Eat')),
-        body: Center(
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  'Failed to load profile: $_roleError',
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 12),
-                ElevatedButton(
-                  onPressed: _loadRole,
-                  child: const Text('Retry'),
-                ),
-              ],
+      return Theme(
+        data: AppTheme.dashboardTheme,
+        child: Scaffold(
+          backgroundColor: AppTheme.sageNavy,
+          appBar: AppBar(title: const Text('Smart Eat')),
+          body: Center(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'Failed to load profile: $_roleError',
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 12),
+                  ElevatedButton(
+                    onPressed: _loadRole,
+                    child: const Text('Retry'),
+                  ),
+                ],
+              ),
             ),
           ),
         ),
@@ -620,51 +719,57 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
 
     if (!_isAdmin && !_isApprovedStaff) {
-      return Scaffold(
-        backgroundColor: Colors.white,
-        appBar: AppBar(title: const Text('Smart Eat')),
-        body: Center(
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(Icons.hourglass_top, size: 44),
-                const SizedBox(height: 12),
-                const Text(
-                  'Your account is pending admin approval.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(fontWeight: FontWeight.w600),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  'Ask your admin to approve your account. Once approved, tap Refresh.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: Colors.grey.shade700),
-                ),
-                const SizedBox(height: 16),
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    ElevatedButton(
-                      onPressed:
-                          _isApprovalRefreshing ? null : _refreshApprovalStatus,
-                      child: _isApprovalRefreshing
-                          ? const SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Text('Refresh'),
-                    ),
-                    const SizedBox(width: 12),
-                    OutlinedButton(
-                      onPressed: () => context.read<AuthProvider>().logout(),
-                      child: const Text('Logout'),
-                    ),
-                  ],
-                ),
-              ],
+      return Theme(
+        data: AppTheme.dashboardTheme,
+        child: Scaffold(
+          backgroundColor: AppTheme.sageNavy,
+          appBar: AppBar(title: const Text('Smart Eat')),
+          body: Center(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.hourglass_top, size: 44),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'Your account is pending admin approval.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Ask your admin to approve your account. Once approved, tap Refresh.',
+                    textAlign: TextAlign.center,
+                    style:
+                        TextStyle(color: Colors.white.withValues(alpha: 0.62)),
+                  ),
+                  const SizedBox(height: 16),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      ElevatedButton(
+                        onPressed: _isApprovalRefreshing
+                            ? null
+                            : _refreshApprovalStatus,
+                        child: _isApprovalRefreshing
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child:
+                                    CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : const Text('Refresh'),
+                      ),
+                      const SizedBox(width: 12),
+                      OutlinedButton(
+                        onPressed: () => context.read<AuthProvider>().logout(),
+                        child: const Text('Logout'),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
             ),
           ),
         ),
@@ -680,22 +785,35 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 key: k,
                 globalSearchQuery: _globalSearchQuery,
                 showAppBar: false,
+                onBackHandlerChanged: (handler) =>
+                    _registerBackHandler(_adminMenuTab, handler),
               )),
-      _lazyTab(_adminOrdersTab, (k) => OrdersScreen(key: k, isAdmin: true)),
+      _lazyTab(
+          _adminOrdersTab,
+          (k) => OrdersScreen(
+                key: k,
+                isAdmin: true,
+                onBackHandlerChanged: (handler) =>
+                    _registerBackHandler(_adminOrdersTab, handler),
+              )),
       _lazyTab(
           _adminInventoryTab,
           (k) => InventoryScreen(
                 key: k,
                 globalSearchQuery: _globalSearchQuery,
                 showAppBar: false,
-                onBackNeeded: () =>
-                    setState(() => _inventoryInDetailView = true),
-                onOpenDrawer: () =>
-                    setState(() => _inventoryInDetailView = false),
+                onBackHandlerChanged: (handler) =>
+                    _registerBackHandler(_adminInventoryTab, handler),
               ),
           fixedKey: _inventoryKey),
-      _lazyTab(_adminAnalyticsTab,
-          (k) => AnalyticsScreen(key: k, showAppBar: false)),
+      _lazyTab(
+          _adminAnalyticsTab,
+          (k) => AnalyticsScreen(
+                key: k,
+                showAppBar: false,
+                onBackHandlerChanged: (handler) =>
+                    _registerBackHandler(_adminAnalyticsTab, handler),
+              )),
       _lazyTab(
           _adminFinanceTab,
           (k) => FinanceScreen(
@@ -703,6 +821,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 globalSearchQuery: _globalSearchQuery,
                 showAppBar: false,
                 onNavigate: _goToTab,
+                onBackHandlerChanged: (handler) =>
+                    _registerBackHandler(_adminFinanceTab, handler),
               )),
       _lazyTab(
           _adminStaffTab,
@@ -710,18 +830,28 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 key: k,
                 globalSearchQuery: _globalSearchQuery,
                 showAppBar: false,
+                onBackHandlerChanged: (handler) =>
+                    _registerBackHandler(_adminStaffTab, handler),
               )),
     ];
 
     final staffTabs = <Widget>[
       _lazyTab(_staffPosTab, (k) => POSScreen(key: k, showAppBar: false)),
-      _lazyTab(_staffOrdersTab, (k) => OrdersScreen(key: k)),
+      _lazyTab(
+          _staffOrdersTab,
+          (k) => OrdersScreen(
+                key: k,
+                onBackHandlerChanged: (handler) =>
+                    _registerBackHandler(_staffOrdersTab, handler),
+              )),
       _lazyTab(
           _staffMenuTab,
           (k) => MenuScreen(
                 key: k,
                 globalSearchQuery: _globalSearchQuery,
                 showAppBar: false,
+                onBackHandlerChanged: (handler) =>
+                    _registerBackHandler(_staffMenuTab, handler),
               )),
     ];
 
@@ -735,282 +865,257 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final searchHint = isNarrowSearch ? '' : 'Search';
     final pageTitle = _pageTitleForIndex(_selectedIndex);
 
-    return Scaffold(
-      key: _scaffoldKey,
-      backgroundColor: Colors.white,
-      appBar: AppBar(
-        leading: Builder(
-          builder: (context) {
-            final showBackButton = _isAdminRole &&
-                _selectedIndex == _adminInventoryTab &&
-                _inventoryInDetailView;
-            return IconButton(
-              tooltip: showBackButton
-                  ? 'Back'
-                  : (_sidebarVisible ? 'Hide Menu' : 'Show Menu'),
-              icon: Icon(showBackButton
-                  ? Icons.arrow_back
-                  : (_sidebarVisible ? Icons.menu_open : Icons.menu)),
-              onPressed: _isRoleLoading
-                  ? null
-                  : () {
-                      if (showBackButton) {
-                        setState(() => _inventoryInDetailView = false);
-                        null;
-                      } else {
-                        setState(() => _sidebarVisible = !_sidebarVisible);
-                      }
-                    },
-            );
-          },
-        ),
-        title: LayoutBuilder(
-          builder: (context, constraints) {
-            final maxSearchWidth = constraints.maxWidth >= 900
-                ? 420.0
-                : constraints.maxWidth >= 600
-                    ? 320.0
-                    : 200.0;
-            final isNarrow = constraints.maxWidth < 520;
-
-            Widget searchField(double maxWidth) {
-              return ConstrainedBox(
-                constraints: BoxConstraints(maxWidth: maxWidth),
-                child: SizedBox(
-                  height: 40,
-                  child: TextField(
-                    controller: _globalSearchController,
-                    onChanged: (v) => _globalSearchQuery.value = v,
-                    onSubmitted: (v) {
-                      if (v.trim().isNotEmpty) {
-                        _showGlobalSearchResults(v.trim());
-                      }
-                    },
-                    onTap: () {
-                      if (_globalSearchQuery.value.trim().isNotEmpty) {
-                        _showGlobalSearchResults(
-                            _globalSearchQuery.value.trim());
-                      }
-                    },
-                    decoration: InputDecoration(
-                      hintText: searchHint,
-                      prefixIcon: const Icon(Icons.search, color: Colors.white),
-                      suffixIcon: ValueListenableBuilder<String>(
-                        valueListenable: _globalSearchQuery,
-                        builder: (context, value, _) {
-                          if (value.trim().isEmpty) return const SizedBox();
-                          return IconButton(
-                            tooltip: 'Clear',
-                            onPressed: () {
-                              _globalSearchController.clear();
-                              _globalSearchQuery.value = '';
-                            },
-                            icon: const Icon(Icons.close, color: Colors.white),
-                          );
-                        },
-                      ),
-                      filled: true,
-                      fillColor: Colors.white.withValues(alpha: 0.18),
-                      hintStyle: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.9),
-                        fontWeight: FontWeight.w500,
-                      ),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(14),
-                        borderSide: BorderSide(
-                          color: Colors.white.withValues(alpha: 0.25),
-                        ),
-                      ),
-                      enabledBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(14),
-                        borderSide: BorderSide(
-                          color: Colors.white.withValues(alpha: 0.18),
-                        ),
-                      ),
-                      focusedBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(14),
-                        borderSide: BorderSide(
-                          color: Colors.white.withValues(alpha: 0.5),
-                        ),
-                      ),
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 10,
-                      ),
-                    ),
-                    style: const TextStyle(color: Colors.white),
-                  ),
-                ),
-              );
-            }
-
-            final searchWidth = isNarrow
-                ? (constraints.maxWidth >= 420
-                    ? 180.0
-                    : constraints.maxWidth >= 380
-                        ? 160.0
-                        : 140.0)
-                : maxSearchWidth;
-
-            final brandMaxWidth = isNarrow
-                ? 130.0
-                : constraints.maxWidth >= 900
-                    ? 240.0
-                    : 180.0;
-
-            final brand = ConstrainedBox(
-              constraints: BoxConstraints(maxWidth: brandMaxWidth),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Text(
-                    'Smart Eat',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                  if (_eateryName.trim().isNotEmpty)
-                    Text(
-                      _eateryName,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.white.withValues(alpha: 0.88),
-                      ),
-                    ),
-                ],
-              ),
-            );
-
-            final title = Text(
-              pageTitle,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.w800,
-              ),
-            );
-
-            return SizedBox(
-              height: 44,
-              child: Stack(
-                alignment: Alignment.center,
-                children: [
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: brand,
-                  ),
-                  Align(
-                    alignment: Alignment.center,
-                    child: Padding(
-                      padding: EdgeInsets.symmetric(
-                        horizontal: brandMaxWidth + 12,
-                      ),
-                      child: title,
-                    ),
-                  ),
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: searchField(searchWidth),
-                  ),
-                ],
-              ),
-            );
-          },
-        ),
-        flexibleSpace: Container(
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [
-                Theme.of(context).colorScheme.primary,
-                Theme.of(context).colorScheme.primary.withBlue(
-                      ((Theme.of(context).colorScheme.primary.b * 255.0)
-                                  .round() +
-                              40)
-                          .clamp(0, 255),
-                    ),
-              ],
+    return Theme(
+      data: AppTheme.dashboardTheme,
+      child: PopScope(
+        canPop: !_canGoBack,
+        onPopInvokedWithResult: (didPop, _) {
+          if (didPop) return;
+          _handleBack();
+        },
+        child: Scaffold(
+          key: _scaffoldKey,
+          backgroundColor: AppTheme.sageNavy,
+          appBar: SmartEatHeader(
+            leading: Builder(
+              builder: (context) {
+                if (_canGoBack) {
+                  return IconButton(
+                    key: const Key('dashboard-back-button'),
+                    tooltip: 'Back',
+                    icon: const Icon(Icons.arrow_back),
+                    onPressed: _isRoleLoading ? null : _handleBack,
+                  );
+                }
+                return IconButton(
+                  key: const Key('dashboard-menu-button'),
+                  tooltip: _sidebarVisible ? 'Hide Menu' : 'Show Menu',
+                  icon: Icon(_sidebarVisible ? Icons.menu_open : Icons.menu),
+                  onPressed: _isRoleLoading ? null : _toggleSidebar,
+                );
+              },
             ),
-          ),
-        ),
-        elevation: 2,
-        shadowColor:
-            Theme.of(context).colorScheme.primary.withValues(alpha: 0.4),
-        shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(
-            bottom: Radius.circular(16),
-          ),
-        ),
-        actions: const [
-          // Chatbot entry point intentionally removed from the header. The
-          // ChatbotScreen import is retained for the code to be re-wired later.
-          SizedBox(width: 4),
-        ],
-      ),
-      body: LayoutBuilder(
-        builder: (context, constraints) {
-          final isWideScreen = constraints.maxWidth >= 768;
+            title: LayoutBuilder(
+              builder: (context, constraints) {
+                final maxSearchWidth = constraints.maxWidth >= 900
+                    ? 420.0
+                    : constraints.maxWidth >= 600
+                        ? 320.0
+                        : 200.0;
+                final isNarrow = constraints.maxWidth < 520;
 
-          // Wide screen: persistent sidebar that compresses content
-          if (isWideScreen) {
-            return Row(
-              children: [
-                if (_sidebarVisible) _buildSidebar(),
-                Expanded(
-                  child: Stack(
-                    children: [
-                      IndexedStack(
-                        index: _selectedIndex,
-                        children: tabs,
-                      ),
-                      if (_isRoleLoading)
-                        Container(
-                          color: Colors.white.withValues(alpha: 0.8),
-                          child: const Center(
-                            child: CircularProgressIndicator(),
+                Widget searchField(double maxWidth) {
+                  return ConstrainedBox(
+                    constraints: BoxConstraints(maxWidth: maxWidth),
+                    child: SizedBox(
+                      height: 40,
+                      child: TextField(
+                        controller: _globalSearchController,
+                        onChanged: (v) => _globalSearchQuery.value = v,
+                        onSubmitted: (v) {
+                          if (v.trim().isNotEmpty) {
+                            _showGlobalSearchResults(v.trim());
+                          }
+                        },
+                        onTap: () {
+                          if (_globalSearchQuery.value.trim().isNotEmpty) {
+                            _showGlobalSearchResults(
+                                _globalSearchQuery.value.trim());
+                          }
+                        },
+                        decoration: InputDecoration(
+                          hintText: searchHint,
+                          prefixIcon:
+                              const Icon(Icons.search, color: Colors.white),
+                          suffixIcon: ValueListenableBuilder<String>(
+                            valueListenable: _globalSearchQuery,
+                            builder: (context, value, _) {
+                              if (value.trim().isEmpty) return const SizedBox();
+                              return IconButton(
+                                tooltip: 'Clear',
+                                onPressed: () {
+                                  _globalSearchController.clear();
+                                  _globalSearchQuery.value = '';
+                                },
+                                icon: const Icon(Icons.close,
+                                    color: Colors.white),
+                              );
+                            },
+                          ),
+                          filled: true,
+                          fillColor: Colors.white.withValues(alpha: 0.1),
+                          hintStyle: TextStyle(
+                            color: Colors.white.withValues(alpha: 0.62),
+                            fontWeight: FontWeight.w500,
+                          ),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(14),
+                            borderSide: BorderSide(
+                              color: Colors.white.withValues(alpha: 0.14),
+                            ),
+                          ),
+                          enabledBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(14),
+                            borderSide: BorderSide(
+                              color: Colors.white.withValues(alpha: 0.14),
+                            ),
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(14),
+                            borderSide: const BorderSide(
+                              color: AppTheme.sageCyan,
+                              width: 1.4,
+                            ),
+                          ),
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 10,
                           ),
                         ),
+                        style: const TextStyle(color: Colors.white),
+                      ),
+                    ),
+                  );
+                }
+
+                final searchWidth = isNarrow
+                    ? (constraints.maxWidth >= 420
+                        ? 180.0
+                        : constraints.maxWidth >= 380
+                            ? 160.0
+                            : 140.0)
+                    : maxSearchWidth;
+
+                final brandMaxWidth = isNarrow
+                    ? 130.0
+                    : constraints.maxWidth >= 900
+                        ? 240.0
+                        : 180.0;
+
+                final title = Text(
+                  pageTitle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w800,
+                  ),
+                );
+
+                return SizedBox(
+                  height: 44,
+                  child: Row(
+                    children: [
+                      Flexible(
+                        flex: isNarrow ? 3 : 4,
+                        child: Align(
+                          alignment: Alignment.centerLeft,
+                          child: FittedBox(
+                            fit: BoxFit.scaleDown,
+                            alignment: Alignment.centerLeft,
+                            child: ConstrainedBox(
+                              constraints:
+                                  BoxConstraints(maxWidth: brandMaxWidth),
+                              child: AppBrand(
+                                eateryName: _eateryName.trim(),
+                                compact: isNarrow,
+                                logoHeight: isNarrow ? 22 : 26,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                      if (isNarrow)
+                        const Spacer()
+                      else ...[
+                        const SizedBox(width: 10),
+                        Expanded(
+                          flex: 5,
+                          child: Center(child: title),
+                        ),
+                        const SizedBox(width: 10),
+                      ],
+                      Flexible(
+                        flex: isNarrow ? 5 : 4,
+                        child: Align(
+                          alignment: Alignment.centerRight,
+                          child: searchField(searchWidth),
+                        ),
+                      ),
                     ],
                   ),
+                );
+              },
+            ),
+            actions: [
+              const SageHeaderButton(),
+              if (_canGoBack)
+                IconButton(
+                  key: const Key('dashboard-menu-button'),
+                  tooltip: _sidebarVisible ? 'Hide Menu' : 'Show Menu',
+                  icon: Icon(_sidebarVisible ? Icons.menu_open : Icons.menu),
+                  onPressed: _isRoleLoading ? null : _toggleSidebar,
                 ),
-              ],
-            );
-          }
-
-          // Narrow screen: overlay sidebar
-          return Stack(
-            children: [
-              IndexedStack(
-                index: _selectedIndex,
-                children: tabs,
-              ),
-              if (_sidebarVisible)
-                GestureDetector(
-                  onTap: () => setState(() => _sidebarVisible = false),
-                  child: Container(
-                    color: Colors.black.withValues(alpha: 0.3),
-                  ),
-                ),
-              if (_sidebarVisible) _buildSidebar(),
-              if (_isRoleLoading)
-                Container(
-                  color: Colors.white.withValues(alpha: 0.8),
-                  child: const Center(
-                    child: CircularProgressIndicator(),
-                  ),
-                ),
+              const SizedBox(width: 4),
             ],
-          );
-        },
+          ),
+          body: LayoutBuilder(
+            builder: (context, constraints) {
+              final isWideScreen = constraints.maxWidth >= 768;
+
+              // Wide screen: persistent sidebar that compresses content
+              if (isWideScreen) {
+                return Row(
+                  children: [
+                    if (_sidebarVisible) _buildSidebar(),
+                    Expanded(
+                      child: Stack(
+                        children: [
+                          AnimatedDashboardStack(
+                            index: _selectedIndex,
+                            children: tabs,
+                          ),
+                          if (_isRoleLoading)
+                            Container(
+                              color: AppTheme.sageNavy.withValues(alpha: 0.84),
+                              child: const Center(
+                                child: CircularProgressIndicator(),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ],
+                );
+              }
+
+              // Narrow screen: overlay sidebar
+              return Stack(
+                children: [
+                  AnimatedDashboardStack(
+                    index: _selectedIndex,
+                    children: tabs,
+                  ),
+                  if (_sidebarVisible)
+                    GestureDetector(
+                      onTap: () => setState(() => _sidebarVisible = false),
+                      child: Container(
+                        color: Colors.black.withValues(alpha: 0.3),
+                      ),
+                    ),
+                  if (_sidebarVisible) _buildSidebar(),
+                  if (_isRoleLoading)
+                    Container(
+                      color: AppTheme.sageNavy.withValues(alpha: 0.84),
+                      child: const Center(
+                        child: CircularProgressIndicator(),
+                      ),
+                    ),
+                ],
+              );
+            },
+          ),
+        ),
       ),
     );
   }
@@ -1018,35 +1123,60 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Widget _buildSidebar() {
     final email = context.read<AuthProvider>().user?.email ?? '';
     final roleLabel = _isAdmin ? 'Admin' : 'Staff';
-    final sidebarWidth = 260.0;
+    final screenWidth = MediaQuery.sizeOf(context).width;
+    final sidebarWidth = dashboardSidebarWidth(screenWidth);
 
     return Container(
+      key: const Key('dashboard-sidebar'),
       width: sidebarWidth,
       decoration: BoxDecoration(
-        color: Colors.white,
-        border: Border(
-          right: BorderSide(color: Colors.grey.shade200),
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [AppTheme.sagePanel, AppTheme.sageNavy],
         ),
+        border: Border(
+          right: BorderSide(
+            color: AppTheme.sageBlue.withValues(alpha: 0.22),
+          ),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: AppTheme.sageBlue.withValues(alpha: 0.12),
+            blurRadius: 28,
+            offset: const Offset(8, 0),
+          ),
+        ],
       ),
       child: Column(
         children: [
           Container(
             width: double.infinity,
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
-            color:
-                Theme.of(context).colorScheme.primary.withValues(alpha: 0.08),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [
+                  AppTheme.sageBlue.withValues(alpha: 0.2),
+                  Colors.transparent,
+                ],
+              ),
+              border: Border(
+                bottom: BorderSide(
+                  color: Colors.white.withValues(alpha: 0.06),
+                ),
+              ),
+            ),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 CircleAvatar(
                   radius: 22,
-                  backgroundColor: Theme.of(context)
-                      .colorScheme
-                      .primary
-                      .withValues(alpha: 0.2),
-                  child: Icon(
+                  backgroundColor: AppTheme.sageBlue.withValues(alpha: 0.28),
+                  child: const Icon(
                     Icons.person_outline,
-                    color: Theme.of(context).colorScheme.primary,
+                    color: AppTheme.sageCyan,
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -1061,6 +1191,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         style: const TextStyle(
                           fontSize: 14,
                           fontWeight: FontWeight.w700,
+                          color: Colors.white,
                         ),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
@@ -1071,7 +1202,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                           _eateryName,
                           style: TextStyle(
                             fontSize: 12,
-                            color: Colors.grey.shade700,
+                            color: Colors.white.withValues(alpha: 0.62),
                           ),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
@@ -1081,16 +1212,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         padding: const EdgeInsets.symmetric(
                             horizontal: 8, vertical: 2),
                         decoration: BoxDecoration(
-                          color: Colors.white,
+                          color: AppTheme.sageBlue.withValues(alpha: 0.22),
                           borderRadius: BorderRadius.circular(999),
-                          border: Border.all(color: Colors.grey.shade200),
+                          border: Border.all(
+                            color: AppTheme.sageAccent.withValues(alpha: 0.35),
+                          ),
                         ),
                         child: Text(
                           roleLabel,
-                          style: TextStyle(
+                          style: const TextStyle(
                             fontSize: 11,
-                            fontWeight: FontWeight.w600,
-                            color: Theme.of(context).colorScheme.primary,
+                            fontWeight: FontWeight.w700,
+                            color: AppTheme.sageCyan,
                           ),
                         ),
                       ),
@@ -1105,18 +1238,19 @@ class _DashboardScreenState extends State<DashboardScreen> {
               padding: const EdgeInsets.symmetric(vertical: 8),
               children: [
                 if (_canSwitchDashboard)
-                  ListTile(
-                    leading: Icon(
-                      _adminViewEnabled
-                          ? Icons.swap_horiz
-                          : Icons.admin_panel_settings_outlined,
-                    ),
-                    title: Text(
-                      _adminViewEnabled
-                          ? 'Switch to Main Dashboard'
-                          : 'Switch to Admin Dashboard',
-                    ),
-                    onTap: () => _setAdminViewEnabled(!_adminViewEnabled),
+                  SageNavItem(
+                    key: const Key('dashboard-switch-view'),
+                    icon: _adminViewEnabled
+                        ? Icons.swap_horiz
+                        : Icons.admin_panel_settings_outlined,
+                    label: _adminViewEnabled
+                        ? 'Switch to Main Dashboard'
+                        : 'Switch to Admin Dashboard',
+                    selected: false,
+                    onTap: () {
+                      _setAdminViewEnabled(!_adminViewEnabled);
+                      _closeSidebarOnNarrow();
+                    },
                   ),
                 if (_isAdminRole) ...[
                   _buildNavItem(
@@ -1170,52 +1304,66 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     label: 'Menu',
                     index: _staffMenuTab,
                   ),
-                  ListTile(
-                    leading: Icon(
-                      Icons.lunch_dining_outlined,
-                      color: Colors.grey.shade600,
-                    ),
-                    title: const Text('Staff meal'),
-                    onTap: () => showDialog<void>(
-                      context: context,
-                      builder: (_) => const StaffMealDialog(),
-                    ),
+                  SageNavItem(
+                    icon: Icons.lunch_dining_outlined,
+                    label: 'Staff meal',
+                    selected: false,
+                    onTap: () {
+                      _closeSidebarOnNarrow();
+                      showDialog<void>(
+                        context: context,
+                        builder: (_) => const StaffMealDialog(),
+                      );
+                    },
                   ),
-                  ListTile(
-                    leading: Icon(
-                      Icons.payments_outlined,
-                      color: Colors.grey.shade600,
-                    ),
-                    title: const Text('My payroll'),
-                    onTap: () => Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => const MyPayrollScreen(),
-                      ),
-                    ),
+                  SageNavItem(
+                    icon: Icons.payments_outlined,
+                    label: 'My payroll',
+                    selected: false,
+                    onTap: () {
+                      _closeSidebarOnNarrow();
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => const MyPayrollScreen(),
+                        ),
+                      );
+                    },
                   ),
                 ],
                 const Divider(height: 24),
-                ListTile(
-                  leading: const Icon(Icons.notifications_outlined),
-                  title: const Text('Notifications'),
-                  onTap: () =>
-                      Navigator.of(context).pushNamed('/notifications'),
+                SageNavItem(
+                  icon: Icons.notifications_outlined,
+                  label: 'Notifications',
+                  selected: false,
+                  onTap: () {
+                    _closeSidebarOnNarrow();
+                    Navigator.of(context).pushNamed('/notifications');
+                  },
                 ),
-                ListTile(
-                  leading: const Icon(Icons.settings_outlined),
-                  title: const Text('Settings'),
-                  onTap: () => Navigator.of(context).pushNamed('/settings'),
+                SageNavItem(
+                  icon: Icons.settings_outlined,
+                  label: 'Settings',
+                  selected: false,
+                  onTap: () {
+                    _closeSidebarOnNarrow();
+                    Navigator.of(context).pushNamed('/settings');
+                  },
                 ),
-                ListTile(
-                  leading: const Icon(Icons.person_outline),
-                  title: const Text('Profile'),
-                  onTap: () => Navigator.of(context).pushNamed('/profile'),
+                SageNavItem(
+                  icon: Icons.person_outline,
+                  label: 'Profile',
+                  selected: false,
+                  onTap: () {
+                    _closeSidebarOnNarrow();
+                    Navigator.of(context).pushNamed('/profile');
+                  },
                 ),
                 const Divider(height: 24),
-                ListTile(
-                  leading: const Icon(Icons.logout, color: Colors.red),
-                  title:
-                      const Text('Logout', style: TextStyle(color: Colors.red)),
+                SageNavItem(
+                  icon: Icons.logout,
+                  label: 'Logout',
+                  selected: false,
+                  danger: true,
                   onTap: () => context.read<AuthProvider>().logout(),
                 ),
               ],
@@ -1231,26 +1379,22 @@ class _DashboardScreenState extends State<DashboardScreen> {
     required String label,
     required int index,
   }) {
-    final isSelected = _selectedIndex == index;
-    return ListTile(
-      leading: Icon(
-        icon,
-        color: isSelected
-            ? Theme.of(context).colorScheme.primary
-            : Colors.grey.shade600,
-      ),
-      title: Text(
-        label,
-        style: TextStyle(
-          fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
-          color: isSelected
-              ? Theme.of(context).colorScheme.primary
-              : Colors.grey.shade800,
-        ),
-      ),
-      selected: isSelected,
-      onTap: () => _goToTab(index),
+    return SageNavItem(
+      key: Key('dashboard-nav-$index'),
+      icon: icon,
+      label: label,
+      selected: _selectedIndex == index,
+      onTap: () {
+        _goToTab(index);
+        _closeSidebarOnNarrow();
+      },
     );
+  }
+
+  void _closeSidebarOnNarrow() {
+    if (MediaQuery.sizeOf(context).width < 768 && _sidebarVisible) {
+      setState(() => _sidebarVisible = false);
+    }
   }
 }
 
@@ -1509,8 +1653,9 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
               totalCount: staff.length,
               child: staff.isEmpty
                   ? Text(
-                      'No staff accounts yet. Add staff from Staff Management.',
-                      style: TextStyle(color: Colors.grey.shade700),
+                      "No teammates yet. You can add them from Staff Management whenever you're ready.",
+                      style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.62)),
                     )
                   : Column(
                       children: [
@@ -1530,7 +1675,7 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
                             child: Text(
                               '+$hidden more staff',
                               style: TextStyle(
-                                color: Colors.grey.shade700,
+                                color: Colors.white.withValues(alpha: 0.62),
                                 fontSize: 12,
                               ),
                             ),
@@ -1553,7 +1698,7 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
     return SectionCard(
       title: 'Staff on duty',
       icon: Icons.groups_outlined,
-      iconColor: Colors.deepPurple,
+      iconColor: AppTheme.sageAccent,
       badge: totalCount == null ? null : '$presentCount/$totalCount',
       action: TextButton(
         onPressed: () => widget.onNavigate(AdminTabIndex.staff),
@@ -1574,9 +1719,9 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
     final subtitle =
         phone.isNotEmpty ? phone : (data['email'] ?? '').toString().trim();
     final scheme = Theme.of(context).colorScheme;
-    final color = isPresent ? Colors.green : scheme.outline;
+    final color = isPresent ? AppTheme.sageSuccess : scheme.outline;
     final textColor =
-        isPresent ? Colors.green.shade800 : scheme.onSurfaceVariant;
+        isPresent ? AppTheme.sageSuccess : scheme.onSurfaceVariant;
     return Row(
       children: [
         CircleAvatar(
@@ -1698,7 +1843,7 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
           title: 'Today\'s Sales',
           value: peso.format(todayRevenue),
           icon: Icons.payments_outlined,
-          color: Colors.blue,
+          color: AppTheme.sageBlue,
           trendPercent: m == null ? null : dayChange,
           description:
               'Total sales from orders placed today. Trend compares today to yesterday when available.'),
@@ -1706,7 +1851,7 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
           title: 'Orders Today',
           value: ordersToday.toString(),
           icon: Icons.receipt_long_outlined,
-          color: Colors.indigo,
+          color: AppTheme.sageAccent,
           subtitle:
               pendingToday > 0 ? '$pendingToday pending' : 'All completed',
           description:
@@ -1715,14 +1860,16 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
           title: 'Avg Order Value',
           value: currency.format(aov),
           icon: Icons.calculate_outlined,
-          color: Colors.teal,
+          color: AppTheme.sageCyan,
           description:
               'Average amount spent per completed order (AOV), based on available order totals.'),
       KpiCard(
           title: 'Net Profit (MTD)',
           value: peso.format(netProfitMtd),
           icon: Icons.savings_outlined,
-          color: netProfitMtd >= 0 ? Colors.green : Colors.red,
+          color: netProfitMtd >= 0
+              ? AppTheme.sageSuccess
+              : Theme.of(context).colorScheme.error,
           subtitle:
               'Uses ${cogs.sourceLabel}${cogs.isEstimated ? " ratio estimate" : ""}; discounts/order-level gross may be unavailable here',
           description:
@@ -1731,7 +1878,9 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
           title: 'Gross Margin (Menu Costing)',
           value: peso.format(recipeMargin),
           icon: Icons.calculate_outlined,
-          color: recipeMargin >= 0 ? Colors.green : Colors.red,
+          color: recipeMargin >= 0
+              ? AppTheme.sageSuccess
+              : Theme.of(context).colorScheme.error,
           subtitle:
               '$costed/${_itemPerformance.length} costed \u00B7 separate from Actual COGS',
           description:
@@ -1740,7 +1889,7 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
           title: 'Inventory Value / Waste',
           value: peso.format(inv.inventoryValue),
           icon: Icons.inventory_2_outlined,
-          color: Colors.brown,
+          color: AppTheme.sageBlueDeep,
           subtitle:
               'Waste ${currency.format(inv.wasteCost)} \u00B7 ${inv.hasActualConsumption ? "consumption tracked" : "consumption N/A"}',
           description:
@@ -1749,7 +1898,7 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
           title: 'Outstanding Payables',
           value: peso.format(payablesKpi.outstanding),
           icon: Icons.payment,
-          color: Colors.orange,
+          color: Colors.amber,
           subtitle:
               'Overdue ${currency.format(payablesKpi.overdue)} \u00B7 Due 30d ${payablesKpi.dueThisMonth}',
           description:
@@ -1758,14 +1907,14 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
           title: 'Week Revenue',
           value: peso.format(weekRevenue),
           icon: Icons.calendar_view_week_outlined,
-          color: Colors.deepPurple,
+          color: AppTheme.sageAccent,
           description:
               'Total revenue for the current week based on completed order/sales data.'),
       KpiCard(
           title: 'Low Stock / Menu',
           value: lowStockCount.toString(),
           icon: Icons.warning_amber_rounded,
-          color: Colors.orange,
+          color: Colors.amber,
           subtitle: criticalStock > 0
               ? '$criticalStock critical \u00B7 Menu $totalMenuItems'
               : 'Items sold today $itemsSold \u00B7 Menu $totalMenuItems${zeroSales > 0 ? " ($zeroSales no sales)" : ""}',
@@ -1806,7 +1955,7 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
     return SectionCard(
       title: 'Sales Trend',
       icon: Icons.show_chart_rounded,
-      iconColor: const Color(0xFF1E88E5),
+      iconColor: AppTheme.sageBlue,
       badge: 'Last 7 days',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1817,12 +1966,15 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
             Row(
               children: [
                 const Icon(Icons.auto_graph_outlined,
-                    size: 14, color: Colors.blue),
+                    size: 14, color: AppTheme.sageBlue),
                 const SizedBox(width: 6),
                 Expanded(
                   child: Text(
                     forecastText,
-                    style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.white.withValues(alpha: 0.62),
+                    ),
                   ),
                 ),
               ],
@@ -1898,13 +2050,14 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
     return SectionCard(
       title: 'Menu Performance',
       icon: Icons.restaurant_menu,
-      iconColor: const Color(0xFF0EA5A4),
+      iconColor: AppTheme.sageCyan,
       badge: 'Last 30 days',
       child: top.isEmpty
           ? const EmptyState(
               icon: Icons.restaurant_menu,
               title: 'No sales data yet',
-              subtitle: 'Top sellers appear once orders start coming in.',
+              subtitle:
+                  'Once your first orders come in, your best sellers will show up here.',
             )
           : Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -1933,7 +2086,7 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
                               '${item['qty'] ?? 0} sold',
                               style: TextStyle(
                                 fontSize: 11,
-                                color: Colors.grey.shade600,
+                                color: Colors.white.withValues(alpha: 0.62),
                               ),
                             ),
                             const SizedBox(width: 8),
@@ -1956,9 +2109,10 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
                                 : ((item['revenue'] as num?)?.toDouble() ?? 0) /
                                     maxRevenue,
                             minHeight: 4,
-                            backgroundColor: Colors.grey.shade200,
+                            backgroundColor:
+                                Colors.white.withValues(alpha: 0.1),
                             valueColor:
-                                const AlwaysStoppedAnimation(Color(0xFF0EA5A4)),
+                                const AlwaysStoppedAnimation(AppTheme.sageCyan),
                           ),
                         ),
                       ],
@@ -1972,7 +2126,7 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
                     '${m.zeroSalesItemCount == 1 ? '' : 's'} with no sales',
                     style: TextStyle(
                       fontSize: 11,
-                      color: Colors.orange.shade800,
+                      color: Colors.amber,
                       fontWeight: FontWeight.w600,
                     ),
                   ),
@@ -2033,7 +2187,7 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
     return SectionCard(
       title: 'Finance Overview',
       icon: Icons.account_balance_wallet_outlined,
-      iconColor: const Color(0xFF16A34A),
+      iconColor: AppTheme.sageSuccess,
       badge: upcomingLabel,
       action: TextButton(
           onPressed: () =>
@@ -2046,7 +2200,7 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
               child: _MiniMetric(
                   label: 'MTD Net Sales*',
                   value: peso.format(mtdNetSales),
-                  color: Colors.green,
+                  color: AppTheme.sageSuccess,
                   description:
                       'Month-to-date net sales from daily sales data. Order-level discounts/gross may be unavailable in this source.')),
           SizedBox(
@@ -2054,7 +2208,7 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
               child: _MiniMetric(
                   label: 'COGS*',
                   value: peso.format(cogsValue),
-                  color: Colors.blue,
+                  color: AppTheme.sageBlue,
                   description:
                       'COGS for this snapshot: Actual sale-consumption movements when available; otherwise Estimated recipe/menu costing fallback.')),
           SizedBox(
@@ -2062,7 +2216,7 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
               child: _MiniMetric(
                   label: 'OpEx (MTD)',
                   value: peso.format(totalMonthlyExpenses),
-                  color: Colors.red,
+                  color: Theme.of(context).colorScheme.error,
                   description:
                       'Month-to-date operating expenses using an expense-category heuristic.')),
           SizedBox(
@@ -2070,7 +2224,9 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
               child: _MiniMetric(
                   label: 'Net Profit*',
                   value: peso.format(netProfitMtd),
-                  color: netProfitMtd >= 0 ? Colors.teal : Colors.red,
+                  color: netProfitMtd >= 0
+                      ? AppTheme.sageSuccess
+                      : Theme.of(context).colorScheme.error,
                   description:
                       'Estimated month-to-date net profit (net sales minus COGS* and operating expenses).')),
           SizedBox(
@@ -2078,7 +2234,9 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
               child: _MiniMetric(
                   label: 'Margin*',
                   value: '${margin.toStringAsFixed(1)}%',
-                  color: netProfitMtd >= 0 ? Colors.teal : Colors.red,
+                  color: netProfitMtd >= 0
+                      ? AppTheme.sageSuccess
+                      : Theme.of(context).colorScheme.error,
                   description:
                       'Net profit margin based on the COGS* source shown above.')),
           SizedBox(
@@ -2086,7 +2244,7 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
               child: _MiniMetric(
                   label: 'Payables Due',
                   value: peso.format(payablesKpi.outstanding),
-                  color: Colors.orange,
+                  color: Colors.amber,
                   description:
                       'Outstanding payables/bills due, including overdue/upcoming amounts when available.')),
           SizedBox(
@@ -2094,19 +2252,24 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
               child: _MiniMetric(
                   label: overdue > 0 ? 'Overdue' : 'Unpaid',
                   value: overdue > 0 ? peso.format(overdue) : '$unpaidCount',
-                  color: overdue > 0 ? Colors.red : Colors.purple)),
+                  color: overdue > 0
+                      ? Theme.of(context).colorScheme.error
+                      : AppTheme.sageAccent)),
         ]),
         Padding(
             padding: const EdgeInsets.only(top: 6),
             child: Text(
                 '*Net sales from daily sales (discount/gross may be unavailable). COGS: ${cogs.sourceLabel}${cogs.isEstimated ? ' (estimated fallback)' : ''}; separate from menu-costing gross margin. Operating expenses heuristic.',
-                style: TextStyle(fontSize: 11, color: Colors.grey.shade600))),
+                style: TextStyle(
+                    fontSize: 11,
+                    color: Colors.white.withValues(alpha: 0.62)))),
         const SizedBox(height: 12),
         const Divider(height: 1),
         const SizedBox(height: 8),
         if (upcomingPayables.isEmpty)
           Text('No bills due within 7 days.',
-              style: TextStyle(color: Colors.grey.shade700, fontSize: 12))
+              style: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.62), fontSize: 12))
         else
           ...upcomingPayables.take(3).map((p) {
             final name = (p['name'] ?? 'Unknown').toString();
@@ -2146,8 +2309,9 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
               trailing: Text(amountText,
                   style: TextStyle(
                       fontWeight: FontWeight.w700,
-                      color:
-                          (isVariable && estimate <= 0) ? Colors.grey : null)),
+                      color: (isVariable && estimate <= 0)
+                          ? Colors.white.withValues(alpha: 0.62)
+                          : null)),
             );
           }),
       ]),
@@ -2165,10 +2329,10 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
 
     return Card(
       elevation: 0,
-      color: Colors.white,
+      color: AppTheme.sagePanel,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(16),
-        side: BorderSide(color: Colors.blue.shade200),
+        side: BorderSide(color: AppTheme.sageBlue.withValues(alpha: 0.22)),
       ),
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -2178,7 +2342,7 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
             Row(
               children: [
                 const Icon(Icons.auto_awesome_rounded,
-                    color: Color(0xFF2563EB), size: 20),
+                    color: AppTheme.sageAccent, size: 20),
                 const SizedBox(width: 8),
                 const Text(
                   'Sage Briefing',
@@ -2190,13 +2354,13 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
                     padding:
                         const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                     decoration: BoxDecoration(
-                      color: Colors.blue.shade50,
+                      color: AppTheme.sageBlue.withValues(alpha: 0.18),
                       borderRadius: BorderRadius.circular(999),
                     ),
                     child: Text(
                       briefing.periodLabel,
                       style: const TextStyle(
-                        color: Color(0xFF2563EB),
+                        color: AppTheme.sageAccent,
                         fontSize: 11,
                         fontWeight: FontWeight.w700,
                       ),
@@ -2214,15 +2378,16 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
                     Text(
                       'No Sage briefing yet.',
                       style: TextStyle(
-                        color: Colors.grey.shade800,
+                        color: Colors.white.withValues(alpha: 0.82),
                         fontWeight: FontWeight.w600,
                       ),
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      'Check back during the next scheduled briefing window.',
-                      style:
-                          TextStyle(color: Colors.grey.shade700, fontSize: 12),
+                      "Your first Sage briefing will appear here once there's a little activity to look at.",
+                      style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.62),
+                          fontSize: 12),
                     ),
                   ],
                 ),
@@ -2230,7 +2395,8 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
             else ...[
               Text(
                 DateFormat('MMM d, yyyy • h:mm a').format(briefing.generatedAt),
-                style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
+                style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.62), fontSize: 12),
               ),
               const SizedBox(height: 10),
               Text(
@@ -2240,7 +2406,7 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
                 style: TextStyle(
                   fontSize: 13,
                   height: 1.6,
-                  color: Colors.grey.shade800,
+                  color: Colors.white.withValues(alpha: 0.82),
                 ),
               ),
               if (briefing.recommendation.isNotEmpty) ...[
@@ -2249,9 +2415,10 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
                   width: double.infinity,
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    color: Colors.amber.shade50,
+                    color: Colors.amber.withValues(alpha: 0.12),
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: Colors.amber.shade200),
+                    border:
+                        Border.all(color: Colors.amber.withValues(alpha: 0.35)),
                   ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -2268,10 +2435,10 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
                       const SizedBox(height: 4),
                       Text(
                         briefing.recommendation,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 12,
                           fontWeight: FontWeight.w600,
-                          color: Color(0xFF334155),
+                          color: Colors.white.withValues(alpha: 0.82),
                         ),
                       ),
                     ],
@@ -2328,7 +2495,7 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
     return SectionCard(
       title: 'Inventory Overview',
       icon: Icons.inventory_2_outlined,
-      iconColor: const Color(0xFFF59E0B),
+      iconColor: Colors.amber,
       badge: _lowStock.isEmpty
           ? null
           : '${lowStockItems.length + outOfStockItems.length} alerts',
@@ -2348,21 +2515,21 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
                 child: _MiniMetric(
                   label: 'Tracked Items',
                   value: '${_model?.totalInventoryItems ?? _lowStock.length}',
-                  color: Colors.blueGrey,
+                  color: AppTheme.sageAccent,
                 ),
               ),
               Expanded(
                 child: _MiniMetric(
                   label: 'Low Stock',
                   value: '${lowStockItems.length}',
-                  color: Colors.orange,
+                  color: Colors.amber,
                 ),
               ),
               Expanded(
                 child: _MiniMetric(
                   label: 'Out of Stock',
                   value: '${outOfStockItems.length}',
-                  color: Colors.red,
+                  color: Theme.of(context).colorScheme.error,
                 ),
               ),
               Expanded(
@@ -2370,7 +2537,7 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
                   label: 'Stock Value',
                   value: NumberFormat.currency(symbol: '₱', decimalDigits: 0)
                       .format(_model?.totalInventoryValue ?? 0),
-                  color: const Color(0xFF16A34A),
+                  color: AppTheme.sageSuccess,
                 ),
               ),
             ],
@@ -2381,7 +2548,8 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
           if (lowStockItems.isEmpty && outOfStockItems.isEmpty)
             Text(
               'All good — no stock issues.',
-              style: TextStyle(color: Colors.grey.shade700, fontSize: 12),
+              style: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.62), fontSize: 12),
             )
           else ...[
             // Out of Stock section
@@ -2389,12 +2557,12 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
               Row(
                 children: [
                   Icon(Icons.inventory_2_outlined,
-                      color: Colors.red.shade700, size: 16),
+                      color: Theme.of(context).colorScheme.error, size: 16),
                   const SizedBox(width: 6),
                   Text(
                     'Out of Stock (${outOfStockItems.length})',
                     style: TextStyle(
-                      color: Colors.red.shade700,
+                      color: Theme.of(context).colorScheme.error,
                       fontWeight: FontWeight.w700,
                       fontSize: 12,
                     ),
@@ -2410,7 +2578,9 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
                   padding: const EdgeInsets.only(top: 2, left: 20),
                   child: Text(
                     '+${outOfStockItems.length - 3} more',
-                    style: TextStyle(color: Colors.grey.shade600, fontSize: 11),
+                    style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.62),
+                        fontSize: 11),
                   ),
                 ),
               const SizedBox(height: 10),
@@ -2420,13 +2590,12 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
             if (lowStockItems.isNotEmpty) ...[
               Row(
                 children: [
-                  Icon(Icons.trending_down,
-                      color: Colors.orange.shade700, size: 16),
+                  Icon(Icons.trending_down, color: Colors.amber, size: 16),
                   const SizedBox(width: 6),
                   Text(
                     'Low Stock (${lowStockItems.length})',
                     style: TextStyle(
-                      color: Colors.orange.shade700,
+                      color: Colors.amber,
                       fontWeight: FontWeight.w700,
                       fontSize: 12,
                     ),
@@ -2441,7 +2610,9 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
                   padding: const EdgeInsets.only(top: 2, left: 20),
                   child: Text(
                     '+${lowStockItems.length - 3} more',
-                    style: TextStyle(color: Colors.grey.shade600, fontSize: 11),
+                    style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.62),
+                        fontSize: 11),
                   ),
                 ),
             ],
@@ -2468,7 +2639,9 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
               width: 8,
               height: 8,
               decoration: BoxDecoration(
-                color: isOutOfStock ? Colors.red : Colors.orange,
+                color: isOutOfStock
+                    ? Theme.of(context).colorScheme.error
+                    : Colors.amber,
                 borderRadius: BorderRadius.circular(4),
               ),
             ),
@@ -2489,14 +2662,17 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
                         ? 'Out of stock'
                         : 'Current: ${current.toStringAsFixed(1)}  •  Min: ${min.toStringAsFixed(1)}',
                     style: TextStyle(
-                      color: isOutOfStock ? Colors.red : Colors.orange.shade700,
+                      color: isOutOfStock
+                          ? Theme.of(context).colorScheme.error
+                          : Colors.amber,
                       fontSize: 12,
                     ),
                   ),
                 ],
               ),
             ),
-            Icon(Icons.chevron_right, color: Colors.grey.shade400, size: 18),
+            Icon(Icons.chevron_right,
+                color: Colors.white.withValues(alpha: 0.62), size: 18),
           ],
         ),
       ),
@@ -2519,7 +2695,9 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
             children: [
               Icon(
                 Icons.inventory_2_outlined,
-                color: isOutOfStock ? Colors.red : Colors.orange,
+                color: isOutOfStock
+                    ? Theme.of(context).colorScheme.error
+                    : Colors.amber,
               ),
               const SizedBox(width: 12),
               Expanded(
@@ -2541,13 +2719,19 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
                     color: isOutOfStock
-                        ? Colors.red.withValues(alpha: 0.08)
-                        : Colors.orange.withValues(alpha: 0.08),
+                        ? Theme.of(context)
+                            .colorScheme
+                            .error
+                            .withValues(alpha: 0.12)
+                        : Colors.amber.withValues(alpha: 0.12),
                     borderRadius: BorderRadius.circular(12),
                     border: Border.all(
                       color: isOutOfStock
-                          ? Colors.red.shade200
-                          : Colors.orange.shade200,
+                          ? Theme.of(context)
+                              .colorScheme
+                              .error
+                              .withValues(alpha: 0.35)
+                          : Colors.amber.withValues(alpha: 0.35),
                     ),
                   ),
                   child: Row(
@@ -2556,7 +2740,9 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
                         isOutOfStock
                             ? Icons.error_outline
                             : Icons.warning_amber,
-                        color: isOutOfStock ? Colors.red : Colors.orange,
+                        color: isOutOfStock
+                            ? Theme.of(context).colorScheme.error
+                            : Colors.amber,
                       ),
                       const SizedBox(width: 12),
                       Expanded(
@@ -2568,8 +2754,8 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
                               style: TextStyle(
                                 fontWeight: FontWeight.bold,
                                 color: isOutOfStock
-                                    ? Colors.red
-                                    : Colors.orange.shade700,
+                                    ? Theme.of(context).colorScheme.error
+                                    : Colors.amber,
                               ),
                             ),
                             Text(
@@ -2578,7 +2764,7 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
                                   : 'Current stock is below minimum level',
                               style: TextStyle(
                                 fontSize: 12,
-                                color: Colors.grey.shade700,
+                                color: Colors.white.withValues(alpha: 0.62),
                               ),
                             ),
                           ],
@@ -2627,7 +2813,7 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
           Text(
             label,
             style: TextStyle(
-              color: Colors.grey.shade600,
+              color: Colors.white.withValues(alpha: 0.62),
               fontSize: 13,
             ),
           ),
@@ -2790,7 +2976,7 @@ class IncompleteOrderRow extends StatelessWidget {
             child: Row(
               children: [
                 const Icon(Icons.receipt_long_outlined,
-                    color: Colors.red, size: 22),
+                    color: AppTheme.error, size: 22),
                 const SizedBox(width: 12),
                 // Flexible, not Expanded: the text column gives up width to
                 // the amount and action when space runs short.
@@ -2812,7 +2998,7 @@ class IncompleteOrderRow extends StatelessWidget {
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
                           fontSize: 12,
-                          color: Colors.grey.shade700,
+                          color: Colors.white.withValues(alpha: 0.62),
                         ),
                       ),
                     ],
@@ -2872,8 +3058,8 @@ class _CompleteButton extends StatelessWidget {
       child: ElevatedButton(
         onPressed: isCompleting ? null : onPressed,
         style: ElevatedButton.styleFrom(
-          backgroundColor: Colors.green,
-          foregroundColor: Colors.white,
+          backgroundColor: AppTheme.sageSuccess,
+          foregroundColor: AppTheme.sageNavy,
           padding: const EdgeInsets.symmetric(horizontal: 6),
           minimumSize: Size.zero,
           tapTargetSize: MaterialTapTargetSize.shrinkWrap,
@@ -2888,7 +3074,7 @@ class _CompleteButton extends StatelessWidget {
                 height: 14,
                 child: CircularProgressIndicator(
                   strokeWidth: 2,
-                  color: Colors.white,
+                  color: AppTheme.sageNavy,
                 ),
               )
             : const FittedBox(
@@ -2929,7 +3115,7 @@ class _CompleteIconButton extends StatelessWidget {
                 height: 16,
                 child: CircularProgressIndicator(strokeWidth: 2),
               )
-            : const Icon(Icons.check_circle, color: Colors.green),
+            : const Icon(Icons.check_circle, color: AppTheme.sageSuccess),
       ),
     );
   }
@@ -2978,7 +3164,7 @@ class _MiniMetric extends StatelessWidget {
           overflow: TextOverflow.ellipsis,
           style: TextStyle(
             fontSize: 11,
-            color: Colors.grey[600],
+            color: Colors.white.withValues(alpha: 0.62),
             fontWeight: FontWeight.w500,
           ),
         ),
@@ -3157,7 +3343,7 @@ class _StaffMealDialogState extends State<StaffMealDialog> {
                                 style: const TextStyle(
                                   fontSize: 14,
                                   fontWeight: FontWeight.bold,
-                                  color: Colors.blue,
+                                  color: AppTheme.sageCyan,
                                 ),
                               ),
                             ),
@@ -3200,7 +3386,8 @@ class _StaffMealDialogState extends State<StaffMealDialog> {
                     padding: const EdgeInsets.symmetric(vertical: 12),
                     decoration: BoxDecoration(
                       border: Border(
-                        top: BorderSide(color: Colors.grey.shade300),
+                        top: BorderSide(
+                            color: Colors.white.withValues(alpha: 0.14)),
                       ),
                     ),
                     child: Row(
@@ -3218,7 +3405,7 @@ class _StaffMealDialogState extends State<StaffMealDialog> {
                           style: const TextStyle(
                             fontSize: 18,
                             fontWeight: FontWeight.bold,
-                            color: Colors.blue,
+                            color: AppTheme.sageCyan,
                           ),
                         ),
                       ],
@@ -3383,11 +3570,14 @@ class _GlobalSearchDialogState extends State<_GlobalSearchDialog> {
   Widget _getTypeIcon(String type) {
     switch (type) {
       case 'menu':
-        return const Icon(Icons.restaurant_menu, color: Colors.teal, size: 20);
+        return const Icon(Icons.restaurant_menu,
+            color: AppTheme.sageCyan, size: 20);
       case 'inventory':
-        return const Icon(Icons.inventory_2, color: Colors.blue, size: 20);
+        return const Icon(Icons.inventory_2,
+            color: AppTheme.sageBlue, size: 20);
       case 'order':
-        return const Icon(Icons.receipt_long, color: Colors.indigo, size: 20);
+        return const Icon(Icons.receipt_long,
+            color: AppTheme.sageAccent, size: 20);
       default:
         return const Icon(Icons.search, size: 20);
     }
@@ -3409,13 +3599,13 @@ class _GlobalSearchDialogState extends State<_GlobalSearchDialog> {
   Color _getTypeColor(String type) {
     switch (type) {
       case 'menu':
-        return Colors.teal;
+        return AppTheme.sageCyan;
       case 'inventory':
-        return Colors.blue;
+        return AppTheme.sageBlue;
       case 'order':
-        return Colors.indigo;
+        return AppTheme.sageAccent;
       default:
-        return Colors.grey;
+        return Colors.white.withValues(alpha: 0.62);
     }
   }
 
@@ -3446,7 +3636,8 @@ class _GlobalSearchDialogState extends State<_GlobalSearchDialog> {
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         Icon(Icons.error_outline,
-                            color: Colors.red.shade400, size: 48),
+                            color: Theme.of(context).colorScheme.error,
+                            size: 48),
                         const SizedBox(height: 12),
                         Text('Error: $_error'),
                         const SizedBox(height: 12),
@@ -3463,11 +3654,13 @@ class _GlobalSearchDialogState extends State<_GlobalSearchDialog> {
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             Icon(Icons.search_off,
-                                color: Colors.grey.shade400, size: 48),
+                                color: Colors.white.withValues(alpha: 0.62),
+                                size: 48),
                             const SizedBox(height: 12),
                             Text(
                               'No results found for "${widget.query}"',
-                              style: TextStyle(color: Colors.grey.shade600),
+                              style: TextStyle(
+                                  color: Colors.white.withValues(alpha: 0.62)),
                             ),
                           ],
                         ),

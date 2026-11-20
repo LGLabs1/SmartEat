@@ -46,7 +46,7 @@ class FinancePayrollTab extends StatelessWidget {
         SectionCard(
           title: 'Staff Payroll',
           icon: Icons.groups_outlined,
-          iconColor: const Color(0xFF6366F1),
+          iconColor: const Color(0xFF818CF8),
           action: onNavigateToStaff == null
               ? null
               : TextButton.icon(
@@ -88,8 +88,7 @@ class FinancePayrollTab extends StatelessWidget {
               return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
                 stream: staffProfilesStream(id),
                 builder: (context, profilesSnap) {
-                  if (profilesSnap.connectionState ==
-                      ConnectionState.waiting) {
+                  if (profilesSnap.connectionState == ConnectionState.waiting) {
                     return const Padding(
                       padding: EdgeInsets.symmetric(vertical: 24),
                       child: Center(child: CircularProgressIndicator()),
@@ -109,9 +108,7 @@ class FinancePayrollTab extends StatelessWidget {
                     ..sort((a, b) {
                       final aName = _displayName(a.value, a.key);
                       final bName = _displayName(b.value, b.key);
-                      return aName
-                          .toLowerCase()
-                          .compareTo(bName.toLowerCase());
+                      return aName.toLowerCase().compareTo(bName.toLowerCase());
                     });
 
                   return Column(
@@ -168,9 +165,8 @@ class _PayrollRow extends StatelessWidget {
     final first = (userData['firstName'] ?? '').toString().trim();
     final last = (userData['lastName'] ?? '').toString().trim();
     final name = ('$first $last').trim();
-    final display = name.isNotEmpty
-        ? name
-        : (userData['email'] ?? uid).toString();
+    final display =
+        name.isNotEmpty ? name : (userData['email'] ?? uid).toString();
     final email = (userData['email'] ?? '').toString();
     final position = (profile['position'] ?? '').toString().trim();
     final rate = profile['dailyRate'] is num
@@ -186,11 +182,11 @@ class _PayrollRow extends StatelessWidget {
           children: [
             CircleAvatar(
               radius: 18,
-              backgroundColor: const Color(0xFF6366F1).withValues(alpha: 0.15),
+              backgroundColor: const Color(0xFF818CF8).withValues(alpha: 0.15),
               child: const Icon(
                 Icons.badge_outlined,
                 size: 18,
-                color: Color(0xFF6366F1),
+                color: Color(0xFF818CF8),
               ),
             ),
             const SizedBox(width: 12),

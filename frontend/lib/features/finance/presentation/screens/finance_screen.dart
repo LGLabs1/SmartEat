@@ -7,6 +7,7 @@ import '../../../../screens/staff_management_screen.dart';
 import '../../../../services/api_service.dart';
 import '../../../../services/auth_provider.dart';
 import '../../../../theme.dart';
+import '../../../../widgets/dashboard/dashboard_back_handler.dart';
 import '../../../../widgets/skeleton_loaders.dart';
 import '../../data/finance_export_service.dart';
 import '../../data/finance_format.dart';
@@ -32,12 +33,14 @@ class FinanceScreen extends StatefulWidget {
     this.showAppBar = true,
     this.onOpenDrawer,
     this.onNavigate,
+    this.onBackHandlerChanged,
   }) : super(key: key);
 
   final ValueNotifier<String>? globalSearchQuery;
   final bool showAppBar;
   final VoidCallback? onOpenDrawer;
   final ValueChanged<int>? onNavigate;
+  final DashboardBackHandlerChanged? onBackHandlerChanged;
 
   @override
   State<FinanceScreen> createState() => _FinanceScreenState();
@@ -153,10 +156,19 @@ class _FinanceScreenState extends State<FinanceScreen> {
       _loadBusinessSettings();
       _loadBudgets();
     });
+    if (!widget.showAppBar) {
+      widget.onBackHandlerChanged?.call(
+        DashboardBackHandler(
+          canUnwind: () => _tabHistory.length > 1,
+          unwind: _handleBack,
+        ),
+      );
+    }
   }
 
   @override
   void dispose() {
+    widget.onBackHandlerChanged?.call(null);
     final notifier = widget.globalSearchQuery;
     final listener = _globalSearchListener;
     if (notifier != null && listener != null) {
@@ -276,15 +288,28 @@ class _FinanceScreenState extends State<FinanceScreen> {
       _error = null;
     });
     try {
-      dynamic safe(Future<dynamic> f, String label, [dynamic fallback = const <String, dynamic>{'data': <dynamic>[]}]) async {
-        try { return await f; } catch (e) { debugPrint('load failed: $label $e'); return fallback; }
+      dynamic safe(Future<dynamic> f, String label,
+          [dynamic fallback = const <String, dynamic>{
+            'data': <dynamic>[]
+          }]) async {
+        try {
+          return await f;
+        } catch (e) {
+          debugPrint('load failed: $label $e');
+          return fallback;
+        }
       }
+
       final results = await Future.wait<dynamic>([
         safe(ApiService.getExpenses(), 'getExpenses'),
         safe(ApiService.getPayables(), 'getPayables'),
         safe(_getEateryId(), 'getEateryId', null),
-        safe(ApiService.getItemPerformance(), 'getItemPerformance', const <String, dynamic>{'data': <String, dynamic>{}}),
-        safe(ApiService.getDailySalesAnalytics(days: 62), 'getDailySalesAnalytics', const <String, dynamic>{'data': <String, dynamic>{}}),
+        safe(ApiService.getItemPerformance(), 'getItemPerformance',
+            const <String, dynamic>{'data': <String, dynamic>{}}),
+        safe(
+            ApiService.getDailySalesAnalytics(days: 62),
+            'getDailySalesAnalytics',
+            const <String, dynamic>{'data': <String, dynamic>{}}),
         safe(ApiService.getAllOrders(), 'getAllOrders'),
         safe(ApiService.getInventoryItems(), 'getInventoryItems'),
         safe(ApiService.getStockMovements(), 'getStockMovements'),
@@ -292,20 +317,37 @@ class _FinanceScreenState extends State<FinanceScreen> {
         safe(ApiService.getSalesForecast(days: 30), 'getSalesForecast'),
       ]);
 
-      List<Map<String, dynamic>> asList(dynamic raw, [List<String> path = const []]) {
+      List<Map<String, dynamic>> asList(dynamic raw,
+          [List<String> path = const []]) {
         try {
-          if (raw is List) return raw.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
+          if (raw is List)
+            return raw
+                .whereType<Map>()
+                .map((e) => Map<String, dynamic>.from(e))
+                .toList();
           if (raw is! Map) return const [];
           for (final key in path) {
             final v = raw[key];
-            if (v is List) return v.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
+            if (v is List)
+              return v
+                  .whereType<Map>()
+                  .map((e) => Map<String, dynamic>.from(e))
+                  .toList();
           }
           final data = raw['data'];
-          if (data is List) return data.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
+          if (data is List)
+            return data
+                .whereType<Map>()
+                .map((e) => Map<String, dynamic>.from(e))
+                .toList();
           if (data is Map) {
             for (final key in path) {
               final v = data[key];
-              if (v is List) return v.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
+              if (v is List)
+                return v
+                    .whereType<Map>()
+                    .map((e) => Map<String, dynamic>.from(e))
+                    .toList();
             }
           }
         } catch (_) {}
@@ -319,10 +361,23 @@ class _FinanceScreenState extends State<FinanceScreen> {
         final r = asList(results[3], const ['items']);
         if (r.isNotEmpty) return r;
         if (results[3] is Map) {
-          final m = results[3] as Map; final d = m['data'];
-          if (d is Map && d['items'] is List) return (d['items'] as List).whereType<Map>().map((e)=>Map<String,dynamic>.from(e)).toList();
-          if (d is List) return d.whereType<Map>().map((e)=>Map<String,dynamic>.from(e)).toList();
-          if (m['items'] is List) return (m['items'] as List).whereType<Map>().map((e)=>Map<String,dynamic>.from(e)).toList();
+          final m = results[3] as Map;
+          final d = m['data'];
+          if (d is Map && d['items'] is List)
+            return (d['items'] as List)
+                .whereType<Map>()
+                .map((e) => Map<String, dynamic>.from(e))
+                .toList();
+          if (d is List)
+            return d
+                .whereType<Map>()
+                .map((e) => Map<String, dynamic>.from(e))
+                .toList();
+          if (m['items'] is List)
+            return (m['items'] as List)
+                .whereType<Map>()
+                .map((e) => Map<String, dynamic>.from(e))
+                .toList();
         }
         return r;
       }();
@@ -330,10 +385,23 @@ class _FinanceScreenState extends State<FinanceScreen> {
         final r = asList(results[4], const ['dailySales']);
         if (r.isNotEmpty) return r;
         if (results[4] is Map) {
-          final m = results[4] as Map; final d = m['data'];
-          if (d is Map && d['dailySales'] is List) return (d['dailySales'] as List).whereType<Map>().map((e)=>Map<String,dynamic>.from(e)).toList();
-          if (d is List) return d.whereType<Map>().map((e)=>Map<String,dynamic>.from(e)).toList();
-          if (m['dailySales'] is List) return (m['dailySales'] as List).whereType<Map>().map((e)=>Map<String,dynamic>.from(e)).toList();
+          final m = results[4] as Map;
+          final d = m['data'];
+          if (d is Map && d['dailySales'] is List)
+            return (d['dailySales'] as List)
+                .whereType<Map>()
+                .map((e) => Map<String, dynamic>.from(e))
+                .toList();
+          if (d is List)
+            return d
+                .whereType<Map>()
+                .map((e) => Map<String, dynamic>.from(e))
+                .toList();
+          if (m['dailySales'] is List)
+            return (m['dailySales'] as List)
+                .whereType<Map>()
+                .map((e) => Map<String, dynamic>.from(e))
+                .toList();
         }
         return r;
       }();
@@ -505,9 +573,7 @@ class _FinanceScreenState extends State<FinanceScreen> {
       expense: expense,
       fmt: _fmt,
       isAdmin: _isAdmin,
-      onDelete: (linked || bill)
-          ? null
-          : () => _deleteExpense(expense),
+      onDelete: (linked || bill) ? null : () => _deleteExpense(expense),
       onViewPurchase: linked
           ? () {
               Navigator.of(context).maybePop();
@@ -648,7 +714,8 @@ class _FinanceScreenState extends State<FinanceScreen> {
     } else {
       amount = FinanceMetrics.amountOf(payable);
       if (amount <= 0) {
-        _snack('This bill has no amount set. Add an amount or mark it variable.');
+        _snack(
+            'This bill has no amount set. Add an amount or mark it variable.');
         return;
       }
     }
@@ -664,7 +731,8 @@ class _FinanceScreenState extends State<FinanceScreen> {
       // Drop any previously mirrored expense for this bill before adding the
       // fresh one so the ledger stays single-sourced.
       final prior = _findExpenseByLinkedPayable(id);
-      if (prior != null) _removeExpenseFromLocal((prior['id'] ?? '').toString());
+      if (prior != null)
+        _removeExpenseFromLocal((prior['id'] ?? '').toString());
       if (newExpense != null) _addExpenseToLocal(newExpense);
 
       final history = [
@@ -696,7 +764,8 @@ class _FinanceScreenState extends State<FinanceScreen> {
       await ApiService.updatePayableStatus(id, status: 'unpaid');
       if (!mounted) return;
       final prior = _findExpenseByLinkedPayable(id);
-      if (prior != null) _removeExpenseFromLocal((prior['id'] ?? '').toString());
+      if (prior != null)
+        _removeExpenseFromLocal((prior['id'] ?? '').toString());
       _updatePayableInLocal(id, {'status': 'unpaid'});
       _snack('Bill marked unpaid');
     } catch (e) {
@@ -887,76 +956,80 @@ class _FinanceScreenState extends State<FinanceScreen> {
   @override
   Widget build(BuildContext context) {
     final canUnwind = _tabHistory.length > 1;
-    return PopScope(
-      canPop: !canUnwind,
-      onPopInvokedWithResult: (didPop, _) {
-        if (didPop) return;
-        _handleBack();
-      },
-      child: Scaffold(
-        appBar: widget.showAppBar
-            ? AppBar(
-                leading: widget.onOpenDrawer != null
-                    ? IconButton(
-                        icon: const Icon(Icons.menu),
-                        tooltip: 'Menu',
-                        onPressed: widget.onOpenDrawer,
-                      )
-                    : (canUnwind
-                        ? IconButton(
-                            icon: const Icon(Icons.arrow_back),
-                            tooltip: 'Back',
-                            onPressed: () => _handleBack(),
-                          )
-                        : (Navigator.of(context).canPop()
-                            ? IconButton(
-                                icon: const Icon(Icons.arrow_back),
-                                onPressed: () =>
-                                    Navigator.of(context).maybePop(),
-                              )
-                            : null)),
-                title: const Text('Finance'),
-                actions: [
-                  IconButton(
-                    tooltip: 'Refresh',
-                    onPressed: _load,
-                    icon: const Icon(Icons.refresh),
-                  ),
-                ],
-              )
-            : null,
-        body: _buildBody(),
-        bottomNavigationBar: _isLoading || _error != null
-            ? null
-            : BottomNavigationBar(
-                currentIndex: _index,
-                onTap: _selectSection,
-                type: BottomNavigationBarType.fixed,
-                items: const [
-                  BottomNavigationBarItem(
-                    icon: Icon(Icons.dashboard_outlined),
-                    label: 'Overview',
-                  ),
-                  BottomNavigationBarItem(
-                    icon: Icon(Icons.receipt_long_outlined),
-                    label: 'Expenses',
-                  ),
-                  BottomNavigationBarItem(
-                    icon: Icon(Icons.payment_outlined),
-                    label: 'Payables',
-                  ),
-                  BottomNavigationBarItem(
-                    icon: Icon(Icons.analytics_outlined),
-                    label: 'Reports',
-                  ),
-                  BottomNavigationBarItem(
-                    icon: Icon(Icons.groups_outlined),
-                    label: 'Payroll',
-                  ),
-                ],
-              ),
-      ),
+    final body = Scaffold(
+      backgroundColor: AppTheme.sageNavy,
+      appBar: widget.showAppBar
+          ? AppBar(
+              leading: widget.onOpenDrawer != null
+                  ? IconButton(
+                      icon: const Icon(Icons.menu),
+                      tooltip: 'Menu',
+                      onPressed: widget.onOpenDrawer,
+                    )
+                  : (canUnwind
+                      ? IconButton(
+                          icon: const Icon(Icons.arrow_back),
+                          tooltip: 'Back',
+                          onPressed: () => _handleBack(),
+                        )
+                      : (Navigator.of(context).canPop()
+                          ? IconButton(
+                              icon: const Icon(Icons.arrow_back),
+                              onPressed: () => Navigator.of(context).maybePop(),
+                            )
+                          : null)),
+              title: const Text('Finance'),
+              actions: [
+                IconButton(
+                  tooltip: 'Refresh',
+                  onPressed: _load,
+                  icon: const Icon(Icons.refresh),
+                ),
+              ],
+            )
+          : null,
+      body: _buildBody(),
+      bottomNavigationBar: _isLoading || _error != null
+          ? null
+          : BottomNavigationBar(
+              currentIndex: _index,
+              onTap: _selectSection,
+              type: BottomNavigationBarType.fixed,
+              items: const [
+                BottomNavigationBarItem(
+                  icon: Icon(Icons.dashboard_outlined),
+                  label: 'Overview',
+                ),
+                BottomNavigationBarItem(
+                  icon: Icon(Icons.receipt_long_outlined),
+                  label: 'Expenses',
+                ),
+                BottomNavigationBarItem(
+                  icon: Icon(Icons.payment_outlined),
+                  label: 'Payables',
+                ),
+                BottomNavigationBarItem(
+                  icon: Icon(Icons.analytics_outlined),
+                  label: 'Reports',
+                ),
+                BottomNavigationBarItem(
+                  icon: Icon(Icons.groups_outlined),
+                  label: 'Payroll',
+                ),
+              ],
+            ),
     );
+    if (widget.showAppBar && canUnwind) {
+      return PopScope(
+        canPop: false,
+        onPopInvokedWithResult: (didPop, _) {
+          if (didPop) return;
+          _handleBack();
+        },
+        child: body,
+      );
+    }
+    return body;
   }
 
   Widget _buildBody() {
@@ -970,7 +1043,8 @@ class _FinanceScreenState extends State<FinanceScreen> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Icon(Icons.error_outline, size: 40, color: AppTheme.error),
+              Icon(Icons.error_outline,
+                  size: 40, color: Theme.of(context).colorScheme.error),
               const SizedBox(height: 12),
               Text(
                 'Failed to load finance data:\n$_error',

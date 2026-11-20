@@ -48,6 +48,7 @@ class ExpenseDetailSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     final name = (expense['name'] ?? '').toString();
     final category = (expense['category'] ?? '').toString();
     final amount = FinanceMetrics.amountOf(expense);
@@ -62,9 +63,8 @@ class ExpenseDetailSheet extends StatelessWidget {
     final linkedPurchaseId =
         (expense['linkedPurchaseId'] ?? '').toString().trim();
 
-    final title = name.trim().isEmpty
-        ? (category.isEmpty ? 'Expense' : category)
-        : name;
+    final title =
+        name.trim().isEmpty ? (category.isEmpty ? 'Expense' : category) : name;
 
     return SafeArea(
       child: Padding(
@@ -101,9 +101,8 @@ class ExpenseDetailSheet extends StatelessWidget {
                   ),
                   FinanceStatusBadge(
                     label: linked ? 'Inventory' : 'Manual',
-                    color: linked
-                        ? FinanceStatus.linked
-                        : FinanceStatus.neutral,
+                    color:
+                        linked ? FinanceStatus.linked : FinanceStatus.neutral,
                     icon: linked ? Icons.link : Icons.edit_note,
                   ),
                 ],
@@ -117,14 +116,13 @@ class ExpenseDetailSheet extends StatelessWidget {
                 ),
               ),
               const Divider(height: 28),
-              FinanceDetailRow('Category',
-                  category.isEmpty ? 'Uncategorised' : category),
-              FinanceDetailRow('Date',
-                  date == null ? 'Not set' : FinanceFormat.date(date)),
+              FinanceDetailRow(
+                  'Category', category.isEmpty ? 'Uncategorised' : category),
+              FinanceDetailRow(
+                  'Date', date == null ? 'Not set' : FinanceFormat.date(date)),
               if (supplier.isNotEmpty) FinanceDetailRow('Supplier', supplier),
               if (receipt.isNotEmpty) FinanceDetailRow('Receipt', receipt),
-              if (method.isNotEmpty)
-                FinanceDetailRow('Payment Method', method),
+              if (method.isNotEmpty) FinanceDetailRow('Payment Method', method),
               if (status.isNotEmpty) FinanceDetailRow('Payment Status', status),
               FinanceDetailRow('Source', source),
               if (linkedPurchaseId.isNotEmpty)
@@ -150,7 +148,7 @@ class ExpenseDetailSheet extends StatelessWidget {
                           'purchase receipt to keep the books consistent.',
                           style: TextStyle(
                             fontSize: 12,
-                            color: AppTheme.primary,
+                            color: AppTheme.sageAccent,
                           ),
                         ),
                       ),
@@ -173,7 +171,7 @@ class ExpenseDetailSheet extends StatelessWidget {
                       child: OutlinedButton.icon(
                         onPressed: onDelete,
                         style: OutlinedButton.styleFrom(
-                          foregroundColor: AppTheme.error,
+                          foregroundColor: scheme.error,
                         ),
                         icon: const Icon(Icons.delete_outline),
                         label: const Text('Delete'),

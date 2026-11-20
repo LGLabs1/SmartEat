@@ -5,13 +5,20 @@ import 'package:intl/intl.dart';
 import '../features/finance/data/business_kpis.dart';
 import '../features/finance/data/finance_metrics.dart';
 import '../services/api_service.dart';
+import '../theme.dart';
+import '../widgets/dashboard/dashboard_back_handler.dart';
 
 class AnalyticsScreen extends StatefulWidget {
-  const AnalyticsScreen({Key? key, this.showAppBar = true, this.onOpenDrawer})
-      : super(key: key);
+  const AnalyticsScreen({
+    Key? key,
+    this.showAppBar = true,
+    this.onOpenDrawer,
+    this.onBackHandlerChanged,
+  }) : super(key: key);
 
   final bool showAppBar;
   final VoidCallback? onOpenDrawer;
+  final DashboardBackHandlerChanged? onBackHandlerChanged;
 
   @override
   State<AnalyticsScreen> createState() => _AnalyticsScreenState();
@@ -49,7 +56,7 @@ class _KpiMiniCard extends StatelessWidget {
             width: 30,
             height: 30,
             decoration: BoxDecoration(
-              color: color.withOpacity(0.10),
+              color: color.withValues(alpha: 0.10),
               borderRadius: BorderRadius.circular(10),
             ),
             child: Icon(icon, color: color, size: 18),
@@ -121,7 +128,11 @@ class _CompactKpiItem extends StatelessWidget {
 
   Widget _withTip(Widget child) => description == null
       ? child
-      : Tooltip(message: description!, preferBelow: false, waitDuration: const Duration(milliseconds: 300), child: child);
+      : Tooltip(
+          message: description!,
+          preferBelow: false,
+          waitDuration: const Duration(milliseconds: 300),
+          child: child);
 
   @override
   Widget build(BuildContext context) {
@@ -139,7 +150,7 @@ class _CompactKpiItem extends StatelessWidget {
             Container(
               padding: const EdgeInsets.all(4),
               decoration: BoxDecoration(
-                color: color.withOpacity(0.1),
+                color: color.withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(6),
               ),
               child: Icon(icon, color: color, size: 14),
@@ -150,8 +161,17 @@ class _CompactKpiItem extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(value, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 12)),
-                  Text(subtitle, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 9)),
+                  Text(value,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          fontWeight: FontWeight.w800, fontSize: 12)),
+                  Text(subtitle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                          fontSize: 9)),
                 ],
               ),
             ),
@@ -174,7 +194,9 @@ class _CompactKpiItem extends StatelessWidget {
           Container(
             width: 28,
             height: 28,
-            decoration: BoxDecoration(color: color.withOpacity(0.1), borderRadius: BorderRadius.circular(8)),
+            decoration: BoxDecoration(
+                color: color.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(8)),
             child: Icon(icon, color: color, size: 16),
           ),
           const SizedBox(width: 8),
@@ -183,10 +205,26 @@ class _CompactKpiItem extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
-                Text(title, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontWeight: FontWeight.w700, fontSize: 10)),
+                Text(title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 10)),
                 const SizedBox(height: 2),
-                Text(value, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 13)),
-                Text(subtitle, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 9, fontWeight: FontWeight.w500)),
+                Text(value,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                        fontWeight: FontWeight.w900, fontSize: 13)),
+                Text(subtitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        fontSize: 9,
+                        fontWeight: FontWeight.w500)),
               ],
             ),
           ),
@@ -200,6 +238,9 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
     with TickerProviderStateMixin {
   late TabController _tabController;
   late VoidCallback _tabListener;
+  final List<int> _analyticsTabHistory = <int>[0];
+  int _lastAnalyticsTabIndex = 0;
+  bool _restoringAnalyticsTab = false;
   Map<String, dynamic>? _summaryStats;
   List<Map<String, dynamic>> _dailySales = [];
   List<Map<String, dynamic>> _itemPerformance = [];
@@ -229,7 +270,8 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
   List<int> _availableYears = [];
   final Map<int, List<int>> _availableMonthsByYear = {};
 
-  final NumberFormat _currency = NumberFormat.currency(locale: 'en_PH', symbol: '\u20B1', decimalDigits: 2);
+  final NumberFormat _currency = NumberFormat.currency(
+      locale: 'en_PH', symbol: '\u20B1', decimalDigits: 2);
 
   bool _looksLikeNetworkIssue(Object e) {
     final s = e.toString().toLowerCase();
@@ -329,6 +371,12 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
     super.initState();
     _tabController = TabController(length: 4, vsync: this);
     _tabListener = () {
+      if (_restoringAnalyticsTab) return;
+      final index = _tabController.index;
+      if (index != _lastAnalyticsTabIndex) {
+        _analyticsTabHistory.add(index);
+        _lastAnalyticsTabIndex = index;
+      }
       if (!_tabController.indexIsChanging) {
         setState(() {});
       }
@@ -339,6 +387,22 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
     _selectedMonthNumber = null; // All months
     _loadAvailability();
     _loadAnalyticsData();
+    widget.onBackHandlerChanged?.call(
+      DashboardBackHandler(
+        canUnwind: () => !widget.showAppBar && _analyticsTabHistory.length > 1,
+        unwind: () {
+          if (_analyticsTabHistory.length <= 1) return false;
+          _restoringAnalyticsTab = true;
+          _analyticsTabHistory.removeLast();
+          final previous = _analyticsTabHistory.last;
+          _lastAnalyticsTabIndex = previous;
+          _tabController.index = previous;
+          _restoringAnalyticsTab = false;
+          setState(() {});
+          return true;
+        },
+      ),
+    );
   }
 
   Future<void> _loadAvailability() async {
@@ -395,6 +459,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
 
   @override
   void dispose() {
+    widget.onBackHandlerChanged?.call(null);
     _tabController.removeListener(_tabListener);
     _tabController.dispose();
     super.dispose();
@@ -456,44 +521,67 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
         ApiService.getRecommendations(),
         ApiService.getExpenses(),
         ApiService.getPayables(),
-        ordersForRangeFuture.catchError((_) => <String, dynamic>{'data': const []}),
-        ApiService.getStockMovements().catchError((_) => <String, dynamic>{'data': const []}),
-        ApiService.getInventoryItems().catchError((_) => <String, dynamic>{'data': const []}),
-        ApiService.getDamagedItems().catchError((_) => <String, dynamic>{'data': const []}),
+        ordersForRangeFuture
+            .catchError((_) => <String, dynamic>{'data': const []}),
+        ApiService.getStockMovements()
+            .catchError((_) => <String, dynamic>{'data': const []}),
+        ApiService.getInventoryItems()
+            .catchError((_) => <String, dynamic>{'data': const []}),
+        ApiService.getDamagedItems()
+            .catchError((_) => <String, dynamic>{'data': const []}),
       ]);
 
       if (mounted) {
         List<Map<String, dynamic>> asList(dynamic raw) {
-          if (raw is List) return raw.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
+          if (raw is List)
+            return raw
+                .whereType<Map>()
+                .map((e) => Map<String, dynamic>.from(e))
+                .toList();
           if (raw is Map) {
             final data = raw['data'];
-            if (data is List) return data.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
+            if (data is List)
+              return data
+                  .whereType<Map>()
+                  .map((e) => Map<String, dynamic>.from(e))
+                  .toList();
           }
           return const [];
         }
+
         final ordersForRange = asList(results[8]);
         setState(() {
-          _summaryStats = (results[0] is Map ? (results[0] as Map)['data'] : null) as Map<String, dynamic>?;
-          _dailySales = List<Map<String, dynamic>>.from(
-              ((results[1] is Map ? (results[1] as Map)['data'] : null) as Map?)?['dailySales'] ?? []);
-          _itemPerformance =
-              List<Map<String, dynamic>>.from(((results[2] is Map ? (results[2] as Map)['data'] : null) as Map?)?['items'] ?? [])
-                ..sort((a, b) {
-                  final ar = a['revenue'];
-                  final br = b['revenue'];
-                  final av = (ar is num) ? ar.toDouble() : 0.0;
-                  final bv = (br is num) ? br.toDouble() : 0.0;
-                  return bv.compareTo(av);
-                });
+          _summaryStats = (results[0] is Map
+              ? (results[0] as Map)['data']
+              : null) as Map<String, dynamic>?;
+          _dailySales = List<Map<String, dynamic>>.from(((results[1] is Map
+                  ? (results[1] as Map)['data']
+                  : null) as Map?)?['dailySales'] ??
+              []);
+          _itemPerformance = List<Map<String, dynamic>>.from(((results[2] is Map
+                  ? (results[2] as Map)['data']
+                  : null) as Map?)?['items'] ??
+              [])
+            ..sort((a, b) {
+              final ar = a['revenue'];
+              final br = b['revenue'];
+              final av = (ar is num) ? ar.toDouble() : 0.0;
+              final bv = (br is num) ? br.toDouble() : 0.0;
+              return bv.compareTo(av);
+            });
           _topSellingItems = _computeTopSellingItems(ordersForRange);
           _ordersForRange = ordersForRange;
-          _ordersForecast =
-              List<Map<String, dynamic>>.from((results[3] is Map ? (results[3] as Map)['data'] : null) ?? []);
-          _salesForecast =
-              List<Map<String, dynamic>>.from((results[4] is Map ? (results[4] as Map)['data'] : null) ?? []);
-          _recommendations = (results[5] is Map ? (results[5] as Map)['data'] : null) as Map<String, dynamic>?;
-          _expenses = List<Map<String, dynamic>>.from((results[6] is Map ? (results[6] as Map)['data'] : null) ?? []);
-          _payables = List<Map<String, dynamic>>.from((results[7] is Map ? (results[7] as Map)['data'] : null) ?? []);
+          _ordersForecast = List<Map<String, dynamic>>.from(
+              (results[3] is Map ? (results[3] as Map)['data'] : null) ?? []);
+          _salesForecast = List<Map<String, dynamic>>.from(
+              (results[4] is Map ? (results[4] as Map)['data'] : null) ?? []);
+          _recommendations = (results[5] is Map
+              ? (results[5] as Map)['data']
+              : null) as Map<String, dynamic>?;
+          _expenses = List<Map<String, dynamic>>.from(
+              (results[6] is Map ? (results[6] as Map)['data'] : null) ?? []);
+          _payables = List<Map<String, dynamic>>.from(
+              (results[7] is Map ? (results[7] as Map)['data'] : null) ?? []);
           _stockMovements = asList(results[9]);
           _inventoryItems = asList(results[10]);
           _damagedItems = asList(results[11]);
@@ -598,7 +686,8 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                 top: false,
                 child: DecoratedBox(
                   decoration: BoxDecoration(
-                    border: Border(top: BorderSide(color: scheme.outlineVariant)),
+                    border:
+                        Border(top: BorderSide(color: scheme.outlineVariant)),
                   ),
                   child: TabBar(
                     controller: _tabController,
@@ -606,14 +695,24 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                     unselectedLabelColor: scheme.onSurfaceVariant,
                     indicatorColor: scheme.primary,
                     indicatorSize: TabBarIndicatorSize.tab,
-                    labelStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
-                    unselectedLabelStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                    labelStyle: const TextStyle(
+                        fontSize: 12, fontWeight: FontWeight.w700),
+                    unselectedLabelStyle: const TextStyle(
+                        fontSize: 12, fontWeight: FontWeight.w600),
                     labelPadding: const EdgeInsets.symmetric(horizontal: 6),
                     tabs: const [
-                      Tab(icon: Icon(Icons.show_chart_outlined, size: 20), text: 'Sales'),
-                      Tab(icon: Icon(Icons.insights_outlined, size: 20), text: 'Insights'),
-                      Tab(icon: Icon(Icons.auto_graph_outlined, size: 20), text: 'Forecast'),
-                      Tab(icon: Icon(Icons.payments_outlined, size: 20), text: 'Finance'),
+                      Tab(
+                          icon: Icon(Icons.show_chart_outlined, size: 20),
+                          text: 'Sales'),
+                      Tab(
+                          icon: Icon(Icons.insights_outlined, size: 20),
+                          text: 'Insights'),
+                      Tab(
+                          icon: Icon(Icons.auto_graph_outlined, size: 20),
+                          text: 'Forecast'),
+                      Tab(
+                          icon: Icon(Icons.payments_outlined, size: 20),
+                          text: 'Finance'),
                     ],
                   ),
                 ),
@@ -632,7 +731,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
             elevation: 0,
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(16),
-              side: BorderSide(color: Colors.grey.shade200),
+              side: BorderSide(color: Colors.white.withValues(alpha: 0.1)),
             ),
             child: Padding(
               padding: const EdgeInsets.all(16),
@@ -644,7 +743,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
             elevation: 0,
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(16),
-              side: BorderSide(color: Colors.grey.shade200),
+              side: BorderSide(color: Colors.white.withValues(alpha: 0.1)),
             ),
             child: Padding(
               padding: const EdgeInsets.all(16),
@@ -742,7 +841,8 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
             icon: Icons.account_balance_wallet,
             color: Theme.of(context).colorScheme.error,
             isNarrow: isNarrow,
-            description: 'Total recorded expenses for the selected/current month and number of expense transactions.',
+            description:
+                'Total recorded expenses for the selected/current month and number of expense transactions.',
           ),
           _CompactKpiItem(
             title: 'Payables',
@@ -751,7 +851,8 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
             icon: Icons.payment,
             color: Theme.of(context).colorScheme.secondary,
             isNarrow: isNarrow,
-            description: 'Outstanding payables/bills due and the number of pending payable records.',
+            description:
+                'Outstanding payables/bills due and the number of pending payable records.',
           ),
         ];
 
@@ -918,7 +1019,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                 ),
                 const SizedBox(width: 8),
                 Icon(Icons.arrow_drop_down,
-                    size: 18, color: Colors.grey.shade600),
+                    size: 18, color: Colors.white.withValues(alpha: 0.6)),
               ],
             ),
           ),
@@ -1031,7 +1132,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
               size: 18,
               color: isSelected
                   ? Theme.of(context).colorScheme.primary
-                  : Colors.grey.shade600,
+                  : Colors.white.withValues(alpha: 0.6),
             ),
             const SizedBox(width: 12),
             Expanded(
@@ -1042,7 +1143,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                   fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
                   color: isSelected
                       ? Theme.of(context).colorScheme.primary
-                      : Colors.grey.shade800,
+                      : Colors.white.withValues(alpha: 0.85),
                 ),
               ),
             ),
@@ -1249,9 +1350,9 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
     // The dropdown will show the selected value even if not in current data
 
     BoxDecoration box() => BoxDecoration(
-          color: Colors.white,
+          color: AppTheme.sagePanel,
           borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: Colors.grey.shade300),
+          border: Border.all(color: Colors.white.withValues(alpha: 0.2)),
         );
 
     final yearSlicer = Container(
@@ -1265,7 +1366,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
             style: TextStyle(
               fontSize: 12,
               fontWeight: FontWeight.w600,
-              color: Colors.grey.shade600,
+              color: Colors.white.withValues(alpha: 0.6),
             ),
           ),
           const SizedBox(width: 8),
@@ -1274,7 +1375,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
               value: _selectedYear,
               isDense: true,
               icon: Icon(Icons.arrow_drop_down,
-                  size: 18, color: Colors.grey.shade600),
+                  size: 18, color: Colors.white.withValues(alpha: 0.6)),
               items: [
                 const DropdownMenuItem<int?>(value: null, child: Text('All')),
                 ...availableYears.map((year) => DropdownMenuItem<int?>(
@@ -1306,7 +1407,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
             style: TextStyle(
               fontSize: 12,
               fontWeight: FontWeight.w600,
-              color: Colors.grey.shade600,
+              color: Colors.white.withValues(alpha: 0.6),
             ),
           ),
           const SizedBox(width: 8),
@@ -1315,13 +1416,13 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
               value: _selectedMonthNumber,
               isDense: true,
               icon: Icon(Icons.arrow_drop_down,
-                  size: 18, color: Colors.grey.shade600),
+                  size: 18, color: Colors.white.withValues(alpha: 0.6)),
               items: [
                 const DropdownMenuItem<int?>(value: null, child: Text('All')),
                 ...availableMonths.map((month) => DropdownMenuItem<int?>(
                       value: month,
-                      child: Text(DateFormat('MMMM')
-                          .format(DateTime(2024, month, 1))),
+                      child: Text(
+                          DateFormat('MMMM').format(DateTime(2024, month, 1))),
                     )),
               ],
               onChanged: (value) {
@@ -1505,11 +1606,11 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
             Container(
               padding: const EdgeInsets.all(10),
               decoration: BoxDecoration(
-                color: Colors.green.shade50,
+                color: AppTheme.sageSuccess.withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(10),
               ),
               child: Icon(Icons.restaurant_menu,
-                  color: Colors.green.shade700, size: 24),
+                  color: AppTheme.sageSuccess, size: 24),
             ),
             const SizedBox(width: 12),
             Expanded(
@@ -1522,7 +1623,9 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                   ),
                   Text(
                     'Top selling items by quantity in the selected range',
-                    style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                    style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.white.withValues(alpha: 0.6)),
                   ),
                 ],
               ),
@@ -1562,26 +1665,28 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
           Container(
             padding: const EdgeInsets.all(48),
             decoration: BoxDecoration(
-              color: Colors.grey.shade50,
+              color: Colors.white.withValues(alpha: 0.05),
               borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: Colors.grey.shade200),
+              border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
             ),
             child: Column(
               children: [
                 Icon(Icons.restaurant_menu,
-                    size: 64, color: Colors.grey.shade300),
+                    size: 64, color: Colors.white.withValues(alpha: 0.2)),
                 const SizedBox(height: 16),
                 Text(
                   'No item performance data available',
                   textAlign: TextAlign.center,
                   style: TextStyle(
-                      color: Colors.grey.shade600, fontWeight: FontWeight.w500),
+                      color: Colors.white.withValues(alpha: 0.6),
+                      fontWeight: FontWeight.w500),
                 ),
                 const SizedBox(height: 8),
                 Text(
                   'Complete some orders to see top performing items',
                   textAlign: TextAlign.center,
-                  style: TextStyle(color: Colors.grey.shade500, fontSize: 12),
+                  style: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.5), fontSize: 12),
                 ),
               ],
             ),
@@ -1598,23 +1703,24 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                       begin: Alignment.topLeft,
                       end: Alignment.bottomRight,
                       colors: [
-                        Colors.amber.shade50,
-                        Colors.orange.shade50,
+                        Colors.amber.withValues(alpha: 0.14),
+                        Colors.orange.withValues(alpha: 0.10),
                       ],
                     ),
                     borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: Colors.amber.shade200),
+                    border:
+                        Border.all(color: Colors.amber.withValues(alpha: 0.35)),
                   ),
                   child: Row(
                     children: [
                       Container(
                         padding: const EdgeInsets.all(12),
                         decoration: BoxDecoration(
-                          color: Colors.amber.shade100,
+                          color: Colors.amber.withValues(alpha: 0.18),
                           borderRadius: BorderRadius.circular(12),
                         ),
                         child: Icon(Icons.emoji_events,
-                            color: Colors.amber.shade700, size: 28),
+                            color: Colors.amber.shade300, size: 28),
                       ),
                       const SizedBox(width: 16),
                       Expanded(
@@ -1626,7 +1732,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                               style: TextStyle(
                                 fontSize: 12,
                                 fontWeight: FontWeight.w600,
-                                color: Colors.amber.shade700,
+                                color: Colors.amber.shade300,
                               ),
                             ),
                             Text(
@@ -1642,7 +1748,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                               '$topCount sold',
                               style: TextStyle(
                                 fontSize: 12,
-                                color: Colors.grey.shade700,
+                                color: Colors.white.withValues(alpha: 0.7),
                               ),
                             ),
                           ],
@@ -1660,7 +1766,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                       style: TextStyle(
                           fontSize: 12,
                           fontWeight: FontWeight.w600,
-                          color: Colors.grey.shade600),
+                          color: Colors.white.withValues(alpha: 0.6)),
                     ),
                     const SizedBox(width: 16),
                     Expanded(
@@ -1669,7 +1775,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                         style: TextStyle(
                             fontSize: 12,
                             fontWeight: FontWeight.w600,
-                            color: Colors.grey.shade600),
+                            color: Colors.white.withValues(alpha: 0.6)),
                       ),
                     ),
                     Text(
@@ -1677,7 +1783,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                       style: TextStyle(
                           fontSize: 12,
                           fontWeight: FontWeight.w600,
-                          color: Colors.grey.shade600),
+                          color: Colors.white.withValues(alpha: 0.6)),
                     ),
                   ],
                 ),
@@ -1691,7 +1797,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
 
                 final rankColors = [
                   Colors.amber.shade400,
-                  Colors.grey.shade400,
+                  Colors.white.withValues(alpha: 0.75),
                   Colors.orange.shade300,
                   Colors.blue.shade300,
                   Colors.green.shade300,
@@ -1705,9 +1811,10 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                     padding: const EdgeInsets.symmetric(
                         horizontal: 12, vertical: 12),
                     decoration: BoxDecoration(
-                      color: Colors.white,
+                      color: AppTheme.sagePanel,
                       borderRadius: BorderRadius.circular(14),
-                      border: Border.all(color: Colors.grey.shade200),
+                      border: Border.all(
+                          color: Colors.white.withValues(alpha: 0.1)),
                     ),
                     child: Row(
                       children: [
@@ -1715,7 +1822,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                           width: 28,
                           height: 28,
                           decoration: BoxDecoration(
-                            color: rankColor.withOpacity(0.15),
+                            color: rankColor.withValues(alpha: 0.15),
                             borderRadius: BorderRadius.circular(8),
                           ),
                           child: Center(
@@ -1745,7 +1852,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                           padding: const EdgeInsets.symmetric(
                               horizontal: 10, vertical: 4),
                           decoration: BoxDecoration(
-                            color: Colors.purple.withOpacity(0.10),
+                            color: Colors.purple.withValues(alpha: 0.10),
                             borderRadius: BorderRadius.circular(999),
                           ),
                           child: Text(
@@ -1813,11 +1920,37 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
           ),
           const SizedBox(height: 16),
           Builder(builder: (context) {
-            final f = BusinessKpis.forecastKpi(salesForecast: _salesForecast, menuProfitRowsData: _itemPerformance);
+            final f = BusinessKpis.forecastKpi(
+                salesForecast: _salesForecast,
+                menuProfitRowsData: _itemPerformance);
             return Wrap(spacing: 12, runSpacing: 12, children: [
-              SizedBox(width: 320, child: _FinanceCard(title: 'Forecast Revenue (30d)', value: _currency.format(f.forecastRevenue), subtitle: 'From sales forecast', icon: Icons.trending_up, color: const Color(0xFF00B0FF))),
-              SizedBox(width: 320, child: _FinanceCard(title: 'Forecast Ingredient Cost (est.)', value: _currency.format(f.forecastIngredientCost), subtitle: 'Estimated from menu costing ratio; label as estimate.', icon: Icons.inventory, color: Colors.orange.shade600)),
-              SizedBox(width: 320, child: _FinanceCard(title: 'Forecast Profit (est.)', value: _currency.format(f.forecastProfit), subtitle: 'Revenue minus estimated ingredient cost.', icon: Icons.savings, color: f.forecastProfit >= 0 ? Colors.green.shade600 : Colors.red.shade600)),
+              SizedBox(
+                  width: 320,
+                  child: _FinanceCard(
+                      title: 'Forecast Revenue (30d)',
+                      value: _currency.format(f.forecastRevenue),
+                      subtitle: 'From sales forecast',
+                      icon: Icons.trending_up,
+                      color: const Color(0xFF00B0FF))),
+              SizedBox(
+                  width: 320,
+                  child: _FinanceCard(
+                      title: 'Forecast Ingredient Cost (est.)',
+                      value: _currency.format(f.forecastIngredientCost),
+                      subtitle:
+                          'Estimated from menu costing ratio; label as estimate.',
+                      icon: Icons.inventory,
+                      color: Colors.orange.shade600)),
+              SizedBox(
+                  width: 320,
+                  child: _FinanceCard(
+                      title: 'Forecast Profit (est.)',
+                      value: _currency.format(f.forecastProfit),
+                      subtitle: 'Revenue minus estimated ingredient cost.',
+                      icon: Icons.savings,
+                      color: f.forecastProfit >= 0
+                          ? AppTheme.sageSuccess
+                          : Colors.red.shade600)),
             ]);
           }),
         ],
@@ -1839,19 +1972,20 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
       return Container(
         height: 200,
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: AppTheme.sagePanel,
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: Colors.grey.shade200),
+          border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
         ),
         child: Center(
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(Icons.insights, size: 48, color: Colors.grey.shade300),
+              Icon(Icons.insights,
+                  size: 48, color: Colors.white.withValues(alpha: 0.2)),
               const SizedBox(height: 12),
               Text(
                 'No data available',
-                style: TextStyle(color: Colors.grey.shade600),
+                style: TextStyle(color: Colors.white.withValues(alpha: 0.6)),
               ),
             ],
           ),
@@ -1872,12 +2006,12 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
 
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppTheme.sagePanel,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.grey.shade200),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
         boxShadow: [
           BoxShadow(
-            color: Colors.grey.shade200,
+            color: AppTheme.sageNavy.withValues(alpha: 0.7),
             blurRadius: 4,
             offset: const Offset(0, 2),
           ),
@@ -1894,7 +2028,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                 Container(
                   padding: const EdgeInsets.all(6),
                   decoration: BoxDecoration(
-                    color: iconColor.withOpacity(0.1),
+                    color: iconColor.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(6),
                   ),
                   child: Icon(icon, color: iconColor, size: 18),
@@ -1915,7 +2049,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                         subtitle,
                         style: TextStyle(
                           fontSize: 11,
-                          color: Colors.grey.shade600,
+                          color: Colors.white.withValues(alpha: 0.6),
                         ),
                       ),
                     ],
@@ -1975,8 +2109,8 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                           height: 40,
                           decoration: BoxDecoration(
                             color: isWeekend
-                                ? color.withOpacity(0.15)
-                                : color.withOpacity(0.08),
+                                ? color.withValues(alpha: 0.15)
+                                : color.withValues(alpha: 0.08),
                             borderRadius: BorderRadius.circular(6),
                           ),
                           child: Align(
@@ -1991,7 +2125,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                                     begin: Alignment.topCenter,
                                     end: Alignment.bottomCenter,
                                     colors: [
-                                      color.withOpacity(0.7),
+                                      color.withValues(alpha: 0.7),
                                       color,
                                     ],
                                   ),
@@ -2008,7 +2142,9 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                           style: TextStyle(
                             fontSize: 10,
                             fontWeight: FontWeight.w500,
-                            color: isWeekend ? color : Colors.grey.shade700,
+                            color: isWeekend
+                                ? color
+                                : Colors.white.withValues(alpha: 0.7),
                           ),
                         ),
                         // Day number
@@ -2016,7 +2152,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                           dayNum,
                           style: TextStyle(
                             fontSize: 9,
-                            color: Colors.grey.shade500,
+                            color: Colors.white.withValues(alpha: 0.5),
                           ),
                         ),
                         // Value
@@ -2059,14 +2195,14 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
             Icon(
               Icons.lightbulb_outline,
               size: 64,
-              color: Colors.grey.shade300,
+              color: Colors.white.withValues(alpha: 0.2),
             ),
             const SizedBox(height: 16),
             Text(
               'No recommendations available',
               style: TextStyle(
                 fontSize: 16,
-                color: Colors.grey.shade600,
+                color: Colors.white.withValues(alpha: 0.6),
                 fontWeight: FontWeight.w500,
               ),
             ),
@@ -2075,7 +2211,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
               'Check back later for AI-powered insights',
               style: TextStyle(
                 fontSize: 12,
-                color: Colors.grey.shade500,
+                color: Colors.white.withValues(alpha: 0.5),
               ),
             ),
           ],
@@ -2097,7 +2233,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
             Container(
               padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(
-                color: Colors.green.shade50,
+                color: AppTheme.sageSuccess.withValues(alpha: 0.1),
                 shape: BoxShape.circle,
               ),
               child: Icon(
@@ -2112,7 +2248,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
               style: TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.bold,
-                color: Colors.green.shade700,
+                color: AppTheme.sageSuccess,
               ),
             ),
             const SizedBox(height: 8),
@@ -2120,7 +2256,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
               'No recommendations at this time',
               style: TextStyle(
                 fontSize: 14,
-                color: Colors.grey.shade600,
+                color: Colors.white.withValues(alpha: 0.6),
               ),
             ),
           ],
@@ -2137,7 +2273,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
             gradient: LinearGradient(
               colors: [
                 Theme.of(context).colorScheme.primary,
-                Theme.of(context).colorScheme.primary.withOpacity(0.8),
+                Theme.of(context).colorScheme.primary.withValues(alpha: 0.8),
               ],
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
@@ -2149,7 +2285,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
               Container(
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.2),
+                  color: Colors.white.withValues(alpha: 0.2),
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: const Icon(
@@ -2176,7 +2312,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                       '$totalRecommendations actionable insights based on your data',
                       style: TextStyle(
                         fontSize: 13,
-                        color: Colors.white.withOpacity(0.9),
+                        color: Colors.white.withValues(alpha: 0.9),
                       ),
                     ),
                   ],
@@ -2260,7 +2396,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
         Container(
           padding: const EdgeInsets.all(10),
           decoration: BoxDecoration(
-            color: color.withOpacity(0.1),
+            color: color.withValues(alpha: 0.1),
             borderRadius: BorderRadius.circular(10),
           ),
           child: Icon(icon, color: color, size: 22),
@@ -2282,7 +2418,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                 subtitle,
                 style: TextStyle(
                   fontSize: 12,
-                  color: Colors.grey.shade600,
+                  color: Colors.white.withValues(alpha: 0.6),
                 ),
               ),
             ],
@@ -2395,9 +2531,9 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppTheme.sagePanel,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.grey.shade200),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -2412,7 +2548,8 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
               ),
               Text(
                 'Max: ${_currency.format(maxRevenue)}',
-                style: TextStyle(color: Colors.grey.shade700, fontSize: 12),
+                style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.7), fontSize: 12),
               ),
             ],
           ),
@@ -2429,11 +2566,11 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                   drawVerticalLine: true,
                   verticalInterval: intervalDays.toDouble(),
                   getDrawingHorizontalLine: (value) => FlLine(
-                    color: Colors.grey.shade200,
+                    color: Colors.white.withValues(alpha: 0.1),
                     strokeWidth: 1,
                   ),
                   getDrawingVerticalLine: (value) => FlLine(
-                    color: Colors.grey.shade200,
+                    color: Colors.white.withValues(alpha: 0.1),
                     strokeWidth: 1,
                   ),
                 ),
@@ -2449,7 +2586,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                           show: true,
                           alignment: Alignment.topRight,
                           style: TextStyle(
-                            color: Colors.green.shade700,
+                            color: AppTheme.sageSuccess,
                             fontSize: 10,
                             fontWeight: FontWeight.bold,
                           ),
@@ -2465,7 +2602,8 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                   touchTooltipData: LineTouchTooltipData(
                     tooltipRoundedRadius: 8,
                     tooltipPadding: const EdgeInsets.all(8),
-                    tooltipBorder: BorderSide(color: Colors.grey.shade300),
+                    tooltipBorder:
+                        BorderSide(color: Colors.white.withValues(alpha: 0.2)),
                     getTooltipItems: (touchedSpots) {
                       return touchedSpots.map((spot) {
                         final date =
@@ -2528,7 +2666,8 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                                 ? '\u20B1${(value / 1000).toStringAsFixed(0)}k'
                                 : _currency.format(value),
                             style: TextStyle(
-                                fontSize: 10, color: Colors.grey.shade600),
+                                fontSize: 10,
+                                color: Colors.white.withValues(alpha: 0.6)),
                           ),
                         );
                       },
@@ -2572,8 +2711,9 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                     ),
                     Text(
                       'Max: ${maxOrders.toInt()}',
-                      style:
-                          TextStyle(color: Colors.grey.shade700, fontSize: 12),
+                      style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.7),
+                          fontSize: 12),
                     ),
                   ],
                 ),
@@ -2590,8 +2730,8 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                         touchTooltipData: BarTouchTooltipData(
                           tooltipRoundedRadius: 8,
                           tooltipPadding: const EdgeInsets.all(8),
-                          tooltipBorder:
-                              BorderSide(color: Colors.grey.shade300),
+                          tooltipBorder: BorderSide(
+                              color: Colors.white.withValues(alpha: 0.2)),
                           getTooltipItem: (group, groupIndex, rod, rodIndex) {
                             final date = firstDate.add(Duration(days: group.x));
                             final dateStr =
@@ -2611,7 +2751,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                         show: true,
                         drawVerticalLine: false,
                         getDrawingHorizontalLine: (value) => FlLine(
-                          color: Colors.grey.shade200,
+                          color: Colors.white.withValues(alpha: 0.1),
                           strokeWidth: 1,
                         ),
                       ),
@@ -2635,7 +2775,9 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                                 child: Text(
                                   '${value.toInt()}',
                                   style: TextStyle(
-                                      fontSize: 9, color: Colors.grey.shade600),
+                                      fontSize: 9,
+                                      color:
+                                          Colors.white.withValues(alpha: 0.6)),
                                 ),
                               );
                             },
@@ -2664,8 +2806,8 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                                   style: TextStyle(
                                     fontSize: showLabel ? 9 : 10,
                                     color: showLabel
-                                        ? Colors.grey.shade800
-                                        : Colors.grey.shade500,
+                                        ? Colors.white.withValues(alpha: 0.85)
+                                        : Colors.white.withValues(alpha: 0.5),
                                   ),
                                 ),
                               );
@@ -2706,12 +2848,12 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
 
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white,
-        border: Border.all(color: Colors.grey.shade200),
+        color: AppTheme.sagePanel,
+        border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
         borderRadius: BorderRadius.circular(12),
         boxShadow: [
           BoxShadow(
-            color: Colors.grey.shade200,
+            color: AppTheme.sageNavy.withValues(alpha: 0.7),
             blurRadius: 4,
             offset: const Offset(0, 2),
           ),
@@ -2727,11 +2869,11 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                 Container(
                   padding: const EdgeInsets.all(8),
                   decoration: BoxDecoration(
-                    color: Colors.orange.shade50,
+                    color: Colors.orange.withValues(alpha: 0.10),
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Icon(Icons.trending_up,
-                      color: Colors.orange.shade700, size: 20),
+                      color: Colors.orange.shade300, size: 20),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
@@ -2746,7 +2888,8 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                       Text(
                         'Next $_selectedRangeDays days forecast',
                         style: TextStyle(
-                            fontSize: 12, color: Colors.grey.shade600),
+                            fontSize: 12,
+                            color: Colors.white.withValues(alpha: 0.6)),
                       ),
                     ],
                   ),
@@ -2756,7 +2899,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                     padding:
                         const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                     decoration: BoxDecoration(
-                      color: Colors.orange.shade50,
+                      color: Colors.orange.withValues(alpha: 0.10),
                       borderRadius: BorderRadius.circular(20),
                     ),
                     child: Text(
@@ -2764,7 +2907,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                       style: TextStyle(
                         fontSize: 11,
                         fontWeight: FontWeight.w600,
-                        color: Colors.orange.shade700,
+                        color: Colors.orange.shade300,
                       ),
                     ),
                   ),
@@ -2778,11 +2921,13 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           Icon(Icons.insights,
-                              size: 48, color: Colors.grey.shade300),
+                              size: 48,
+                              color: Colors.white.withValues(alpha: 0.2)),
                           const SizedBox(height: 12),
                           Text(
                             'No forecast data available',
-                            style: TextStyle(color: Colors.grey.shade600),
+                            style: TextStyle(
+                                color: Colors.white.withValues(alpha: 0.6)),
                           ),
                         ],
                       ),
@@ -2812,8 +2957,8 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                                 child: Container(
                                   decoration: BoxDecoration(
                                     color: isWeekend
-                                        ? Colors.orange.shade100
-                                        : Colors.orange.shade50,
+                                        ? Colors.orange.withValues(alpha: 0.18)
+                                        : Colors.orange.withValues(alpha: 0.10),
                                     borderRadius: BorderRadius.circular(12),
                                   ),
                                   child: Align(
@@ -2829,7 +2974,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                                             end: Alignment.bottomCenter,
                                             colors: [
                                               Colors.orange.shade400,
-                                              Colors.orange.shade700,
+                                              Colors.orange.shade300,
                                             ],
                                           ),
                                           borderRadius:
@@ -2849,8 +2994,8 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                                   fontSize: 10,
                                   fontWeight: FontWeight.w600,
                                   color: isWeekend
-                                      ? Colors.orange.shade700
-                                      : Colors.grey.shade700,
+                                      ? Colors.orange.shade300
+                                      : Colors.white.withValues(alpha: 0.7),
                                 ),
                               ),
                               Text(
@@ -2860,7 +3005,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                                 style: TextStyle(
                                   fontSize: 12,
                                   fontWeight: FontWeight.bold,
-                                  color: Colors.grey.shade900,
+                                  color: Colors.white.withValues(alpha: 0.95),
                                 ),
                               ),
                               Text(
@@ -2870,7 +3015,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                                 style: TextStyle(
                                   fontSize: 10,
                                   fontWeight: FontWeight.w600,
-                                  color: Colors.orange.shade700,
+                                  color: Colors.orange.shade300,
                                 ),
                               ),
                             ],
@@ -2913,12 +3058,12 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
 
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white,
-        border: Border.all(color: Colors.grey.shade200),
+        color: AppTheme.sagePanel,
+        border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
         borderRadius: BorderRadius.circular(12),
         boxShadow: [
           BoxShadow(
-            color: Colors.grey.shade200,
+            color: AppTheme.sageNavy.withValues(alpha: 0.7),
             blurRadius: 4,
             offset: const Offset(0, 2),
           ),
@@ -2934,7 +3079,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                 Container(
                   padding: const EdgeInsets.all(8),
                   decoration: BoxDecoration(
-                    color: const Color(0xFF00B0FF).withOpacity(0.1),
+                    color: const Color(0xFF00B0FF).withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: const Icon(Icons.attach_money,
@@ -2953,7 +3098,8 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                       Text(
                         'Next $_selectedRangeDays days revenue forecast',
                         style: TextStyle(
-                            fontSize: 12, color: Colors.grey.shade600),
+                            fontSize: 12,
+                            color: Colors.white.withValues(alpha: 0.6)),
                       ),
                     ],
                   ),
@@ -2963,7 +3109,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                     padding:
                         const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                     decoration: BoxDecoration(
-                      color: const Color(0xFF00B0FF).withOpacity(0.1),
+                      color: const Color(0xFF00B0FF).withValues(alpha: 0.1),
                       borderRadius: BorderRadius.circular(20),
                     ),
                     child: Text(
@@ -2985,11 +3131,13 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           Icon(Icons.bar_chart,
-                              size: 48, color: Colors.grey.shade300),
+                              size: 48,
+                              color: Colors.white.withValues(alpha: 0.2)),
                           const SizedBox(height: 12),
                           Text(
                             'No sales forecast data available',
-                            style: TextStyle(color: Colors.grey.shade600),
+                            style: TextStyle(
+                                color: Colors.white.withValues(alpha: 0.6)),
                           ),
                         ],
                       ),
@@ -3021,9 +3169,9 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                                   decoration: BoxDecoration(
                                     color: isWeekend
                                         ? const Color(0xFF00B0FF)
-                                            .withOpacity(0.15)
+                                            .withValues(alpha: 0.15)
                                         : const Color(0xFF00B0FF)
-                                            .withOpacity(0.08),
+                                            .withValues(alpha: 0.08),
                                     borderRadius: BorderRadius.circular(12),
                                   ),
                                   child: Align(
@@ -3060,7 +3208,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                                   fontWeight: FontWeight.w600,
                                   color: isWeekend
                                       ? const Color(0xFF00B0FF)
-                                      : Colors.grey.shade700,
+                                      : Colors.white.withValues(alpha: 0.7),
                                 ),
                               ),
                               Text(
@@ -3070,7 +3218,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                                 style: TextStyle(
                                   fontSize: 12,
                                   fontWeight: FontWeight.bold,
-                                  color: Colors.grey.shade900,
+                                  color: Colors.white.withValues(alpha: 0.95),
                                 ),
                               ),
                               Text(
@@ -3099,34 +3247,52 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
     final now = DateTime.now();
     final currentMonth = DateTime(now.year, now.month, 1);
     final prevMonth = DateTime(now.year, now.month - 1, 1);
-    final prevMonthEnd = DateTime(prevMonth.year, prevMonth.month + 1, 0, 23, 59, 59, 999);
-    final currentMonthEnd = DateTime(currentMonth.year, currentMonth.month + 1, 0, 23, 59, 59, 999);
-    final mtdSales = BusinessKpis.summarizeOrders(_ordersForRange, start: currentMonth, end: currentMonthEnd);
-    final cogs = BusinessKpis.resolveCogs(stockMovements: _stockMovements, itemPerformance: _itemPerformance);
-    final opEx = BusinessKpis.operatingExpenses(_expenses, start: currentMonth, end: currentMonthEnd);
+    final prevMonthEnd =
+        DateTime(prevMonth.year, prevMonth.month + 1, 0, 23, 59, 59, 999);
+    final currentMonthEnd =
+        DateTime(currentMonth.year, currentMonth.month + 1, 0, 23, 59, 59, 999);
+    final mtdSales = BusinessKpis.summarizeOrders(_ordersForRange,
+        start: currentMonth, end: currentMonthEnd);
+    final cogs = BusinessKpis.resolveCogs(
+        stockMovements: _stockMovements, itemPerformance: _itemPerformance);
+    final opEx = BusinessKpis.operatingExpenses(_expenses,
+        start: currentMonth, end: currentMonthEnd);
     final netProfit = mtdSales.netSales - cogs.amount - opEx;
-    final profitMargin = mtdSales.netSales > 0 ? netProfit / mtdSales.netSales * 100 : 0.0;
+    final profitMargin =
+        mtdSales.netSales > 0 ? netProfit / mtdSales.netSales * 100 : 0.0;
     final menuRows = BusinessKpis.menuProfitRows(_itemPerformance);
     final topProfit = menuRows.where((r) => r.hasCosting).toList()
       ..sort((a, b) => b.profit.compareTo(a.profit));
-    final lowProfit = menuRows.where((r) => r.hasCosting && r.revenue > 0).toList()
+    final lowProfit = menuRows
+        .where((r) => r.hasCosting && r.revenue > 0)
+        .toList()
       ..sort((a, b) => a.profit.compareTo(b.profit));
     final payablesKpi = BusinessKpis.payablesKpi(_payables, now: now);
-    final prevSales = BusinessKpis.summarizeOrders(_ordersForRange, start: prevMonth, end: prevMonthEnd);
-    final revGrowth = prevSales.netSales > 0 ? ((mtdSales.netSales - prevSales.netSales) / prevSales.netSales) * 100 : 0.0;
-
+    final prevSales = BusinessKpis.summarizeOrders(_ordersForRange,
+        start: prevMonth, end: prevMonthEnd);
+    final revGrowth = prevSales.netSales > 0
+        ? ((mtdSales.netSales - prevSales.netSales) / prevSales.netSales) * 100
+        : 0.0;
 
     final currentMonthExpenses = _expenses.where((e) {
       final date = FinanceMetrics.expenseDate(e);
       if (date == null) return false;
-      return date.year == currentMonth.year && date.month == currentMonth.month && BusinessKpis.isOperatingExpense(e);
+      return date.year == currentMonth.year &&
+          date.month == currentMonth.month &&
+          BusinessKpis.isOperatingExpense(e);
     }).toList();
     final currentTotal = opEx;
-    final prevTotal = BusinessKpis.operatingExpenses(_expenses, start: prevMonth, end: prevMonthEnd);
-    final changePercent = prevTotal > 0 ? ((currentTotal - prevTotal) / prevTotal) * 100 : 0.0;
-    final duePayables = _payables.where((p) => (p['status'] ?? 'unpaid').toString().toLowerCase() != 'paid').toList();
+    final prevTotal = BusinessKpis.operatingExpenses(_expenses,
+        start: prevMonth, end: prevMonthEnd);
+    final changePercent =
+        prevTotal > 0 ? ((currentTotal - prevTotal) / prevTotal) * 100 : 0.0;
+    final duePayables = _payables
+        .where(
+            (p) => (p['status'] ?? 'unpaid').toString().toLowerCase() != 'paid')
+        .toList();
     final totalPayables = payablesKpi.outstanding;
-    final sortedCategories = FinanceMetrics.expensesByCategory(currentMonthExpenses);
+    final sortedCategories =
+        FinanceMetrics.expensesByCategory(currentMonthExpenses);
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
@@ -3141,76 +3307,163 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
           const SizedBox(height: 16),
 
           Wrap(
-            spacing: 12, runSpacing: 12,
+            spacing: 12,
+            runSpacing: 12,
             children: [
-              SizedBox(width: 320, child: _FinanceCard(title: 'Net Sales (MTD)', value: _currency.format(mtdSales.netSales),
-                subtitle: 'Gross ${_currency.format(mtdSales.grossSales)} · Disc ${_currency.format(mtdSales.discounts)} · ${revGrowth >= 0 ? '+' : ''}${revGrowth.toStringAsFixed(1)}% vs prev · ${mtdSales.ordersCount} orders · AOV ${_currency.format(mtdSales.averageOrderValue)}',
-                icon: Icons.payments, color: Colors.green.shade600, trend: revGrowth >= 0 ? Icons.trending_up : Icons.trending_down, trendColor: revGrowth >= 0 ? Colors.green : Colors.red)),
-              SizedBox(width: 320, child: _FinanceCard(title: 'COGS (${cogs.sourceLabel})', value: _currency.format(cogs.amount),
-                subtitle: cogs.isEstimated ? 'Estimated from recipe/menu costing (fallback). Separate from Actual sale-consumption COGS.' : 'Actual from sale-consumption stock movements.',
-                icon: Icons.inventory_2, color: Colors.blue.shade600)),
-              SizedBox(width: 320, child: _FinanceCard(title: 'Operating Expenses (MTD)', value: _currency.format(opEx),
-                subtitle: 'Heuristic: excludes inventory purchases; payable payments treated as operating-related.',
-                icon: Icons.account_balance_wallet, color: Colors.red.shade400)),
-              SizedBox(width: 320, child: _FinanceCard(title: 'Net Profit / Margin', value: _currency.format(netProfit),
-                subtitle: '${profitMargin.toStringAsFixed(1)}% margin · Gross profit ${_currency.format(mtdSales.netSales - cogs.amount)}',
-                icon: Icons.savings, color: netProfit >= 0 ? Colors.teal.shade600 : Colors.red.shade700)),
-              SizedBox(width: 320, child: _FinanceCard(title: 'Outstanding Payables', description: 'Unpaid payables/bills currently outstanding, including overdue and due buckets when available.', value: _currency.format(payablesKpi.outstanding),
-                subtitle: 'Outstanding ${_currency.format(payablesKpi.outstanding)} · Overdue ${_currency.format(payablesKpi.overdue)} · Due today ${payablesKpi.dueToday} · Week ${payablesKpi.dueThisWeek} · Month ${payablesKpi.dueThisMonth}',
-                icon: Icons.payment, color: Colors.orange.shade400)),
+              SizedBox(
+                  width: 320,
+                  child: _FinanceCard(
+                      title: 'Net Sales (MTD)',
+                      value: _currency.format(mtdSales.netSales),
+                      subtitle:
+                          'Gross ${_currency.format(mtdSales.grossSales)} · Disc ${_currency.format(mtdSales.discounts)} · ${revGrowth >= 0 ? '+' : ''}${revGrowth.toStringAsFixed(1)}% vs prev · ${mtdSales.ordersCount} orders · AOV ${_currency.format(mtdSales.averageOrderValue)}',
+                      icon: Icons.payments,
+                      color: AppTheme.sageSuccess,
+                      trend: revGrowth >= 0
+                          ? Icons.trending_up
+                          : Icons.trending_down,
+                      trendColor: revGrowth >= 0 ? Colors.green : Colors.red)),
+              SizedBox(
+                  width: 320,
+                  child: _FinanceCard(
+                      title: 'COGS (${cogs.sourceLabel})',
+                      value: _currency.format(cogs.amount),
+                      subtitle: cogs.isEstimated
+                          ? 'Estimated from recipe/menu costing (fallback). Separate from Actual sale-consumption COGS.'
+                          : 'Actual from sale-consumption stock movements.',
+                      icon: Icons.inventory_2,
+                      color: Colors.blue.shade600)),
+              SizedBox(
+                  width: 320,
+                  child: _FinanceCard(
+                      title: 'Operating Expenses (MTD)',
+                      value: _currency.format(opEx),
+                      subtitle:
+                          'Heuristic: excludes inventory purchases; payable payments treated as operating-related.',
+                      icon: Icons.account_balance_wallet,
+                      color: Colors.red.shade400)),
+              SizedBox(
+                  width: 320,
+                  child: _FinanceCard(
+                      title: 'Net Profit / Margin',
+                      value: _currency.format(netProfit),
+                      subtitle:
+                          '${profitMargin.toStringAsFixed(1)}% margin · Gross profit ${_currency.format(mtdSales.netSales - cogs.amount)}',
+                      icon: Icons.savings,
+                      color: netProfit >= 0
+                          ? Colors.teal.shade600
+                          : Colors.red.shade700)),
+              SizedBox(
+                  width: 320,
+                  child: _FinanceCard(
+                      title: 'Outstanding Payables',
+                      description:
+                          'Unpaid payables/bills currently outstanding, including overdue and due buckets when available.',
+                      value: _currency.format(payablesKpi.outstanding),
+                      subtitle:
+                          'Outstanding ${_currency.format(payablesKpi.outstanding)} · Overdue ${_currency.format(payablesKpi.overdue)} · Due today ${payablesKpi.dueToday} · Week ${payablesKpi.dueThisWeek} · Month ${payablesKpi.dueThisMonth}',
+                      icon: Icons.payment,
+                      color: Colors.orange.shade400)),
             ],
           ),
           if (topProfit.isNotEmpty) ...[
             const SizedBox(height: 16),
-            const Text('Highest Profit Menu Items (menu costing; separate from Actual COGS)', style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
-            ...topProfit.take(5).map((r) => ListTile(dense: true, contentPadding: EdgeInsets.zero,
-              title: Text((r.item['name'] ?? r.item['itemName'] ?? 'Item').toString()), subtitle: Text('Sold ${r.quantity.toStringAsFixed(0)} · Rev ${_currency.format(r.revenue)} · COGS/item ${_currency.format(r.cogsPerItem)} · Profit/item ${_currency.format(r.profitPerItem)}'),
-              trailing: Text(_currency.format(r.profit), style: TextStyle(fontWeight: FontWeight.bold, color: r.profit >= 0 ? Colors.green.shade700 : Colors.red.shade700)))),
+            const Text(
+                'Highest Profit Menu Items (menu costing; separate from Actual COGS)',
+                style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
+            ...topProfit.take(5).map((r) => ListTile(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                title: Text((r.item['name'] ?? r.item['itemName'] ?? 'Item')
+                    .toString()),
+                subtitle: Text(
+                    'Sold ${r.quantity.toStringAsFixed(0)} · Rev ${_currency.format(r.revenue)} · COGS/item ${_currency.format(r.cogsPerItem)} · Profit/item ${_currency.format(r.profitPerItem)}'),
+                trailing: Text(_currency.format(r.profit),
+                    style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: r.profit >= 0
+                            ? AppTheme.sageSuccess
+                            : Colors.red.shade700)))),
           ],
           if (lowProfit.isNotEmpty) ...[
             const SizedBox(height: 8),
-            const Text('Low-Profit Menu Items (costed)', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
-            ...lowProfit.take(5).map((r) => ListTile(dense: true, contentPadding: EdgeInsets.zero,
-              title: Text((r.item['name'] ?? r.item['itemName'] ?? 'Item').toString()), subtitle: Text('Margin ${r.marginPercent.toStringAsFixed(1)}% · Profit/item ${_currency.format(r.profitPerItem)}'),
-              trailing: Text(_currency.format(r.profit), style: const TextStyle(color: Colors.orange, fontWeight: FontWeight.w600)))),
+            const Text('Low-Profit Menu Items (costed)',
+                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+            ...lowProfit.take(5).map((r) => ListTile(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                title: Text((r.item['name'] ?? r.item['itemName'] ?? 'Item')
+                    .toString()),
+                subtitle: Text(
+                    'Margin ${r.marginPercent.toStringAsFixed(1)}% · Profit/item ${_currency.format(r.profitPerItem)}'),
+                trailing: Text(_currency.format(r.profit),
+                    style: const TextStyle(
+                        color: Colors.orange, fontWeight: FontWeight.w600)))),
           ],
           const SizedBox(height: 20),
-          const Text('Period Revenue / Expense / Profit (with growth)', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+          const Text('Period Revenue / Expense / Profit (with growth)',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
           const SizedBox(height: 8),
           Builder(builder: (context) {
-            Widget period(String label, DateTime cStart, DateTime cEnd, DateTime pStart, DateTime pEnd) {
-              final sales = BusinessKpis.summarizeOrders(_ordersForRange, start: cStart, end: cEnd);
-              final pSales = BusinessKpis.summarizeOrders(_ordersForRange, start: pStart, end: pEnd);
-              final op = BusinessKpis.operatingExpenses(_expenses, start: cStart, end: cEnd);
-              final pOp = BusinessKpis.operatingExpenses(_expenses, start: pStart, end: pEnd);
-              final pc = BusinessKpis.resolveCogs(stockMovements: _stockMovements, itemPerformance: _itemPerformance);
+            Widget period(String label, DateTime cStart, DateTime cEnd,
+                DateTime pStart, DateTime pEnd) {
+              final sales = BusinessKpis.summarizeOrders(_ordersForRange,
+                  start: cStart, end: cEnd);
+              final pSales = BusinessKpis.summarizeOrders(_ordersForRange,
+                  start: pStart, end: pEnd);
+              final op = BusinessKpis.operatingExpenses(_expenses,
+                  start: cStart, end: cEnd);
+              final pOp = BusinessKpis.operatingExpenses(_expenses,
+                  start: pStart, end: pEnd);
+              final pc = BusinessKpis.resolveCogs(
+                  stockMovements: _stockMovements,
+                  itemPerformance: _itemPerformance);
               final menuRows = BusinessKpis.menuProfitRows(_itemPerformance);
-              final rr = menuRows.where((r) => r.hasCosting).fold<double>(0, (s, r) => s + r.revenue);
-              final rc = menuRows.where((r) => r.hasCosting).fold<double>(0, (s, r) => s + r.estimatedCogs);
-              final cogsV = pc.isEstimated ? (rr > 0 ? sales.netSales * (rc / rr) : 0) : pc.amount;
+              final rr = menuRows
+                  .where((r) => r.hasCosting)
+                  .fold<double>(0, (s, r) => s + r.revenue);
+              final rc = menuRows
+                  .where((r) => r.hasCosting)
+                  .fold<double>(0, (s, r) => s + r.estimatedCogs);
+              final cogsV = pc.isEstimated
+                  ? (rr > 0 ? sales.netSales * (rc / rr) : 0)
+                  : pc.amount;
               final profit = sales.netSales - op - cogsV;
-              String g(double c, double p) => p > 0 ? '${((c - p) / p * 100) >= 0 ? '+' : ''}${((c - p) / p * 100).toStringAsFixed(1)}%' : (c > 0 ? 'n/a' : '0%');
-              return SizedBox(width: 320, child: _FinanceCard(
-                title: label,
-                value: _currency.format(sales.netSales),
-                subtitle: 'Rev ${g(sales.netSales, pSales.netSales)} · Exp ${_currency.format(op)} ${g(op, pOp)} · Profit ${_currency.format(profit)} · ${sales.ordersCount} orders · COGS ${pc.isEstimated ? 'est.' : 'actual'}',
-                icon: Icons.calendar_view_week,
-                color: profit >= 0 ? Colors.blue.shade600 : Colors.red.shade600,
-              ));
+              String g(double c, double p) => p > 0
+                  ? '${((c - p) / p * 100) >= 0 ? '+' : ''}${((c - p) / p * 100).toStringAsFixed(1)}%'
+                  : (c > 0 ? 'n/a' : '0%');
+              return SizedBox(
+                  width: 320,
+                  child: _FinanceCard(
+                    title: label,
+                    value: _currency.format(sales.netSales),
+                    subtitle:
+                        'Rev ${g(sales.netSales, pSales.netSales)} · Exp ${_currency.format(op)} ${g(op, pOp)} · Profit ${_currency.format(profit)} · ${sales.ordersCount} orders · COGS ${pc.isEstimated ? 'est.' : 'actual'}',
+                    icon: Icons.calendar_view_week,
+                    color: profit >= 0
+                        ? Colors.blue.shade600
+                        : Colors.red.shade600,
+                  ));
             }
+
             final todayStart = DateTime(now.year, now.month, now.day);
-            final todayEnd = DateTime(now.year, now.month, now.day, 23, 59, 59, 999);
+            final todayEnd =
+                DateTime(now.year, now.month, now.day, 23, 59, 59, 999);
             final yday = todayStart.subtract(const Duration(days: 1));
-            final weekStart = todayStart.subtract(Duration(days: now.weekday - 1));
+            final weekStart =
+                todayStart.subtract(Duration(days: now.weekday - 1));
             final prevWeekStart = weekStart.subtract(const Duration(days: 7));
             final prevWeekEnd = weekStart.subtract(const Duration(seconds: 1));
             final yearStart = DateTime(now.year, 1, 1);
             final prevYearStart = DateTime(now.year - 1, 1, 1);
             final prevYearEnd = DateTime(now.year - 1, 12, 31, 23, 59, 59, 999);
             return Wrap(spacing: 12, runSpacing: 12, children: [
-              period('Daily (Today)', todayStart, todayEnd, yday, DateTime(yday.year, yday.month, yday.day, 23, 59, 59, 999)),
-              period('Weekly (This week)', weekStart, todayEnd, prevWeekStart, prevWeekEnd),
-              period('Yearly (${now.year})', yearStart, todayEnd, prevYearStart, prevYearEnd),
+              period('Daily (Today)', todayStart, todayEnd, yday,
+                  DateTime(yday.year, yday.month, yday.day, 23, 59, 59, 999)),
+              period('Weekly (This week)', weekStart, todayEnd, prevWeekStart,
+                  prevWeekEnd),
+              period('Yearly (${now.year})', yearStart, todayEnd, prevYearStart,
+                  prevYearEnd),
             ]);
           }),
 
@@ -3228,12 +3481,13 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                 child: Column(
                   children: [
                     Icon(Icons.pie_chart_outline,
-                        size: 64, color: Colors.grey.shade300),
+                        size: 64, color: Colors.white.withValues(alpha: 0.2)),
                     const SizedBox(height: 16),
                     Text(
                       'No expenses recorded this month',
                       textAlign: TextAlign.center,
-                      style: TextStyle(color: Colors.grey.shade600),
+                      style:
+                          TextStyle(color: Colors.white.withValues(alpha: 0.6)),
                     ),
                   ],
                 ),
@@ -3346,13 +3600,15 @@ class _SummaryCard extends StatelessWidget {
               title,
               style: TextStyle(
                 fontSize: 14,
-                color: Colors.grey.shade600,
+                color: Colors.white.withValues(alpha: 0.6),
                 fontWeight: FontWeight.w500,
               ),
             ),
             const SizedBox(height: 8),
             Text(
-              NumberFormat.currency(locale: 'en_PH', symbol: '₱', decimalDigits: 2).format(revenue),
+              NumberFormat.currency(
+                      locale: 'en_PH', symbol: '₱', decimalDigits: 2)
+                  .format(revenue),
               style: TextStyle(
                 fontSize: 24,
                 fontWeight: FontWeight.bold,
@@ -3364,7 +3620,7 @@ class _SummaryCard extends StatelessWidget {
               '$orders orders',
               style: TextStyle(
                 fontSize: 14,
-                color: Colors.grey.shade600,
+                color: Colors.white.withValues(alpha: 0.6),
               ),
             ),
           ],
@@ -3404,7 +3660,7 @@ class _InfoCard extends StatelessWidget {
                   title,
                   style: TextStyle(
                     fontSize: 14,
-                    color: Colors.grey.shade600,
+                    color: Colors.white.withValues(alpha: 0.6),
                     fontWeight: FontWeight.w500,
                   ),
                 ),
@@ -3439,7 +3695,8 @@ class _SalesItemTile extends StatelessWidget {
       title: Text(sale['date'] ?? ''),
       subtitle: Text('${sale['orders']} orders'),
       trailing: Text(
-        NumberFormat.currency(locale: 'en_PH', symbol: '₱', decimalDigits: 2).format(revenue),
+        NumberFormat.currency(locale: 'en_PH', symbol: '₱', decimalDigits: 2)
+            .format(revenue),
         style: const TextStyle(
           fontWeight: FontWeight.bold,
           color: Colors.green,
@@ -3470,16 +3727,16 @@ class _ItemSummaryCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.05),
+        color: color.withValues(alpha: 0.05),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: color.withOpacity(0.2)),
+        border: Border.all(color: color.withValues(alpha: 0.2)),
       ),
       child: Row(
         children: [
           Container(
             padding: const EdgeInsets.all(8),
             decoration: BoxDecoration(
-              color: color.withOpacity(0.15),
+              color: color.withValues(alpha: 0.15),
               borderRadius: BorderRadius.circular(8),
             ),
             child: Icon(icon, color: color, size: 18),
@@ -3493,7 +3750,7 @@ class _ItemSummaryCard extends StatelessWidget {
                   title,
                   style: TextStyle(
                     fontSize: 11,
-                    color: Colors.grey.shade600,
+                    color: Colors.white.withValues(alpha: 0.6),
                     fontWeight: FontWeight.w500,
                   ),
                 ),
@@ -3513,7 +3770,7 @@ class _ItemSummaryCard extends StatelessWidget {
                   subtitle,
                   style: TextStyle(
                     fontSize: 10,
-                    color: Colors.grey.shade500,
+                    color: Colors.white.withValues(alpha: 0.5),
                   ),
                 ),
               ],
@@ -3550,7 +3807,7 @@ class _RecommendationTile extends StatelessWidget {
       elevation: 1,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(12),
-        side: BorderSide(color: color.withOpacity(0.2), width: 1),
+        side: BorderSide(color: color.withValues(alpha: 0.2), width: 1),
       ),
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -3560,7 +3817,7 @@ class _RecommendationTile extends StatelessWidget {
             Container(
               padding: const EdgeInsets.all(10),
               decoration: BoxDecoration(
-                color: color.withOpacity(0.1),
+                color: color.withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(10),
               ),
               child: Icon(icon, color: color, size: 24),
@@ -3583,7 +3840,7 @@ class _RecommendationTile extends StatelessWidget {
                     subtitle,
                     style: TextStyle(
                       fontSize: 13,
-                      color: Colors.grey.shade600,
+                      color: Colors.white.withValues(alpha: 0.6),
                       height: 1.3,
                     ),
                   ),
@@ -3592,9 +3849,9 @@ class _RecommendationTile extends StatelessWidget {
                     padding:
                         const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                     decoration: BoxDecoration(
-                      color: color.withOpacity(0.08),
+                      color: color.withValues(alpha: 0.08),
                       borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: color.withOpacity(0.2)),
+                      border: Border.all(color: color.withValues(alpha: 0.2)),
                     ),
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
@@ -3697,7 +3954,7 @@ class _FinanceCard extends StatelessWidget {
                 Container(
                   padding: const EdgeInsets.all(6),
                   decoration: BoxDecoration(
-                    color: color.withOpacity(0.1),
+                    color: color.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Icon(icon, color: color, size: 20),
@@ -3721,7 +3978,7 @@ class _FinanceCard extends StatelessWidget {
               title,
               style: TextStyle(
                 fontSize: 11,
-                color: Colors.grey.shade600,
+                color: Colors.white.withValues(alpha: 0.6),
               ),
             ),
             const SizedBox(height: 4),
@@ -3729,7 +3986,7 @@ class _FinanceCard extends StatelessWidget {
               subtitle,
               style: TextStyle(
                 fontSize: 10,
-                color: trendColor ?? Colors.grey.shade500,
+                color: trendColor ?? Colors.white.withValues(alpha: 0.5),
                 fontWeight: FontWeight.w500,
               ),
             ),
@@ -3737,7 +3994,13 @@ class _FinanceCard extends StatelessWidget {
         ),
       ),
     );
-    return description == null ? card : Tooltip(message: description!, preferBelow: false, waitDuration: const Duration(milliseconds: 300), child: card);
+    return description == null
+        ? card
+        : Tooltip(
+            message: description!,
+            preferBelow: false,
+            waitDuration: const Duration(milliseconds: 300),
+            child: card);
   }
 }
 
@@ -3778,7 +4041,7 @@ class _CategoryBar extends StatelessWidget {
                 '${percent.toStringAsFixed(1)}% \u00B7 ${currency.format(amount)}',
                 style: TextStyle(
                   fontSize: 11,
-                  color: Colors.grey.shade600,
+                  color: Colors.white.withValues(alpha: 0.6),
                 ),
               ),
             ],
@@ -3788,7 +4051,7 @@ class _CategoryBar extends StatelessWidget {
             borderRadius: BorderRadius.circular(3),
             child: LinearProgressIndicator(
               value: percent / 100,
-              backgroundColor: Colors.grey.shade200,
+              backgroundColor: Colors.white.withValues(alpha: 0.1),
               valueColor: AlwaysStoppedAnimation<Color>(color),
               minHeight: 6,
             ),
@@ -3815,7 +4078,7 @@ class _StatItem extends StatelessWidget {
   Widget build(BuildContext context) {
     return Column(
       children: [
-        Icon(icon, size: 20, color: Colors.grey.shade600),
+        Icon(icon, size: 20, color: Colors.white.withValues(alpha: 0.6)),
         const SizedBox(height: 4),
         Text(
           value,
@@ -3828,7 +4091,7 @@ class _StatItem extends StatelessWidget {
           label,
           style: TextStyle(
             fontSize: 11,
-            color: Colors.grey.shade600,
+            color: Colors.white.withValues(alpha: 0.6),
           ),
         ),
       ],

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../../../../../models/inventory_item.dart';
+import '../../../../../theme.dart';
 import '../../data/models/stock_adjustment.dart';
 
 class AdjustmentsScreen extends StatelessWidget {
@@ -28,7 +29,7 @@ class AdjustmentsScreen extends StatelessWidget {
 
   Color _getDeltaColor(double delta, BuildContext context) {
     if (delta >= 0) {
-      return Colors.green.shade700;
+      return AppTheme.sageSuccess;
     }
     return Theme.of(context).colorScheme.error;
   }
@@ -48,7 +49,8 @@ class AdjustmentsScreen extends StatelessWidget {
                 return Card(
                   child: ListTile(
                     leading: CircleAvatar(
-                      backgroundColor: _getDeltaColor(a.deltaBase, context).withValues(alpha: 0.1),
+                      backgroundColor: _getDeltaColor(a.deltaBase, context)
+                          .withValues(alpha: 0.1),
                       child: Icon(
                         a.deltaBase >= 0 ? Icons.add : Icons.remove,
                         color: _getDeltaColor(a.deltaBase, context),
@@ -61,15 +63,21 @@ class AdjustmentsScreen extends StatelessWidget {
                         Text('Adj: '),
                         const SizedBox(height: 2),
                         Text(
-                          DateFormat('MMM d, yyyy • h:mm a').format(a.performedAt),
-                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                color: Theme.of(context).colorScheme.onSurfaceVariant,
-                              ),
+                          DateFormat('MMM d, yyyy • h:mm a')
+                              .format(a.performedAt),
+                          style:
+                              Theme.of(context).textTheme.bodySmall?.copyWith(
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .onSurfaceVariant,
+                                  ),
                         ),
                         if (a.reasonCode.isNotEmpty)
-                          Text('Reason: ', maxLines: 1, overflow: TextOverflow.ellipsis),
+                          Text('Reason: ',
+                              maxLines: 1, overflow: TextOverflow.ellipsis),
                         if (a.notes != null && a.notes!.isNotEmpty)
-                          Text(a.notes!, maxLines: 2, overflow: TextOverflow.ellipsis),
+                          Text(a.notes!,
+                              maxLines: 2, overflow: TextOverflow.ellipsis),
                       ],
                     ),
                     trailing: Text(
@@ -97,12 +105,18 @@ class AdjustmentsScreen extends StatelessWidget {
             Icon(
               Icons.tune,
               size: 80,
-              color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
+              color: Theme.of(context)
+                  .colorScheme
+                  .onSurfaceVariant
+                  .withValues(alpha: 0.5),
             ),
             const SizedBox(height: 24),
             Text(
               'No Adjustments Yet',
-              style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold),
+              style: Theme.of(context)
+                  .textTheme
+                  .headlineSmall
+                  ?.copyWith(fontWeight: FontWeight.bold),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 12),

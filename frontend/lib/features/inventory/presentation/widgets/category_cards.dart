@@ -1,5 +1,4 @@
-﻿import 'package:flutter/material.dart';
-
+import 'package:flutter/material.dart';
 
 class CategoryCard extends StatelessWidget {
   final String category;
@@ -69,7 +68,7 @@ class CategoryCard extends StatelessWidget {
                       color: (isWarning
                               ? theme.colorScheme.error
                               : theme.colorScheme.primary)
-                          .withOpacity(0.12),
+                          .withValues(alpha: 0.12),
                       borderRadius: BorderRadius.circular(12),
                     ),
                     child: Icon(
@@ -90,7 +89,8 @@ class CategoryCard extends StatelessWidget {
               const SizedBox(height: 16),
               Text(
                 category,
-                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                style:
+                    const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 6),
               Text(
@@ -157,7 +157,7 @@ class StockStatusCard extends StatelessWidget {
                     width: 44,
                     height: 44,
                     decoration: BoxDecoration(
-                      color: accent.withOpacity(0.12),
+                      color: accent.withValues(alpha: 0.12),
                       borderRadius: BorderRadius.circular(12),
                     ),
                     child: Icon(icon, color: accent),
@@ -173,7 +173,8 @@ class StockStatusCard extends StatelessWidget {
               const SizedBox(height: 16),
               Text(
                 title,
-                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                style:
+                    const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 6),
               Text(

@@ -1,13 +1,20 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
 import '../services/api_service.dart';
 import '../services/firebase_service.dart';
 import '../services/pos_settings_service.dart';
+import '../services/printer_availability_service.dart';
+import '../services/receipt_printer_service.dart';
 import '../services/sound_service.dart';
+import '../theme.dart';
+import '../utils/order_history_dates.dart';
 import '../widgets/dashboard/empty_state.dart';
 import '../widgets/dashboard/kpi_card.dart';
 import '../widgets/dashboard/section_card.dart';
+import '../widgets/dashboard/dashboard_back_handler.dart';
 import '../widgets/payment_method_dialog.dart';
 // Shares the incomplete-order row with the admin dashboard. It lives in
 // dashboard_screen.dart rather than a widget file because it is already
@@ -21,10 +28,15 @@ import 'dashboard_screen.dart' show IncompleteOrderRow;
 /// are a management concern, and staff already have the Orders tab on the POS
 /// side of their dashboard for the current day.
 class OrdersScreen extends StatefulWidget {
-  const OrdersScreen({Key? key, this.isAdmin = false}) : super(key: key);
+  const OrdersScreen({
+    Key? key,
+    this.isAdmin = false,
+    this.onBackHandlerChanged,
+  }) : super(key: key);
 
   /// Admins only: enables the Today/History view switch.
   final bool isAdmin;
+  final DashboardBackHandlerChanged? onBackHandlerChanged;
 
   @override
   State<OrdersScreen> createState() => _OrdersScreenState();
@@ -41,7 +53,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
   bool _loadingHistory = false;
   String? _historyError;
   List<Map<String, dynamic>> _history = const [];
-  _HistoryRange _historyRange = _HistoryRange.sevenDays;
+  String? _historyDateFilter;
 
   // Incomplete orders (opened on an earlier day, never completed) — admins
   // only. Moved here from the admin home dashboard so every order workflow
@@ -57,10 +69,21 @@ class _OrdersScreenState extends State<OrdersScreen> {
     super.initState();
     _initOrdersStream();
     if (widget.isAdmin) _loadIncomplete();
+    widget.onBackHandlerChanged?.call(
+      DashboardBackHandler(
+        canUnwind: () => widget.isAdmin && _showingHistory,
+        unwind: () {
+          if (!_showingHistory) return false;
+          setState(() => _showingHistory = false);
+          return true;
+        },
+      ),
+    );
   }
 
   @override
   void dispose() {
+    widget.onBackHandlerChanged?.call(null);
     _searchController.dispose();
     super.dispose();
   }
@@ -128,8 +151,8 @@ class _OrdersScreenState extends State<OrdersScreen> {
           ElevatedButton(
             onPressed: () => Navigator.of(context).pop(true),
             style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.green,
-              foregroundColor: Colors.white,
+              backgroundColor: AppTheme.sageSuccess,
+              foregroundColor: AppTheme.sageNavy,
             ),
             child: const Text('Complete All'),
           ),
@@ -191,6 +214,12 @@ class _OrdersScreenState extends State<OrdersScreen> {
       if (!mounted) return;
       setState(() {
         _history = orders;
+        final keys = OrderHistoryDates.availableKeys(
+          orders.map(_createdAtOf),
+        );
+        if (_historyDateFilter != null && !keys.contains(_historyDateFilter)) {
+          _historyDateFilter = null;
+        }
         _loadingHistory = false;
       });
     } catch (e) {
@@ -209,9 +238,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
     if (history) {
       // Loaded lazily — staff never triggers this, and admins only pay for it
       // the first time they open History.
-      if (_history.isEmpty &&
-          !_loadingHistory &&
-          _historyError == null) {
+      if (_history.isEmpty && !_loadingHistory && _historyError == null) {
         _loadHistory();
       }
       return;
@@ -232,26 +259,26 @@ class _OrdersScreenState extends State<OrdersScreen> {
         onRefresh: _loadHistory,
         child: ListView(
           padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-children: [
-              _buildViewSwitch(),
+          children: [
+            _buildViewSwitch(),
+            const SizedBox(height: 16),
+            _buildIncompleteSection(),
+            const SizedBox(height: 16),
+            if (_loadingHistory)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 48),
+                child: Center(child: CircularProgressIndicator()),
+              )
+            else if (_historyError != null)
+              _buildHistoryError()
+            else ...[
+              _buildHistoryRangeBar(),
               const SizedBox(height: 16),
-              _buildIncompleteSection(),
+              _buildHistoryKpiRow(),
               const SizedBox(height: 16),
-              if (_loadingHistory)
-                const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 48),
-                  child: Center(child: CircularProgressIndicator()),
-                )
-              else if (_historyError != null)
-                _buildHistoryError()
-              else ...[
-                _buildHistoryRangeBar(),
-                const SizedBox(height: 16),
-                _buildHistoryKpiRow(),
-                const SizedBox(height: 16),
-                _buildHistoryList(),
-              ],
+              _buildHistoryList(),
             ],
+          ],
         ),
       );
     }
@@ -301,8 +328,7 @@ children: [
         ),
       ],
       selected: {_showingHistory},
-      onSelectionChanged: (selection) =>
-          _setView(history: selection.first),
+      onSelectionChanged: (selection) => _setView(history: selection.first),
     );
   }
 
@@ -314,7 +340,8 @@ children: [
           EmptyState(
             icon: Icons.cloud_off,
             title: 'Could not load history',
-            subtitle: _historyError,
+            subtitle:
+                "We couldn't load your orders right now. Please try again.",
           ),
           const SizedBox(height: 12),
           OutlinedButton.icon(
@@ -339,13 +366,14 @@ children: [
       return SectionCard(
         title: 'Incomplete Orders',
         icon: Icons.pending_actions_outlined,
-        iconColor: Colors.red,
+        iconColor: Theme.of(context).colorScheme.error,
         child: Column(
           children: [
             EmptyState(
               icon: Icons.cloud_off,
               title: 'Could not load incomplete orders',
-              subtitle: _incompleteError,
+              subtitle:
+                  "We couldn't load these orders right now. Please try again.",
             ),
             const SizedBox(height: 8),
             OutlinedButton.icon(
@@ -376,7 +404,7 @@ children: [
               icon: const Icon(Icons.done_all, size: 18),
               label: const Text('Complete All'),
               style: TextButton.styleFrom(
-                foregroundColor: Colors.green,
+                foregroundColor: AppTheme.sageSuccess,
                 padding: const EdgeInsets.symmetric(horizontal: 8),
               ),
             ),
@@ -400,8 +428,7 @@ children: [
                 for (final order in _incomplete)
                   IncompleteOrderRow(
                     orderId: (order['id'] ?? '').toString(),
-                    total:
-                        (order['totalAmount'] as num?)?.toDouble() ?? 0.0,
+                    total: (order['totalAmount'] as num?)?.toDouble() ?? 0.0,
                     dateText: _relativeDayText(_createdAtOf(order)),
                     isCompleting: _completingOrderId == (order['id'] ?? ''),
                     onTap: () => _showOrderDetails(order),
@@ -424,6 +451,14 @@ children: [
   }
 
   Widget _buildHistoryRangeBar() {
+    final dateKeys = OrderHistoryDates.availableKeys(
+      _history.map(_createdAtOf),
+    );
+    final selectedDate =
+        _historyDateFilter != null && dateKeys.contains(_historyDateFilter)
+            ? _historyDateFilter!
+            : OrderHistoryDates.allKey;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -453,17 +488,48 @@ children: [
           ),
         ),
         const SizedBox(height: 12),
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: [
-            for (final range in _HistoryRange.values)
-              ChoiceChip(
-                label: Text(range.label),
-                selected: _historyRange == range,
-                onSelected: (_) => setState(() => _historyRange = range),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.surfaceContainerHighest,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Row(
+            children: [
+              const Icon(Icons.calendar_month_outlined, size: 20),
+              const SizedBox(width: 8),
+              const Text('Date'),
+              const SizedBox(width: 12),
+              Expanded(
+                child: DropdownButtonHideUnderline(
+                  child: DropdownButton<String>(
+                    isExpanded: true,
+                    value: selectedDate,
+                    items: [
+                      const DropdownMenuItem(
+                        value: OrderHistoryDates.allKey,
+                        child: Text('All dates'),
+                      ),
+                      for (final key in dateKeys)
+                        DropdownMenuItem(
+                          value: key,
+                          child: Text(
+                            OrderHistoryDates.label(key),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                    ],
+                    onChanged: (value) {
+                      setState(() {
+                        _historyDateFilter =
+                            value == OrderHistoryDates.allKey ? null : value;
+                      });
+                    },
+                  ),
+                ),
               ),
-          ],
+            ],
+          ),
         ),
         const SizedBox(height: 12),
         Wrap(
@@ -485,25 +551,21 @@ children: [
   }
 
   List<Map<String, dynamic>> _filteredHistory() {
-    final cutoff = _historyRange.cutoff();
     final query = _searchQuery.trim().toLowerCase();
-    return _history
-        .where((o) {
-          final created = _createdAtOf(o);
-          if (created != null && cutoff != null && created.isAfter(cutoff)) {
-            return false;
-          }
-          return _statusFilter.matches(_statusKeyOf(o)) &&
-              _matchesQuery(o, query);
-        })
-        .toList();
+    return _history.where((o) {
+      final created = _createdAtOf(o);
+      if (_historyDateFilter != null &&
+          OrderHistoryDates.key(created) != _historyDateFilter) {
+        return false;
+      }
+      return _statusFilter.matches(_statusKeyOf(o)) && _matchesQuery(o, query);
+    }).toList();
   }
 
   Widget _buildHistoryKpiRow() {
     final visible = _filteredHistory();
-    final completed = visible
-        .where((o) => _statusKeyOf(o) == 'completed')
-        .toList();
+    final completed =
+        visible.where((o) => _statusKeyOf(o) == 'completed').toList();
     final revenue = completed.fold<double>(
       0,
       (sum, o) => sum + ((o['totalAmount'] as num?)?.toDouble() ?? 0.0),
@@ -516,13 +578,14 @@ children: [
         value: '${visible.length}',
         icon: Icons.receipt_long_outlined,
         color: scheme.tertiary,
-        description: 'Orders in the current view/filter (includes all statuses shown).',
+        description:
+            'Orders in the current view/filter (includes all statuses shown).',
       ),
       KpiCard(
         title: 'Completed',
         value: '${completed.length}',
         icon: Icons.check_circle_outline,
-        color: const Color(0xFF16A34A),
+        color: AppTheme.sageSuccess,
         description: 'Orders marked completed in the current view.',
       ),
       KpiCard(
@@ -536,8 +599,9 @@ children: [
         title: 'Revenue',
         value: '₱${revenue.toStringAsFixed(0)}',
         icon: Icons.attach_money,
-        color: const Color(0xFF1E88E5),
-        description: 'Total from completed orders in the current view (stored order totals; not a net/gross sales split).',
+        color: AppTheme.sageAccent,
+        description:
+            'Total from completed orders in the current view (stored order totals; not a net/gross sales split).',
       ),
     ];
 
@@ -593,15 +657,25 @@ children: [
                 )
               : Column(
                   children: [
-                    for (final order in visible)
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 8),
-                        child: _OrderRow(
-                          order: order,
-                          showDate: true,
-                          onTap: () => _showOrderDetails(order),
-                        ),
+                    for (final entry in OrderHistoryDates.groupByDate(
+                      visible,
+                      _createdAtOf,
+                    ).entries) ...[
+                      _HistoryDateHeader(
+                        label: OrderHistoryDates.label(entry.key),
+                        count: entry.value.length,
                       ),
+                      for (final order in entry.value)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: _OrderRow(
+                            order: order,
+                            showDate: true,
+                            showCreator: widget.isAdmin,
+                            onTap: () => _showOrderDetails(order),
+                          ),
+                        ),
+                    ],
                   ],
                 ),
     );
@@ -610,9 +684,9 @@ children: [
   // ── Summary tiles ────────────────────────────────────────────────────────
   Widget _buildKpiRow(List<Map<String, dynamic>> orders) {
     final scheme = Theme.of(context).colorScheme;
-    final completed = orders.where((o) => _statusKeyOf(o) == 'completed').toList();
-    final pending =
-        orders.where((o) => _statusKeyOf(o) == 'pending').length;
+    final completed =
+        orders.where((o) => _statusKeyOf(o) == 'completed').toList();
+    final pending = orders.where((o) => _statusKeyOf(o) == 'pending').length;
     final revenue = completed.fold<double>(
       0,
       (sum, o) => sum + ((o['totalAmount'] as num?)?.toDouble() ?? 0.0),
@@ -637,29 +711,28 @@ children: [
         title: 'Completed',
         value: '${completed.length}',
         icon: Icons.check_circle_outline,
-        color: const Color(0xFF16A34A),
+        color: AppTheme.sageSuccess,
         description: 'Orders marked completed in the current view.',
       ),
       KpiCard(
         title: 'Revenue',
         value: '₱${revenue.toStringAsFixed(0)}',
         icon: Icons.attach_money,
-        color: const Color(0xFF1E88E5),
-        description: 'Total from completed orders in the current view (stored order totals; not a net/gross sales split).',
+        color: AppTheme.sageAccent,
+        description:
+            'Total from completed orders in the current view (stored order totals; not a net/gross sales split).',
       ),
     ];
 
     return LayoutBuilder(
       builder: (context, constraints) {
         final columns = constraints.maxWidth >= 900 ? 4 : 2;
-        final width =
-            (constraints.maxWidth - (columns - 1) * 12) / columns;
+        final width = (constraints.maxWidth - (columns - 1) * 12) / columns;
         return Wrap(
           spacing: 12,
           runSpacing: 12,
           children: [
-            for (final card in cards)
-              SizedBox(width: width, child: card),
+            for (final card in cards) SizedBox(width: width, child: card),
           ],
         );
       },
@@ -748,6 +821,7 @@ children: [
                         padding: const EdgeInsets.only(bottom: 8),
                         child: _OrderRow(
                           order: order,
+                          showCreator: widget.isAdmin,
                           onTap: () => _showOrderDetails(order),
                         ),
                       ),
@@ -780,7 +854,10 @@ children: [
     final total = (order['totalAmount'] as num?)?.toDouble() ?? 0.0;
     final status = (order['status'] ?? 'unknown').toString();
     final createdAt = order['createdAt'];
-    final isPending = status.trim().toLowerCase() == 'pending';
+    final normalizedStatus = status.trim().toLowerCase();
+    final isPending = normalizedStatus == 'pending';
+    final isCompleted = normalizedStatus == 'completed';
+    final createdByName = (order['createdByName'] ?? '').toString().trim();
 
     // Payment details, when captured at checkout. Orders created before the
     // payment feature have a paymentMethod ('cash' was hardcoded) but no
@@ -849,6 +926,10 @@ children: [
                   const SizedBox(height: 4),
                   Text('Created: $formattedDate'),
                 ],
+                if (createdByName.isNotEmpty) ...[
+                  const SizedBox(height: 4),
+                  Text('Created by: $createdByName'),
+                ],
                 const SizedBox(height: 16),
                 const Text('Items:',
                     style: TextStyle(fontWeight: FontWeight.bold)),
@@ -880,20 +961,19 @@ children: [
               // Complete button
               FilledButton.icon(
                 onPressed: () async {
-                  // Collect payment details before completing. Whether to
-                  // offer a receipt is an eatery-level setting.
-                  var askForReceipt = false;
+                  // Pending orders completed from this screen have no cart
+                  // toggle, so print whenever the eatery master switch is on.
+                  var printReceipt = false;
                   try {
-                    askForReceipt =
-                        (await PosSettingsService.load()).askForReceipt;
+                    final settings = await PosSettingsService.load();
+                    printReceipt = settings.receiptPrintingEnabled;
                   } catch (_) {
-                    // Setting unavailable — skip the receipt offer.
+                    // Setting unavailable — skip printing.
                   }
                   if (!mounted) return;
                   final details = await showPaymentDetailsDialog(
                     dialogContext,
                     totalAmount: total,
-                    askForReceipt: askForReceipt,
                   );
                   if (details == null) return; // cancelled
 
@@ -909,15 +989,18 @@ children: [
                     await SoundService.playOrderCompleted();
                     if (!mounted) return;
                     Navigator.of(dialogContext).pop();
-                    final receiptNote = details.wantsReceipt
-                        ? ' Receipt printing will be available once a '
-                            'printer is connected.'
-                        : '';
-                    ScaffoldMessenger.of(dialogContext).showSnackBar(
-                      SnackBar(
-                          content:
-                              Text('Order completed successfully.$receiptNote')),
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                          content: Text('Order completed successfully.')),
                     );
+                    if (printReceipt) {
+                      unawaited(_printCompletedOrderReceipt(
+                        orderId: id,
+                        order: order,
+                        total: total,
+                        details: details,
+                      ));
+                    }
                   } catch (e) {
                     ScaffoldMessenger.of(dialogContext).showSnackBar(
                       SnackBar(content: Text('Failed to complete order: $e')),
@@ -926,7 +1009,10 @@ children: [
                 },
                 icon: const Icon(Icons.check_circle),
                 label: const Text('Complete'),
-                style: FilledButton.styleFrom(backgroundColor: Colors.green),
+                style: FilledButton.styleFrom(
+                  backgroundColor: AppTheme.sageSuccess,
+                  foregroundColor: AppTheme.sageNavy,
+                ),
               ),
               // Edit button
               FilledButton.icon(
@@ -936,7 +1022,9 @@ children: [
                 },
                 icon: const Icon(Icons.edit),
                 label: const Text('Edit'),
-                style: FilledButton.styleFrom(backgroundColor: Colors.blue),
+                style: FilledButton.styleFrom(
+                  backgroundColor: AppTheme.sageBlue,
+                ),
               ),
               // Void button
               FilledButton.icon(
@@ -994,6 +1082,19 @@ children: [
                 style: FilledButton.styleFrom(backgroundColor: Colors.red),
               ),
             ],
+            if (isCompleted)
+              TextButton.icon(
+                onPressed: () {
+                  unawaited(_printCompletedOrderReceipt(
+                    orderId: id,
+                    order: order,
+                    total: total,
+                    details: null,
+                  ));
+                },
+                icon: const Icon(Icons.print_outlined),
+                label: const Text('Print Receipt'),
+              ),
             TextButton(
               onPressed: () => Navigator.of(dialogContext).pop(),
               child: const Text('Close'),
@@ -1028,6 +1129,53 @@ children: [
     final minute = dateTime.minute.toString().padLeft(2, '0');
     final period = dateTime.hour >= 12 ? 'PM' : 'AM';
     return '$month $day, $year at $hour:$minute $period';
+  }
+
+  Future<void> _printCompletedOrderReceipt({
+    required String orderId,
+    required Map<String, dynamic> order,
+    required double total,
+    required PaymentDetails? details,
+  }) async {
+    final printer = await PrinterAvailabilityService.resolve();
+    if (!printer.available) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Printer unavailable: ${printer.message}'),
+        ),
+      );
+      return;
+    }
+
+    final result = await ReceiptPrinterService.printOrder(
+      orderId: orderId,
+      items: ((order['items'] as List?) ?? const [])
+          .whereType<Map>()
+          .map((item) => Map<String, dynamic>.from(item))
+          .toList(),
+      totalAmount: (order['totalAmount'] as num?)?.toDouble() ?? total,
+      paymentMethod:
+          details?.method ?? (order['paymentMethod'] ?? 'cash').toString(),
+      amountReceived: details?.amountReceived ??
+          (order['amountReceived'] as num?)?.toDouble(),
+      change: details?.change ?? (order['change'] as num?)?.toDouble(),
+      referenceNumber: details?.referenceNumber ??
+          (order['referenceNumber'] ?? '').toString(),
+      paymentStatus: details?.paymentStatus ??
+          (order['paymentStatus'] ?? 'paid').toString(),
+      createdAt: _createdAtOf(order) ?? DateTime.now(),
+      cashierName: (order['createdByName'] ?? '').toString(),
+    );
+    if (!mounted) return;
+    final error = result.error ?? 'Unknown error';
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          result.printed ? 'Receipt printed.' : 'Receipt did not print: $error',
+        ),
+      ),
+    );
   }
 
   Future<void> _showEditOrderDialog(Map<String, dynamic> order) async {
@@ -1099,7 +1247,7 @@ children: [
                     Container(
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
-                        color: Colors.grey.shade100,
+                        color: Colors.white.withValues(alpha: 0.06),
                         borderRadius: BorderRadius.circular(8),
                       ),
                       child: Column(
@@ -1164,10 +1312,10 @@ children: [
                                             if (existingIndex >= 0) {
                                               final currentQty =
                                                   (itemsToAdd[existingIndex]
-                                                          ['quantity']
-                                                      as num?)
-                                                      ?.toInt() ??
-                                                  1;
+                                                                  ['quantity']
+                                                              as num?)
+                                                          ?.toInt() ??
+                                                      1;
                                               if (currentQty <= 1) {
                                                 itemsToAdd
                                                     .removeAt(existingIndex);
@@ -1190,12 +1338,12 @@ children: [
                                             if (existingIndex >= 0) {
                                               final currentQty =
                                                   (itemsToAdd[existingIndex]
-                                                          ['quantity']
-                                                      as num?)
-                                                      ?.toInt() ??
-                                                  1;
+                                                                  ['quantity']
+                                                              as num?)
+                                                          ?.toInt() ??
+                                                      1;
                                               itemsToAdd[existingIndex]
-                                                      ['quantity'] = currentQty + 1;
+                                                  ['quantity'] = currentQty + 1;
                                             } else {
                                               itemsToAdd.add({
                                                 'menuId': itemId,
@@ -1244,7 +1392,7 @@ children: [
                             '₱${additionalTotal.toStringAsFixed(2)}',
                             style: const TextStyle(
                               fontWeight: FontWeight.bold,
-                              color: Colors.green,
+                              color: AppTheme.sageSuccess,
                             ),
                           ),
                         ],
@@ -1364,23 +1512,46 @@ DateTime? _createdAtOf(Map<String, dynamic> order) {
   return DateTime.tryParse(createdAt?.toString() ?? '');
 }
 
-/// Rolling windows for the History filter. `null` cutoff means "no limit".
-enum _HistoryRange {
-  sevenDays('Last 7 days', 7),
-  thirtyDays('Last 30 days', 30),
-  ninetyDays('Last 90 days', 90),
-  allTime('All time', null);
-
-  const _HistoryRange(this.label, this.days);
+class _HistoryDateHeader extends StatelessWidget {
+  const _HistoryDateHeader({
+    required this.label,
+    required this.count,
+  });
 
   final String label;
-  final int? days;
+  final int count;
 
-  DateTime? cutoff() {
-    final d = days;
-    if (d == null) return null;
-    final now = DateTime.now();
-    return DateTime(now.year, now.month, now.day).subtract(Duration(days: d));
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.only(top: 4, bottom: 8),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              label,
+              style: theme.textTheme.titleSmall?.copyWith(
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+            decoration: BoxDecoration(
+              color: theme.colorScheme.surfaceContainerHighest,
+              borderRadius: BorderRadius.circular(999),
+            ),
+            child: Text(
+              '$count',
+              style: theme.textTheme.labelSmall?.copyWith(
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 
@@ -1390,6 +1561,7 @@ class _OrderRow extends StatelessWidget {
     required this.order,
     required this.onTap,
     this.showDate = false,
+    this.showCreator = false,
   });
 
   final Map<String, dynamic> order;
@@ -1397,6 +1569,9 @@ class _OrderRow extends StatelessWidget {
 
   /// History rows carry a date instead of the bare item count.
   final bool showDate;
+
+  /// Admins see who created each order.
+  final bool showCreator;
 
   @override
   Widget build(BuildContext context) {
@@ -1408,9 +1583,13 @@ class _OrderRow extends StatelessWidget {
     final items = itemsRaw is List ? itemsRaw : const [];
     final style = _statusStyleFor(context, status.toLowerCase());
     final createdAt = _createdAtOf(order);
-    final subtitle = showDate && createdAt != null
+    final creator = (order['createdByName'] ?? '').toString().trim();
+    final baseSubtitle = showDate && createdAt != null
         ? DateFormat('MMM d, yyyy • h:mm a').format(createdAt)
         : '${items.length} item${items.length != 1 ? 's' : ''}';
+    final subtitle = showCreator && creator.isNotEmpty
+        ? '$baseSubtitle • by $creator'
+        : baseSubtitle;
 
     return InkWell(
       onTap: onTap,

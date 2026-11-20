@@ -5,6 +5,14 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    match /password_reset_requests/{docId} {
+      allow read, write: if false;
+    }
+
+    match /password_reset_rate_limits/{docId} {
+      allow read, write: if false;
+    }
+
     function isSignedIn() {
       return request.auth != null;
     }
@@ -28,6 +36,8 @@ service cloud.firestore {
     function isAdmin() {
       return hasUserDoc() && (
         userDoc().isAdmin == true
+        || userDoc().isAdmin == 'true'
+        || userDoc().isAdmin == 1
         || userDoc().role == 'admin'
       );
     }
@@ -35,8 +45,12 @@ service cloud.firestore {
     function isApprovedStaff() {
       return hasUserDoc() && (
         userDoc().approved == true
+        || userDoc().approved == 'true'
+        || userDoc().approved == 1
         || userDoc().role == 'admin'
         || userDoc().isAdmin == true
+        || userDoc().isAdmin == 'true'
+        || userDoc().isAdmin == 1
         // Legacy accounts predate the approval flag and are treated as approved.
         || !('approved' in userDoc())
       );
@@ -52,6 +66,10 @@ service cloud.firestore {
       return hasUserDoc()
         && userDoc().eateryId == eateryId
         && (isAdmin() || isApprovedStaff());
+    }
+
+    function canWriteEaterySettings(docId) {
+      return isAdmin() || (docId != 'sms' && docId != 'attendance');
     }
 
     function isValidSageBriefingCreate(eateryId) {
@@ -444,7 +462,15 @@ service cloud.firestore {
       allow update: if isSignedIn()
         && canAccessEatery(eateryId)
         && resource.data.eateryId == eateryId
-        && request.resource.data.eateryId == eateryId;
+        && request.resource.data.eateryId == eateryId
+        && (isAdmin()
+          || (isApprovedStaff()
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'readBy',
+              'isRead',
+              'readAt',
+              'updatedAt'
+            ])));
       allow delete: if isSignedIn()
         && isAdmin()
         && eateryId == userEateryId()
@@ -452,19 +478,20 @@ service cloud.firestore {
     }
 
     match /eateries/{eateryId}/settings/{docId} {
-      // SMS settings contain the alert configuration and are admin-only.
+      // SMS settings contain alert configuration; attendance settings define
+      // payroll-affecting rules. Both are admin-only to write.
       allow read: if canAccessEatery(eateryId)
         && (docId != 'sms' || isAdmin());
       allow create: if canAccessEatery(eateryId)
-        && (docId != 'sms' || isAdmin())
+        && canWriteEaterySettings(docId)
         && request.resource.data.eateryId == eateryId;
       allow update: if canAccessEatery(eateryId)
-        && (docId != 'sms' || isAdmin())
+        && canWriteEaterySettings(docId)
         && resource.data.eateryId == eateryId
         && request.resource.data.eateryId == eateryId;
       allow delete: if isAdmin()
         && eateryId == userEateryId()
-        && (docId != 'sms' || isAdmin())
+        && canWriteEaterySettings(docId)
         && resource.data.eateryId == eateryId;
     }
 
@@ -472,7 +499,6 @@ service cloud.firestore {
       allow read: if isAdmin() && eateryId == userEateryId();
       allow create: if isAdmin() && eateryId == userEateryId();
       allow update: if isAdmin() && eateryId == userEateryId();
-      allow set: if isAdmin() && eateryId == userEateryId();
       allow delete: if false;
     }
 
@@ -480,7 +506,6 @@ service cloud.firestore {
       allow read: if isAdmin() && eateryId == userEateryId();
       allow create: if isAdmin() && eateryId == userEateryId();
       allow update: if isAdmin() && eateryId == userEateryId();
-      allow set: if isAdmin() && eateryId == userEateryId();
       allow delete: if false;
     }
 
@@ -525,8 +550,7 @@ service cloud.firestore {
     match /eateries/{eateryId}/staff_attendance/{docId} {
       allow read: if canAccessEatery(eateryId);
 
-      // Staff can create their own attendance record for self check-in.
-      // Admins can encode attendance on behalf of any staff member.
+      // Staff clock in for themselves; admins can encode on anyone's behalf.
       allow create: if canAccessEatery(eateryId)
         && request.resource.data.eateryId == eateryId
         && request.resource.data.uid is string
@@ -534,15 +558,29 @@ service cloud.firestore {
         && (
           (
             request.resource.data.uid == request.auth.uid
-            && (
-              ('morningCheckIn' in request.resource.data
-                && request.resource.data.morningCheckIn is string)
-              || ('afternoonCheckIn' in request.resource.data
-                && request.resource.data.afternoonCheckIn is string)
-            )
-            && (!('workUnit' in request.resource.data)
-              || request.resource.data.workUnit == 0.5
-              || request.resource.data.workUnit == 1.0)
+            && request.resource.data.timeIn is timestamp
+            && request.resource.data.timeIn == request.time
+            && request.resource.data.present == true
+            && request.resource.data.workUnit == 0.0
+            && request.resource.data.status == 'in_progress'
+            && request.resource.data.keys().hasOnly([
+              'eateryId',
+              'uid',
+              'date',
+              'timeIn',
+              'present',
+              'workUnit',
+              'status',
+              'source',
+              'scheduledStart',
+              'late',
+              'lateMinutes',
+              'needsReview',
+              'createdAt',
+              'updatedAt'
+            ])
+            && (!('source' in request.resource.data)
+              || request.resource.data.source == 'self')
           )
           || (
             isAdmin()
@@ -552,8 +590,8 @@ service cloud.firestore {
           )
         );
 
-      // Staff may only add their own check-in timestamps (and the derived
-      // present/workUnit/status values). Admins may edit the attendance record.
+      // Staff may only close an open shift with server timestamps. Admins may
+      // edit any attendance record and override the derived work unit.
       allow update: if canAccessEatery(eateryId)
         && resource.data.eateryId == eateryId
         && request.resource.data.eateryId == resource.data.eateryId
@@ -562,18 +600,50 @@ service cloud.firestore {
         && (
           (
             request.resource.data.uid == request.auth.uid
-            && request.resource.data.diff(resource.data).changedKeys().hasOnly([
-              'morningCheckIn',
-              'afternoonCheckIn',
-              'present',
-              'workUnit',
-              'status',
-              'updatedAt',
-              'createdAt'
-            ])
-            && (!('workUnit' in request.resource.data)
-              || request.resource.data.workUnit == 0.5
-              || request.resource.data.workUnit == 1.0)
+            && (
+              (
+                (!('timeOut' in resource.data)
+                  || resource.data.timeOut == null)
+                && request.resource.data.timeOut is timestamp
+                && request.resource.data.timeOut == request.time
+                && request.resource.data.hoursWorked is number
+                && request.resource.data.hoursWorked >= 0
+                && (request.resource.data.workUnit == 0.0
+                  || request.resource.data.workUnit == 0.5
+                  || request.resource.data.workUnit == 1.0)
+                && request.resource.data.diff(resource.data).changedKeys().hasOnly([
+                  'timeOut',
+                  'hoursWorked',
+                  'workUnit',
+                  'status',
+                  'present',
+                  'needsReview',
+                  'updatedAt'
+                ])
+              )
+              || (
+                (!('timeIn' in resource.data)
+                  || resource.data.timeIn == null)
+                && (!('timeOut' in resource.data)
+                  || resource.data.timeOut == null)
+                && request.resource.data.timeIn is timestamp
+                && request.resource.data.timeIn == request.time
+                && request.resource.data.workUnit == 0.0
+                && request.resource.data.status == 'in_progress'
+                && request.resource.data.diff(resource.data).changedKeys().hasOnly([
+                  'timeIn',
+                  'present',
+                  'workUnit',
+                  'status',
+                  'source',
+                  'scheduledStart',
+                  'late',
+                  'lateMinutes',
+                  'needsReview',
+                  'updatedAt'
+                ])
+              )
+            )
           )
           || (
             isAdmin()
@@ -584,9 +654,17 @@ service cloud.firestore {
               'status',
               'notes',
               'updatedAt',
-              'morningCheckIn',
-              'afternoonCheckIn',
-              'createdAt'
+              'createdAt',
+              'timeIn',
+              'timeOut',
+              'hoursWorked',
+              'needsReview',
+              'source',
+              'scheduledStart',
+              'late',
+              'lateMinutes',
+              'editedByUid',
+              'editedAt'
             ])
           )
         );
@@ -675,7 +753,14 @@ service cloud.firestore {
       allow update: if isSignedIn()
         && resource.data.eateryId == userEateryId()
         && request.resource.data.eateryId == resource.data.eateryId
-        && (isAdmin() || isApprovedStaff());
+        && (isAdmin()
+          || (isApprovedStaff()
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'readBy',
+              'isRead',
+              'readAt',
+              'updatedAt'
+            ])));
       allow delete: if isSignedIn()
         && isAdmin()
         && resource.data.eateryId == userEateryId();
@@ -693,6 +778,7 @@ service cloud.firestore {
           'lowStockEnabled',
           'billRemindersEnabled',
           'orderAlertsEnabled',
+          'attendanceRemindersEnabled',
           'billReminderDays',
           'currencySymbol',
           'updatedAt'
@@ -708,6 +794,7 @@ service cloud.firestore {
           'lowStockEnabled',
           'billRemindersEnabled',
           'orderAlertsEnabled',
+          'attendanceRemindersEnabled',
           'billReminderDays',
           'currencySymbol',
           'updatedAt'

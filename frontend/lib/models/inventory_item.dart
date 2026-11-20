@@ -1,23 +1,37 @@
-import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 enum ConsumptionMode { direct, recipePending }
+
+double _asDouble(dynamic value, [double fallback = 0]) {
+  if (value is num) return value.toDouble();
+  return double.tryParse(value?.toString() ?? '') ?? fallback;
+}
+
+int _asInt(dynamic value, [int fallback = 0]) {
+  if (value is num) return value.toInt();
+  return int.tryParse(value?.toString() ?? '') ?? fallback;
+}
+
+DateTime _asDate(dynamic value, [DateTime? fallback]) {
+  final result = fallback ?? DateTime.now();
+  if (value is DateTime) return value;
+  if (value is Timestamp) return value.toDate();
+  if (value == null) return result;
+  return DateTime.tryParse(value.toString()) ?? result;
+}
 
 class StockLog {
   final DateTime timestamp;
   final double change;
   final String reason;
 
-  StockLog({required this.timestamp, required this.change, required this.reason});
+  StockLog(
+      {required this.timestamp, required this.change, required this.reason});
 
   factory StockLog.fromJson(Map<String, dynamic> json) => StockLog(
-        timestamp: json['timestamp'] is String
-            ? DateTime.parse(json['timestamp'])
-            : (json['timestamp'] is Timestamp
-                ? (json['timestamp'] as Timestamp).toDate()
-                : DateTime.parse(json['timestamp'].toString())),
-        change: (json['change'] ?? 0).toDouble(),
-        reason: json['reason'] ?? '',
+        timestamp: _asDate(json['timestamp']),
+        change: _asDouble(json['change']),
+        reason: json['reason']?.toString() ?? '',
       );
 
   Map<String, dynamic> toJson() => {
@@ -101,57 +115,53 @@ class InventoryItem {
 
   factory InventoryItem.fromJson(Map<String, dynamic> json) {
     return InventoryItem(
-      id: json['id'] ?? '',
-      name: json['name'] ?? '',
-      sku: json['sku'],
-      description: json['description'],
-      brand: json['brand'],
-      tags: (json['tags'] as List<dynamic>?)
-              ?.map((e) => e.toString())
-              .toList() ??
-          const [],
-      category: json['category'] ?? '',
-      currentStock: (json['currentStock'] ?? 0).toDouble(),
-      unit: json['unit'] ?? '',
-      baseUnit: json['baseUnit'] ?? json['unit'],
-      purchaseUnit: json['purchaseUnit'],
-      saleUnit: json['saleUnit'],
-      conversionFactor: (json['conversionFactor'] ?? 1.0).toDouble(),
-      minStock: (json['minStock'] ?? 0).toDouble(),
-      reorderPoint: (json['reorderPoint'] ?? 0).toDouble(),
-      safetyStock: (json['safetyStock'] ?? 0).toDouble(),
-      maxStock: (json['maxStock'] ?? 0).toDouble(),
-      leadTimeDays: (json['leadTimeDays'] ?? 0).toInt(),
-      unitCost: (json['unitCost'] ?? 0).toDouble(),
-      lastPurchaseCost: (json['lastPurchaseCost'] ?? 0).toDouble(),
-      avgCost: (json['avgCost'] ?? 0).toDouble(),
-      sellingPrice: (json['sellingPrice'] ?? 0).toDouble(),
-      supplier: json['supplier'] ?? '',
-      createdAt: json['createdAt'] != null
-          ? (json['createdAt'] is String
-              ? DateTime.parse(json['createdAt'])
-              : (json['createdAt'] is Timestamp
-                  ? (json['createdAt'] as Timestamp).toDate()
-                  : DateTime.parse(json['createdAt'].toString())))
-          : DateTime.now(),
-      updatedAt: json['updatedAt'] != null
-          ? (json['updatedAt'] is String
-              ? DateTime.parse(json['updatedAt'])
-              : (json['updatedAt'] is Timestamp
-                  ? (json['updatedAt'] as Timestamp).toDate()
-                  : DateTime.parse(json['updatedAt'].toString())))
-          : DateTime.now(),
-      isBadStock: json['isBadStock'] ?? false,
-      badStockQuantity: (json['badStockQuantity'] ?? 0).toDouble(),
-      stockLogs: (json['stockLogs'] as List<dynamic>?)
-              ?.map((e) => StockLog.fromJson(e as Map<String, dynamic>))
-              .toList() ??
-          [],
-      isActive: json['isActive'] ?? true,
-      imageUrl: json['imageUrl'],
-      notes: json['notes'],
+      id: json['id']?.toString() ?? '',
+      name: json['name']?.toString() ?? '',
+      sku: json['sku']?.toString(),
+      description: json['description']?.toString(),
+      brand: json['brand']?.toString(),
+      tags: json['tags'] is List
+          ? (json['tags'] as List).map((e) => e.toString()).toList()
+          : const [],
+      category: json['category']?.toString() ?? '',
+      currentStock: _asDouble(json['currentStock']),
+      unit: json['unit']?.toString() ?? '',
+      baseUnit: json['baseUnit']?.toString() ?? json['unit']?.toString(),
+      purchaseUnit: json['purchaseUnit']?.toString(),
+      saleUnit: json['saleUnit']?.toString(),
+      conversionFactor: _asDouble(json['conversionFactor'], 1),
+      minStock: _asDouble(json['minStock']),
+      reorderPoint: _asDouble(json['reorderPoint']),
+      safetyStock: _asDouble(json['safetyStock']),
+      maxStock: _asDouble(json['maxStock']),
+      leadTimeDays: _asInt(json['leadTimeDays']),
+      unitCost: _asDouble(json['unitCost']),
+      lastPurchaseCost: _asDouble(json['lastPurchaseCost']),
+      avgCost: _asDouble(json['avgCost']),
+      sellingPrice: _asDouble(json['sellingPrice']),
+      supplier: json['supplier']?.toString() ?? '',
+      createdAt: _asDate(json['createdAt']),
+      updatedAt: _asDate(json['updatedAt']),
+      isBadStock: json['isBadStock'] == true,
+      badStockQuantity: _asDouble(json['badStockQuantity']),
+      stockLogs: _parseStockLogs(json['stockLogs']),
+      isActive: json['isActive'] != false,
+      imageUrl: json['imageUrl']?.toString(),
+      notes: json['notes']?.toString(),
       consumptionMode: _parseConsumptionMode(json['consumptionMode']),
     );
+  }
+
+  static List<StockLog> _parseStockLogs(dynamic value) {
+    if (value is! List) return const [];
+    final logs = <StockLog>[];
+    for (final entry in value) {
+      if (entry is! Map) continue;
+      try {
+        logs.add(StockLog.fromJson(Map<String, dynamic>.from(entry)));
+      } catch (_) {}
+    }
+    return logs;
   }
 
   static ConsumptionMode _parseConsumptionMode(dynamic v) {
@@ -202,8 +212,10 @@ class InventoryItem {
             : 'recipe_pending',
       };
 
-  bool get isLowStock => currentStock <= (reorderPoint > 0 ? reorderPoint : minStock);
-  double get totalValue => currentStock * (lastPurchaseCost > 0 ? lastPurchaseCost : unitCost);
+  bool get isLowStock =>
+      currentStock <= (reorderPoint > 0 ? reorderPoint : minStock);
+  double get totalValue =>
+      currentStock * (lastPurchaseCost > 0 ? lastPurchaseCost : unitCost);
   String get effectiveBaseUnit => baseUnit ?? unit;
 
   InventoryItem copyWith({

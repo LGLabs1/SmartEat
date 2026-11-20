@@ -4,10 +4,23 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/foundation.dart';
 import 'dart:async';
 import 'dart:math';
+import '../features/inventory/domain/services/recipe_consumption.dart';
 import '../utils/order_query_key.dart';
 import 'business_context_builder.dart';
 import 'notification_service.dart';
 import 'sms_service.dart';
+
+class _OrderDeductionResult {
+  const _OrderDeductionResult({
+    required this.plan,
+    required this.nextStockById,
+    required this.lowStockItems,
+  });
+
+  final RecipeConsumptionPlan plan;
+  final Map<String, double> nextStockById;
+  final List<Map<String, dynamic>> lowStockItems;
+}
 
 class FirebaseService {
   static final FirebaseFirestore _firestore = FirebaseFirestore.instance;
@@ -157,7 +170,8 @@ class FirebaseService {
     Map<String, dynamic> expenseData,
   ) async {
     final eateryId = await _requireCurrentEateryId();
-    final docRef = await _eaterySubcollection(eateryId, expensesCollection).add({
+    final docRef =
+        await _eaterySubcollection(eateryId, expensesCollection).add({
       ...expenseData,
       'eateryId': eateryId,
       'createdAt': FieldValue.serverTimestamp(),
@@ -229,9 +243,8 @@ class FirebaseService {
       if (existing != null) return existing;
 
       final supplier = supplierName?.trim();
-      final label = (supplier != null && supplier.isNotEmpty)
-          ? supplier
-          : receiptNumber;
+      final label =
+          (supplier != null && supplier.isNotEmpty) ? supplier : receiptNumber;
 
       return await _writeExpense({
         'name': 'Inventory purchase - $label',
@@ -267,7 +280,8 @@ class FirebaseService {
     try {
       final eateryId = await _requireCurrentEateryId();
 
-      final inventoryRef = _eaterySubcollection(eateryId, inventoryCollection).doc(inventoryItemId);
+      final inventoryRef = _eaterySubcollection(eateryId, inventoryCollection)
+          .doc(inventoryItemId);
       final inventorySnap = await inventoryRef.get();
       if (!inventorySnap.exists) throw Exception('Inventory item not found');
       final data = inventorySnap.data() as Map<String, dynamic>;
@@ -286,7 +300,8 @@ class FirebaseService {
         'updatedAt': FieldValue.serverTimestamp(),
       });
 
-      final damagedRef = _eaterySubcollection(eateryId, damagedItemsCollection).doc();
+      final damagedRef =
+          _eaterySubcollection(eateryId, damagedItemsCollection).doc();
       final totalCost = double.parse((unitCost * quantity).toStringAsFixed(2));
       batch.set(damagedRef, {
         'inventoryItemId': inventoryItemId,
@@ -313,8 +328,8 @@ class FirebaseService {
   static Future<List<Map<String, dynamic>>> getDamagedItems() async {
     try {
       final eateryId = await _requireCurrentEateryId();
-      final subSnap = await _withRetry(() =>
-          _eaterySubcollection(eateryId, damagedItemsCollection).get());
+      final subSnap = await _withRetry(
+          () => _eaterySubcollection(eateryId, damagedItemsCollection).get());
 
       final Map<String, Map<String, dynamic>> combined = {};
       for (final d in subSnap.docs) {
@@ -380,7 +395,8 @@ class FirebaseService {
         'eateryId': eateryId,
         'createdAt': FieldValue.serverTimestamp(),
       };
-      final collection = _eaterySubcollection(eateryId, stockMovementsCollection);
+      final collection =
+          _eaterySubcollection(eateryId, stockMovementsCollection);
       if (id.isEmpty) {
         final ref = await _withRetry(() => collection.add(payload));
         return {'id': ref.id, ...payload};
@@ -715,7 +731,7 @@ class FirebaseService {
       final items = querySnapshot.docs.map((doc) {
         final Map<String, dynamic> result = {'id': doc.id};
         result.addAll(doc.data());
-        return result;
+        return RecipeConsumption.normalizeRecipe(result);
       }).toList();
 
       items.sort((a, b) {
@@ -736,7 +752,7 @@ class FirebaseService {
     try {
       await _requireAdmin();
       final eateryId = await _requireCurrentEateryId();
-      final data = Map<String, dynamic>.from(recipeData);
+      final data = RecipeConsumption.normalizeRecipe(recipeData);
       data['eateryId'] = eateryId;
       data['createdAt'] = FieldValue.serverTimestamp();
       data['updatedAt'] = FieldValue.serverTimestamp();
@@ -757,7 +773,9 @@ class FirebaseService {
     try {
       await _requireAdmin();
       final eateryId = await _requireCurrentEateryId();
-      final data = Map<String, dynamic>.from(updates);
+      final data = updates.containsKey('ingredients')
+          ? RecipeConsumption.normalizeRecipe(updates)
+          : Map<String, dynamic>.from(updates);
       data['updatedAt'] = FieldValue.serverTimestamp();
       await _eaterySubcollection(eateryId, recipesCollection)
           .doc(recipeId)
@@ -771,9 +789,20 @@ class FirebaseService {
     try {
       await _requireAdmin();
       final eateryId = await _requireCurrentEateryId();
-      await _eaterySubcollection(eateryId, recipesCollection)
-          .doc(recipeId)
-          .delete();
+      final linkedMenus = await _eaterySubcollection(eateryId, menuCollection)
+          .where('recipeId', isEqualTo: recipeId)
+          .get();
+      final batch = _firestore.batch();
+      for (final doc in linkedMenus.docs) {
+        batch.update(doc.reference, {
+          'recipeId': '',
+          'costingSource': 'manual',
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+      }
+      batch.delete(
+          _eaterySubcollection(eateryId, recipesCollection).doc(recipeId));
+      await batch.commit();
     } catch (e) {
       throw Exception('Failed to delete recipe: $e');
     }
@@ -786,7 +815,10 @@ class FirebaseService {
           .doc(recipeId)
           .get();
       if (!doc.exists) return null;
-      return {'id': doc.id, ...?doc.data()};
+      return RecipeConsumption.normalizeRecipe({
+        'id': doc.id,
+        ...?doc.data(),
+      });
     } catch (e) {
       return null;
     }
@@ -794,39 +826,7 @@ class FirebaseService {
 
   static Map<String, dynamic> computeRecipeCostTotals(
       Map<String, dynamic> recipeData) {
-    final data = Map<String, dynamic>.from(recipeData);
-    final ingredients = data['ingredients'];
-    double batchCost = 0.0;
-    if (ingredients is List) {
-      final updatedIngredients = <Map<String, dynamic>>[];
-      for (final ing in ingredients) {
-        if (ing is Map) {
-          final ingCopy = Map<String, dynamic>.from(ing);
-          final qty = (ingCopy['quantity'] is num)
-              ? (ingCopy['quantity'] as num).toDouble()
-              : 0.0;
-          final unitCost = (ingCopy['unitCost'] is num)
-              ? (ingCopy['unitCost'] as num).toDouble()
-              : 0.0;
-          final totalCost = qty * unitCost;
-          ingCopy['totalCost'] = totalCost;
-          batchCost += totalCost;
-          updatedIngredients.add(ingCopy);
-        }
-      }
-      data['ingredients'] = updatedIngredients;
-    }
-    data['batchCost'] = batchCost;
-    final batchYield = (data['batchYield'] is num)
-        ? (data['batchYield'] as num).toDouble()
-        : ((data['baseServings'] is num)
-            ? (data['baseServings'] as num).toDouble()
-            : 1.0);
-    final yieldSafe = batchYield <= 0 ? 1.0 : batchYield;
-    data['costPerServing'] = batchCost / yieldSafe;
-    data['batchYield'] = yieldSafe;
-    data['costingMethod'] = data['costingMethod'] ?? 'recipe';
-    data['costSource'] = data['costSource'] ?? 'recipe_calculated';
+    final data = RecipeConsumption.normalizeRecipe(recipeData);
     data['costingUpdatedAt'] = FieldValue.serverTimestamp();
     return data;
   }
@@ -847,7 +847,8 @@ class FirebaseService {
           await _eaterySubcollection(eateryId, inventoryCollection).get();
       for (final doc in existing.docs) {
         final data = doc.data();
-        final existingName = (data['name'] ?? '').toString().trim().toLowerCase();
+        final existingName =
+            (data['name'] ?? '').toString().trim().toLowerCase();
         if (existingName == normalized) {
           return {'id': doc.id, ...data, 'linkedExisting': true};
         }
@@ -874,8 +875,8 @@ class FirebaseService {
         'createdAt': FieldValue.serverTimestamp(),
         'updatedAt': FieldValue.serverTimestamp(),
       };
-      final docRef =
-          await _eaterySubcollection(eateryId, inventoryCollection).add(itemData);
+      final docRef = await _eaterySubcollection(eateryId, inventoryCollection)
+          .add(itemData);
       final doc = await docRef.get();
       return {'id': docRef.id, ...?doc.data()};
     } catch (e) {
@@ -891,10 +892,16 @@ class FirebaseService {
     try {
       await _requireAdmin();
       final eateryId = await _requireCurrentEateryId();
+      final linkedIds = menuItemIds.map((id) => id.trim()).toSet()
+        ..removeWhere((id) => id.isEmpty);
+      final existing = await _eaterySubcollection(eateryId, menuCollection)
+          .where('recipeId', isEqualTo: recipeId)
+          .get();
       final batch = _firestore.batch();
-      for (final menuItemId in menuItemIds) {
+      for (final menuItemId in linkedIds) {
         final updates = <String, dynamic>{
           'recipeId': recipeId,
+          'inventoryItemId': '',
           'updatedAt': FieldValue.serverTimestamp(),
         };
         if (recipeCostData != null) {
@@ -910,9 +917,17 @@ class FirebaseService {
             _eaterySubcollection(eateryId, menuCollection).doc(menuItemId),
             updates);
       }
+      for (final doc in existing.docs) {
+        if (linkedIds.contains(doc.id)) continue;
+        batch.update(doc.reference, {
+          'recipeId': '',
+          'costingSource': 'manual',
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+      }
       await batch.commit();
       await updateRecipe(recipeId, {
-        'linkedMenuItemIds': menuItemIds,
+        'linkedMenuItemIds': linkedIds.toList(),
       });
     } catch (e) {
       throw Exception('Failed to link recipe to menu items: $e');
@@ -1149,6 +1164,7 @@ class FirebaseService {
     final profile = <String, dynamic>{
       'id': doc.id,
       ...(data ?? const <String, dynamic>{}),
+      'uid': doc.id,
     };
     _storeProfile(uid, profile);
     return Map<String, dynamic>.from(profile);
@@ -1424,6 +1440,7 @@ class FirebaseService {
   static Future<void> signOut() async {
     await _auth.signOut();
     _invalidateProfileCache();
+    BusinessContextBuilder.invalidate();
     _cachedEateryValid = false;
     _cachedEateryId = null;
     _cachedEateryUid = null;
@@ -1514,17 +1531,60 @@ class FirebaseService {
     });
   }
 
+  static Future<void> _setRecipeMenuLink({
+    required String recipeId,
+    required String menuItemId,
+    required bool linked,
+  }) async {
+    if (recipeId.trim().isEmpty || menuItemId.trim().isEmpty) return;
+    final eateryId = await _requireCurrentEateryId();
+    final ref = _eaterySubcollection(eateryId, recipesCollection).doc(recipeId);
+    final snap = await ref.get();
+    if (!snap.exists) return;
+    final rawIds = snap.data()?['linkedMenuItemIds'];
+    final ids = rawIds is List
+        ? rawIds.map((id) => id.toString()).where((id) => id.isNotEmpty).toSet()
+        : <String>{};
+    if (linked) {
+      ids.add(menuItemId);
+    } else {
+      ids.remove(menuItemId);
+    }
+    await ref.update({
+      'linkedMenuItemIds': ids.toList(),
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+  }
+
   static Future<Map<String, dynamic>> createMenuItem(
     Map<String, dynamic> menuData,
   ) async {
     try {
       final eateryId = await _requireCurrentEateryId();
+      final data = Map<String, dynamic>.from(menuData);
+      final recipeId = (data['recipeId'] ?? '').toString().trim();
+      final inventoryItemId = (data['inventoryItemId'] ?? '').toString().trim();
+      if (recipeId.isNotEmpty && inventoryItemId.isNotEmpty) {
+        throw Exception(
+          'Choose either a recipe or a direct inventory link, not both.',
+        );
+      }
+      if (recipeId.isNotEmpty) data['inventoryItemId'] = '';
+      if (inventoryItemId.isNotEmpty) data['recipeId'] = '';
+
       final docRef = await _eaterySubcollection(eateryId, menuCollection).add({
-        ...menuData,
+        ...data,
         'eateryId': eateryId,
         'createdAt': FieldValue.serverTimestamp(),
         'updatedAt': FieldValue.serverTimestamp(),
       });
+      if (recipeId.isNotEmpty) {
+        await _setRecipeMenuLink(
+          recipeId: recipeId,
+          menuItemId: docRef.id,
+          linked: true,
+        );
+      }
 
       final docSnapshot = await docRef.get();
       BusinessContextBuilder.invalidate();
@@ -1554,10 +1614,48 @@ class FirebaseService {
         throw Exception('Access denied');
       }
 
+      final existingData = existing.data() ?? <String, dynamic>{};
+      final oldRecipeId = (existingData['recipeId'] ?? '').toString().trim();
+      final data = Map<String, dynamic>.from(updates);
+      var newRecipeId = data.containsKey('recipeId')
+          ? (data['recipeId'] ?? '').toString().trim()
+          : oldRecipeId;
+      var newInventoryItemId = data.containsKey('inventoryItemId')
+          ? (data['inventoryItemId'] ?? '').toString().trim()
+          : (existingData['inventoryItemId'] ?? '').toString().trim();
+
+      if (newRecipeId.isNotEmpty && newInventoryItemId.isNotEmpty) {
+        if (data.containsKey('inventoryItemId') &&
+            !data.containsKey('recipeId')) {
+          newRecipeId = '';
+          data['recipeId'] = '';
+        } else {
+          newInventoryItemId = '';
+          data['inventoryItemId'] = '';
+        }
+      }
+
       await _eaterySubcollection(eateryId, menuCollection).doc(id).update({
-        ...updates,
+        ...data,
         'updatedAt': FieldValue.serverTimestamp(),
       });
+
+      if (oldRecipeId != newRecipeId) {
+        if (oldRecipeId.isNotEmpty) {
+          await _setRecipeMenuLink(
+            recipeId: oldRecipeId,
+            menuItemId: id,
+            linked: false,
+          );
+        }
+        if (newRecipeId.isNotEmpty) {
+          await _setRecipeMenuLink(
+            recipeId: newRecipeId,
+            menuItemId: id,
+            linked: true,
+          );
+        }
+      }
 
       final docSnapshot =
           await _eaterySubcollection(eateryId, menuCollection).doc(id).get();
@@ -1584,11 +1682,261 @@ class FirebaseService {
       if (existingEateryId.isNotEmpty && existingEateryId != eateryId) {
         throw Exception('Access denied');
       }
+      final recipeId = (existing.data()?['recipeId'] ?? '').toString().trim();
       await _eaterySubcollection(eateryId, menuCollection).doc(id).delete();
+      if (recipeId.isNotEmpty) {
+        await _setRecipeMenuLink(
+          recipeId: recipeId,
+          menuItemId: id,
+          linked: false,
+        );
+      }
       BusinessContextBuilder.invalidate();
     } catch (e) {
       throw Exception('Failed to delete menu item: $e');
     }
+  }
+
+  static bool _isDrinkMenu(Map<String, dynamic> menu) {
+    final category = _norm((menu['category'] ?? '').toString());
+    if (category == 'drink' || category == 'drinks') return true;
+    final categories = menu['categories'];
+    if (categories is! List) return false;
+    return categories.any((value) {
+      final normalized = _norm(value.toString());
+      return normalized == 'drink' || normalized == 'drinks';
+    });
+  }
+
+  static double _asDouble(dynamic value, [double fallback = 0.0]) {
+    if (value is num) return value.toDouble();
+    return double.tryParse(value?.toString() ?? '') ?? fallback;
+  }
+
+  static Future<List<Map<String, dynamic>>> _loadInventoryForDeduction(
+    String eateryId,
+  ) async {
+    final snap =
+        await _eaterySubcollection(eateryId, inventoryCollection).get();
+    return snap.docs
+        .map((doc) => <String, dynamic>{'id': doc.id, ...doc.data()})
+        .toList();
+  }
+
+  static Future<_OrderDeductionResult> _applyOrderDeduction({
+    required Transaction tx,
+    required String eateryId,
+    required List<Map<String, dynamic>> orderItems,
+    required List<Map<String, dynamic>> inventory,
+  }) async {
+    final menuIds = <String>{};
+    for (final item in orderItems) {
+      final menuItemId = (item['menuItemId'] ?? '').toString().trim();
+      final quantity = item['quantity'] is num
+          ? (item['quantity'] as num).toInt()
+          : int.tryParse(item['quantity']?.toString() ?? '') ?? 0;
+      if (menuItemId.isNotEmpty && quantity > 0) menuIds.add(menuItemId);
+    }
+
+    if (menuIds.isEmpty) {
+      return _OrderDeductionResult(
+        plan: const RecipeConsumptionPlan(
+          lines: [],
+          requiredByInventoryId: {},
+          perServingByMenuId: {},
+          inventoryNameById: {},
+          inventoryUnitById: {},
+          recipeMenuItemIds: {},
+        ),
+        nextStockById: const {},
+        lowStockItems: const [],
+      );
+    }
+
+    final menuRefs = {
+      for (final id in menuIds)
+        id: _eaterySubcollection(eateryId, menuCollection).doc(id),
+    };
+    final menuSnaps =
+        await Future.wait(menuRefs.values.map((ref) => tx.get(ref)));
+    final menuById = <String, Map<String, dynamic>>{};
+    for (final snap in menuSnaps) {
+      if (!snap.exists) {
+        throw FirebaseException(
+          plugin: 'cloud_firestore',
+          code: 'not-found',
+          message: 'Menu item not found (id: ${snap.id}).',
+        );
+      }
+      final data = snap.data() ?? <String, dynamic>{};
+      final menuEateryId = (data['eateryId'] ?? '').toString().trim();
+      if (menuEateryId.isEmpty || menuEateryId != eateryId) {
+        throw Exception('Access denied');
+      }
+      menuById[snap.id] = {'id': snap.id, ...data};
+    }
+
+    final recipeIds = <String>{};
+    for (final menu in menuById.values) {
+      final recipeId = (menu['recipeId'] ?? '').toString().trim();
+      if (recipeId.isNotEmpty) recipeIds.add(recipeId);
+    }
+    final recipeRefs = {
+      for (final id in recipeIds)
+        id: _eaterySubcollection(eateryId, recipesCollection).doc(id),
+    };
+    final recipeSnaps =
+        await Future.wait(recipeRefs.values.map((ref) => tx.get(ref)));
+    final recipeById = <String, Map<String, dynamic>>{};
+    for (final snap in recipeSnaps) {
+      if (!snap.exists) {
+        throw FirebaseException(
+          plugin: 'cloud_firestore',
+          code: 'not-found',
+          message: 'Recipe not found (id: ${snap.id}).',
+        );
+      }
+      recipeById[snap.id] = {'id': snap.id, ...?snap.data()};
+    }
+
+    final inventoryById = RecipeConsumption.indexById(inventory);
+    final inventoryByName = RecipeConsumption.indexByName(inventory);
+
+    final resolvedMenuById = <String, Map<String, dynamic>>{};
+    for (final entry in menuById.entries) {
+      final menu = Map<String, dynamic>.from(entry.value);
+      final recipeId = (menu['recipeId'] ?? '').toString().trim();
+      final inventoryItemId = (menu['inventoryItemId'] ?? '').toString().trim();
+      if (recipeId.isEmpty && inventoryItemId.isEmpty && _isDrinkMenu(menu)) {
+        final match = inventoryByName[_norm((menu['name'] ?? '').toString())];
+        final matchId = (match?['id'] ?? '').toString().trim();
+        if (matchId.isNotEmpty) menu['inventoryItemId'] = matchId;
+      }
+      resolvedMenuById[entry.key] = menu;
+    }
+
+    final plan = RecipeConsumption.buildPlan(
+      orderItems: orderItems,
+      menuById: resolvedMenuById,
+      recipeById: recipeById,
+      inventoryById: inventoryById,
+      inventoryByName: inventoryByName,
+    );
+
+    final stockIds = plan.requiredByInventoryId.keys.toList();
+    final stockSnaps = await Future.wait(
+      stockIds.map(
+        (id) => tx.get(
+          _eaterySubcollection(eateryId, inventoryCollection).doc(id),
+        ),
+      ),
+    );
+    final txInventoryById = <String, Map<String, dynamic>>{};
+    for (final snap in stockSnaps) {
+      if (snap.exists) {
+        txInventoryById[snap.id] = {
+          'id': snap.id,
+          ...?snap.data(),
+        };
+      }
+    }
+
+    final nextStockById = <String, double>{};
+    for (final entry in plan.requiredByInventoryId.entries) {
+      final inventoryItemId = entry.key;
+      final required = entry.value;
+      final inventoryItem = txInventoryById[inventoryItemId];
+      if (inventoryItem == null) {
+        throw Exception('Inventory item not found: $inventoryItemId');
+      }
+      final currentStock = _asDouble(inventoryItem['currentStock'], -1);
+      if (currentStock < 0) {
+        throw FirebaseException(
+          plugin: 'cloud_firestore',
+          code: 'failed-precondition',
+          message:
+              'Inventory item ${(inventoryItem['name'] ?? 'Unknown').toString()} has no currentStock set (id: $inventoryItemId).',
+        );
+      }
+      final nextStock = currentStock - required;
+      if (nextStock < -0.000001) {
+        throw FirebaseException(
+          plugin: 'cloud_firestore',
+          code: 'failed-precondition',
+          message:
+              'Insufficient inventory stock for ${(inventoryItem['name'] ?? 'item').toString()} (need ${required.toStringAsFixed(3)}, available ${currentStock.toStringAsFixed(3)}).',
+        );
+      }
+      nextStockById[inventoryItemId] = max(0.0, nextStock);
+    }
+
+    final remainingServings = RecipeConsumption.remainingServings(
+      plan: plan,
+      nextStockById: nextStockById,
+    );
+    final lowStockItems = <Map<String, dynamic>>[];
+
+    for (final entry in plan.requiredByInventoryId.entries) {
+      final inventoryItemId = entry.key;
+      final inventoryItem = txInventoryById[inventoryItemId]!;
+      final nextStock = nextStockById[inventoryItemId] ?? 0.0;
+      tx.update(
+        _eaterySubcollection(eateryId, inventoryCollection)
+            .doc(inventoryItemId),
+        {
+          'currentStock': nextStock,
+          'updatedAt': FieldValue.serverTimestamp(),
+        },
+      );
+      final minStock = _asDouble(inventoryItem['minStock'], 5.0);
+      if (nextStock <= minStock) {
+        lowStockItems.add({
+          'id': inventoryItemId,
+          'name': (inventoryItem['name'] ?? 'Unknown').toString(),
+          'currentStock': nextStock,
+          'minStock': minStock,
+          'unit': (inventoryItem['unit'] ?? '').toString(),
+          'isInventory': true,
+        });
+      }
+    }
+
+    for (final menuItemId in menuIds) {
+      final menu = resolvedMenuById[menuItemId]!;
+      final menuRef =
+          _eaterySubcollection(eateryId, menuCollection).doc(menuItemId);
+      if (plan.recipeMenuItemIds.contains(menuItemId)) {
+        final servings = remainingServings[menuItemId] ?? 0;
+        tx.update(menuRef, {
+          'availableServings': servings,
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+        continue;
+      }
+      final inventoryItemId = (menu['inventoryItemId'] ?? '').toString().trim();
+      if (inventoryItemId.isNotEmpty) {
+        final nextStock = nextStockById[inventoryItemId] ??
+            _asDouble(
+              txInventoryById[inventoryItemId]?['currentStock'] ??
+                  inventoryById[inventoryItemId]?['currentStock'],
+            );
+        final manualAvailability = menu['isAvailable'];
+        final manualOn = manualAvailability is bool ? manualAvailability : true;
+        tx.update(menuRef, {
+          'inventoryItemId': inventoryItemId,
+          'availableServings': nextStock,
+          'isAvailable': manualOn && nextStock > 0,
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+        continue;
+      }
+    }
+
+    return _OrderDeductionResult(
+      plan: plan,
+      nextStockById: nextStockById,
+      lowStockItems: lowStockItems,
+    );
   }
 
   // Order methods
@@ -1601,18 +1949,22 @@ class FirebaseService {
       final eateryId = await _requireCurrentEateryId();
       final ordersRef = _eaterySubcollection(eateryId, ordersCollection);
 
-      // Only the two statuses POS can produce are accepted, so a caller can
-      // never smuggle in a state the rest of the app doesn't expect.
-      final orderStatus = status.trim().toLowerCase() == 'completed'
-          ? 'completed'
-          : 'pending';
+      final orderStatus =
+          status.trim().toLowerCase() == 'completed' ? 'completed' : 'pending';
       final isCompleted = orderStatus == 'completed';
 
-      // Get items from orderData
-      final items = (orderData['items'] as List?)?.cast<dynamic>() ?? const [];
+      final rawItems =
+          (orderData['items'] as List?)?.cast<dynamic>() ?? const [];
+      final items = rawItems
+          .map((raw) {
+            if (raw is Map<String, dynamic>) return raw;
+            if (raw is Map) return Map<String, dynamic>.from(raw);
+            return <String, dynamic>{};
+          })
+          .where((item) => item.isNotEmpty)
+          .toList();
       final totalAmount = (orderData['totalAmount'] as num?)?.toDouble() ?? 0.0;
 
-      // Get current user info for createdBy (before transaction)
       final currentUser = _auth.currentUser;
       final createdByUid = currentUser?.uid ?? '';
       final userProfile = await _requireCurrentUserProfile();
@@ -1622,171 +1974,50 @@ class FirebaseService {
               'Unknown')
           .toString();
 
-      // Use transaction to create order and deduct stock atomically
-      // Collect low stock items during transaction and return them
+      final inventory = isCompleted
+          ? await _loadInventoryForDeduction(eateryId)
+          : const <Map<String, dynamic>>[];
+
       final transactionResult = await _firestore.runTransaction((tx) async {
-        final lowStockItemsTx = <Map<String, dynamic>>[];
+        var lowStockItems = <Map<String, dynamic>>[];
+        RecipeConsumptionPlan? plan;
 
-        // Aggregate quantities per menu item (prevents double-updates and fixes multi-item transactions)
-        final qtyByMenuId = <String, int>{};
-        for (final raw in items) {
-          final it = raw as Map?;
-          final menuItemId = (it?['menuItemId'] ?? '').toString().trim();
-          final qtyNum = it?['quantity'];
-          final quantity = qtyNum is num
-              ? qtyNum.toInt()
-              : int.tryParse(qtyNum?.toString() ?? '') ?? 0;
-          if (menuItemId.isEmpty || quantity <= 0) continue;
-          qtyByMenuId[menuItemId] = (qtyByMenuId[menuItemId] ?? 0) + quantity;
+        if (isCompleted) {
+          final deduction = await _applyOrderDeduction(
+            tx: tx,
+            eateryId: eateryId,
+            orderItems: items,
+            inventory: inventory,
+          );
+          lowStockItems = deduction.lowStockItems;
+          plan = deduction.plan;
         }
 
-        // Aggregate quantities per inventory item (some menu items may share the same inventory)
-        final qtyByInvId = <String, int>{};
-
-        for (final entry in qtyByMenuId.entries) {
-          final menuItemId = entry.key;
-          final quantity = entry.value;
-
-          final menuRef =
-              _eaterySubcollection(eateryId, menuCollection).doc(menuItemId);
-          final menuSnap = await tx.get(menuRef);
-
-          if (!menuSnap.exists) {
-            throw FirebaseException(
-              plugin: 'cloud_firestore',
-              code: 'not-found',
-              message: 'Menu item not found (id: $menuItemId).',
-            );
-          }
-
-          final menu = menuSnap.data() ?? {};
-          final inventoryItemId =
-              (menu['inventoryItemId'] ?? '').toString().trim();
-          final isInventoryLinked = inventoryItemId.isNotEmpty;
-
-          // Non-inventory items are unlimited - no stock deduction needed
-          // For inventory-linked items, accumulate for inventory deduction only
-          // (skip menu item availableServings - it's no longer used for stock tracking)
-          if (isInventoryLinked) {
-            qtyByInvId[inventoryItemId] =
-                (qtyByInvId[inventoryItemId] ?? 0) + quantity;
-          }
-        }
-
-        // IMPORTANT: Firestore transactions require that all reads happen before any writes.
-        // So we pre-read all inventory docs, compute next stock, then apply updates.
-        final invRefById = <String, DocumentReference<Map<String, dynamic>>>{};
-        for (final inventoryItemId in qtyByInvId.keys) {
-          invRefById[inventoryItemId] =
-              _eaterySubcollection(eateryId, inventoryCollection)
-                  .doc(inventoryItemId);
-        }
-
-        final invSnaps = invRefById.isNotEmpty
-            ? await Future.wait(invRefById.values.map((ref) => tx.get(ref)))
-            : const <DocumentSnapshot<Map<String, dynamic>>>[];
-        final invSnapByPath =
-            <String, DocumentSnapshot<Map<String, dynamic>>>{};
-        for (final snap in invSnaps) {
-          invSnapByPath[snap.reference.path] = snap;
-        }
-
-        final nextStockById = <String, double>{};
-        final invDataById = <String, Map<String, dynamic>>{};
-
-        // Read phase
-        for (final entry in qtyByInvId.entries) {
-          final inventoryItemId = entry.key;
-          final quantity = entry.value;
-
-          final invRef = invRefById[inventoryItemId]!;
-          final invSnap = invSnapByPath[invRef.path];
-          if (invSnap == null || !invSnap.exists) {
-            continue;
-          }
-
-          final inv = invSnap.data() ?? <String, dynamic>{};
-          invDataById[inventoryItemId] = inv;
-
-          final curStock = inv['currentStock'];
-          if (curStock == null) {
-            throw FirebaseException(
-              plugin: 'cloud_firestore',
-              code: 'failed-precondition',
-              message:
-                  'Inventory item ${(inv['name'] ?? 'Unknown').toString()} has no currentStock set (id: $inventoryItemId).',
-            );
-          }
-
-          final currentStock = curStock is num
-              ? curStock.toDouble()
-              : double.tryParse(curStock.toString()) ?? 0.0;
-          final nextStock = currentStock - quantity;
-          if (nextStock < 0) {
-            throw FirebaseException(
-              plugin: 'cloud_firestore',
-              code: 'failed-precondition',
-              message:
-                  'Insufficient inventory stock for ${(inv['name'] ?? 'item').toString()} (need $quantity, available $currentStock).',
-            );
-          }
-          nextStockById[inventoryItemId] = nextStock;
-        }
-
-        // Write phase
-        for (final entry in nextStockById.entries) {
-          final inventoryItemId = entry.key;
-          final nextStock = entry.value;
-
-          final invRef = invRefById[inventoryItemId]!;
-          tx.update(invRef, {
-            'currentStock': nextStock,
-            'updatedAt': FieldValue.serverTimestamp(),
-          });
-
-          final inv = invDataById[inventoryItemId] ?? <String, dynamic>{};
-          final minInvStock = inv['minStock'];
-          final minInventoryStock = minInvStock is num
-              ? minInvStock.toDouble()
-              : double.tryParse(minInvStock?.toString() ?? '') ?? 5.0;
-          if (nextStock <= minInventoryStock) {
-            lowStockItemsTx.add({
-              'name': inv['name'] ?? 'Unknown',
-              'currentStock': nextStock,
-              'minStock': minInventoryStock,
-              'isInventory': true,
-            });
-          }
-        }
-
-        // Create the order inside the same transaction. `status` is written
-        // here rather than hardcoded so an order created straight into
-        // 'completed' is a single atomic write: stock is deducted exactly once,
-        // below, and there is no second deduction from completeOrder.
-        final Map<String, dynamic> orderFields = {
+        final orderFields = <String, dynamic>{
           ...orderData,
+          'items': items,
           'eateryId': eateryId,
           'createdAt': FieldValue.serverTimestamp(),
           'status': orderStatus,
           'createdBy': createdByUid,
           'createdByName': createdByName,
+          'inventoryDeducted': isCompleted,
+          if (isCompleted) 'inventoryDeductions': plan?.toJsonLines() ?? [],
+          if (isCompleted)
+            'inventoryPerServing': plan?.perServingByMenuId ?? {},
+          if (isCompleted) 'completedAt': FieldValue.serverTimestamp(),
+          'updatedAt': FieldValue.serverTimestamp(),
         };
-        if (isCompleted) {
-          orderFields['completedAt'] = FieldValue.serverTimestamp();
-          orderFields['updatedAt'] = FieldValue.serverTimestamp();
-        }
 
-        // Return both the docRef and low stock items
         final DocumentReference<Map<String, dynamic>> docRef;
         if (orderId != null && orderId.trim().isNotEmpty) {
           docRef = ordersRef.doc(orderId.trim());
-          tx.set(docRef, orderFields);
         } else {
           docRef = ordersRef.doc();
-          tx.set(docRef, orderFields);
         }
+        tx.set(docRef, orderFields);
 
-        return {'docRef': docRef, 'lowStockItems': lowStockItemsTx};
+        return {'docRef': docRef, 'lowStockItems': lowStockItems};
       });
 
       final result = transactionResult['docRef'] as DocumentReference;
@@ -1804,15 +2035,13 @@ class FirebaseService {
         ...docData,
       };
 
-      // Show low stock notifications after successful transaction (don't fail order if notifications fail)
       try {
         for (final lowStock in lowStockItems) {
           await NotificationService().showLowStockNotification(
             itemName: lowStock['name'] as String,
-            currentStock: lowStock['currentStock'] as double,
-            minStock: lowStock['minStock'] as double,
+            currentStock: (lowStock['currentStock'] as num).toDouble(),
+            minStock: (lowStock['minStock'] as num).toDouble(),
           );
-          // Send SMS for low stock (order-only trigger)
           try {
             await SmsService.sendLowStock(
               eateryId: eateryId,
@@ -1826,11 +2055,8 @@ class FirebaseService {
             );
           } catch (_) {}
         }
-      } catch (_) {
-        // Notifications are not critical
-      }
+      } catch (_) {}
 
-      // Show order created notification (don't fail order if notification fails)
       try {
         await NotificationService().showOrderCreatedNotification(
           orderId: result.id,
@@ -1838,9 +2064,7 @@ class FirebaseService {
           total: totalAmount,
           itemCount: items.length,
         );
-      } catch (_) {
-        // Notifications are not critical
-      }
+      } catch (_) {}
 
       BusinessContextBuilder.invalidate();
       return orderResult;
@@ -1848,11 +2072,10 @@ class FirebaseService {
       final msg = _extractErrorDetails(e);
       throw Exception(msg.isEmpty ? 'Failed to create order: ${e.code}' : msg);
     } catch (e) {
-      // Unwrap boxed web errors (FirebaseError under a "Dart exception thrown
-      // from converted Future") so the real code/message reaches the user.
       final msg = _extractErrorDetails(e);
-      throw Exception(
-          msg.isEmpty ? 'Failed to create order: $e' : 'Failed to create order: $msg');
+      throw Exception(msg.isEmpty
+          ? 'Failed to create order: $e'
+          : 'Failed to create order: $msg');
     }
   }
 
@@ -2082,8 +2305,6 @@ class FirebaseService {
     String? paymentStatus,
   }) async {
     String eateryId = '';
-    // Payment details captured at checkout, if any. Only provided keys are
-    // written so legacy callers keep the old document shape.
     final paymentFields = <String, dynamic>{
       if (paymentMethod != null && paymentMethod.isNotEmpty)
         'paymentMethod': paymentMethod,
@@ -2097,22 +2318,9 @@ class FirebaseService {
     try {
       await _requireStaffOrAdmin();
       eateryId = await _requireCurrentEateryId();
-
-      final invQuery = _firestore
-          .collection(eateriesCollection)
-          .doc(eateryId)
-          .collection(inventoryCollection);
-      final invQuerySnap = await _withRetry(() => invQuery.get());
-      final Map<String, DocumentReference> inventoryRefByName = {};
-      for (final doc in invQuerySnap.docs) {
-        final data = doc.data();
-        final key = _norm((data['name'] ?? '').toString());
-        if (key.isEmpty) continue;
-        inventoryRefByName.putIfAbsent(key, () => doc.reference);
-      }
-
       final orderRef =
           _eaterySubcollection(eateryId, ordersCollection).doc(orderId);
+      final inventory = await _loadInventoryForDeduction(eateryId);
 
       final Map<String, dynamic> result = await _withRetry(
         () => _firestore.runTransaction((tx) async {
@@ -2135,336 +2343,67 @@ class FirebaseService {
             return {'ok': true, 'status': 'rejected'};
           }
 
-          // Check if this is an incomplete order (created before today)
-          // For incomplete orders, skip inventory deduction as stock was already accounted for
-          final createdAt = order['createdAt'];
-          final now = DateTime.now();
-          final today = DateTime(now.year, now.month, now.day);
-          bool isIncompleteOrder = false;
-          if (createdAt != null) {
-            DateTime createdDate;
-            if (createdAt is Timestamp) {
-              createdDate = createdAt.toDate();
-            } else if (createdAt is String) {
-              createdDate = DateTime.tryParse(createdAt) ?? now;
-            } else {
-              createdDate = now;
-            }
-            final createdDay =
-                DateTime(createdDate.year, createdDate.month, createdDate.day);
-            isIncompleteOrder = createdDay.isBefore(today);
-          }
-
-          // For incomplete orders (created before today), skip inventory deduction
-          // and just mark the order as completed
-          if (isIncompleteOrder) {
+          final deductedRaw = order['inventoryDeducted'];
+          final snapshot =
+              (order['inventoryDeductions'] as List?)?.cast<dynamic>() ??
+                  const [];
+          final alreadyDeducted = deductedRaw == true ||
+              (deductedRaw == null && snapshot.isNotEmpty);
+          if (alreadyDeducted || deductedRaw == null) {
             tx.set(
-                orderRef,
-                {
-                  'status': 'completed',
-                  'completedAt': FieldValue.serverTimestamp(),
-                  'updatedAt': FieldValue.serverTimestamp(),
-                  ...paymentFields,
-                },
-                SetOptions(merge: true));
-            return {'ok': true, 'status': 'completed'};
-          }
-
-          final items = (order['items'] as List?)?.cast<dynamic>() ?? const [];
-          if (items.isEmpty) {
-            throw Exception('Invalid order payload');
-          }
-
-          final menuReads = <Map<String, dynamic>>[];
-          for (final raw in items) {
-            final it = raw as Map?;
-            final menuItemId = (it?['menuItemId'] ?? '').toString().trim();
-            final qtyNum = it?['quantity'];
-            final quantity = qtyNum is num
-                ? qtyNum.toInt()
-                : int.tryParse(qtyNum?.toString() ?? '') ?? 0;
-            if (menuItemId.isEmpty || quantity <= 0) {
-              throw Exception('Invalid order item');
-            }
-            final menuRef =
-                _eaterySubcollection(eateryId, menuCollection).doc(menuItemId);
-            menuReads.add({'ref': menuRef, 'quantity': quantity});
-          }
-
-          final menuSnaps = await Future.wait(
-            menuReads.map((m) => tx.get(m['ref'] as DocumentReference)),
-          );
-
-          final invLinkReads = <Map<String, dynamic>>[];
-          final drinkFallbackReads = <Map<String, dynamic>>[];
-          final recipeReads = <Map<String, dynamic>>[];
-          final menuNoInvAdjustments = <Map<String, dynamic>>[];
-
-          bool isDrinkMenu(Map<String, dynamic> menu) {
-            final cat = _norm((menu['category'] ?? '').toString());
-            if (cat == 'drink' || cat == 'drinks') return true;
-            final cats = (menu['categories'] is List)
-                ? (menu['categories'] as List)
-                    .map((e) => _norm(e.toString()))
-                    .where((e) => e.isNotEmpty)
-                    .toList()
-                : const <String>[];
-            return cats.contains('drink') || cats.contains('drinks');
-          }
-
-          for (var i = 0; i < menuReads.length; i++) {
-            final menuSnap = menuSnaps[i];
-            if (!menuSnap.exists) {
-              final menuRef = menuReads[i]['ref'] as DocumentReference;
-              throw Exception('Menu item not found: ${menuRef.id}');
-            }
-            final menu = (menuSnap.data() as Map<String, dynamic>?) ??
-                <String, dynamic>{};
-            final menuEateryId = (menu['eateryId'] ?? '').toString().trim();
-            if (menuEateryId.isEmpty || menuEateryId != eateryId) {
-              throw Exception('Access denied');
-            }
-
-            final quantity = menuReads[i]['quantity'] as int;
-            final menuRef = menuReads[i]['ref'] as DocumentReference;
-
-            final inventoryItemId =
-                (menu['inventoryItemId'] ?? '').toString().trim();
-            if (inventoryItemId.isNotEmpty) {
-              final invRef = _firestore
-                  .collection(eateriesCollection)
-                  .doc(eateryId)
-                  .collection(inventoryCollection)
-                  .doc(inventoryItemId);
-              invLinkReads.add(
-                  {'invRef': invRef, 'quantity': quantity, 'menuRef': menuRef});
-            } else if (isDrinkMenu(menu)) {
-              drinkFallbackReads.add(
-                  {'menu': menu, 'quantity': quantity, 'menuRef': menuRef});
-            } else {
-              menuNoInvAdjustments.add(
-                  {'menu': menu, 'quantity': quantity, 'menuRef': menuRef});
-            }
-
-            final recipeId = (menu['recipeId'] ?? '').toString().trim();
-            if (recipeId.isNotEmpty) {
-              final recipeRef =
-                  _eaterySubcollection(eateryId, recipesCollection)
-                      .doc(recipeId);
-              recipeReads.add({'recipeRef': recipeRef, 'quantity': quantity});
-            }
-          }
-
-          final recipeSnaps = recipeReads.isNotEmpty
-              ? await Future.wait(
-                  recipeReads
-                      .map((r) => tx.get(r['recipeRef'] as DocumentReference)),
-                )
-              : const <DocumentSnapshot>[];
-
-          final requiredByInvRef = <DocumentReference, double>{};
-          final ingredientChecks = <String, Map<String, String>>{};
-
-          if (recipeReads.isNotEmpty) {
-            for (var i = 0; i < recipeReads.length; i++) {
-              final recipeSnap = recipeSnaps[i];
-              if (!recipeSnap.exists) {
-                final recipeRef =
-                    recipeReads[i]['recipeRef'] as DocumentReference;
-                throw Exception('Recipe not found: ${recipeRef.id}');
-              }
-              final recipe = (recipeSnap.data() as Map<String, dynamic>?) ??
-                  <String, dynamic>{};
-              final quantity = recipeReads[i]['quantity'] as int;
-              final baseServingsRaw = recipe['baseServings'];
-              final baseServings = baseServingsRaw is num
-                  ? baseServingsRaw.toDouble()
-                  : double.tryParse(baseServingsRaw?.toString() ?? '') ?? 1.0;
-              final factor = baseServings > 0
-                  ? quantity / baseServings
-                  : quantity.toDouble();
-
-              final ingredients = (recipe['ingredients'] is List)
-                  ? (recipe['ingredients'] as List)
-                  : const [];
-
-              for (final ing in ingredients) {
-                final ingMap = ing as Map?;
-                final ingName = (ingMap?['name'] ?? '').toString().trim();
-                if (ingName.isEmpty) continue;
-                final key = _norm(ingName);
-                final invRef = inventoryRefByName[key];
-                if (invRef == null) {
-                  throw Exception('Missing inventory item: $ingName');
-                }
-
-                final baseQtyRaw = ingMap?['quantity'];
-                final baseQty = baseQtyRaw is num
-                    ? baseQtyRaw.toDouble()
-                    : double.tryParse(baseQtyRaw?.toString() ?? '') ?? 0.0;
-                if (baseQty <= 0) continue;
-
-                final requiredQty = baseQty * factor;
-                requiredByInvRef[invRef] =
-                    (requiredByInvRef[invRef] ?? 0) + requiredQty;
-
-                final ingUnit = (ingMap?['unit'] ?? '').toString().trim();
-                if (ingUnit.isNotEmpty) {
-                  ingredientChecks[invRef.path] = {
-                    'name': ingName,
-                    'unit': ingUnit,
-                  };
-                }
-              }
-            }
-          }
-
-          final invRefSet = <DocumentReference>{};
-          for (final r in invLinkReads) {
-            invRefSet.add(r['invRef'] as DocumentReference);
-          }
-          for (final r in drinkFallbackReads) {
-            final menu = r['menu'] as Map<String, dynamic>;
-            final menuName = (menu['name'] ?? '').toString().trim();
-            final key = _norm(menuName);
-            if (key.isEmpty) {
-              throw Exception('Invalid drink menu name');
-            }
-            final invRef = inventoryRefByName[key];
-            if (invRef == null) {
-              throw Exception('Missing inventory item for drink: $menuName');
-            }
-            r['invRef'] = invRef;
-            invRefSet.add(invRef);
-          }
-          invRefSet.addAll(requiredByInvRef.keys);
-
-          final invSnaps = invRefSet.isNotEmpty
-              ? await Future.wait(invRefSet.map((ref) => tx.get(ref)))
-              : const <DocumentSnapshot>[];
-          final invSnapByPath = <String, DocumentSnapshot>{};
-          for (final snap in invSnaps) {
-            invSnapByPath[snap.reference.path] = snap;
-          }
-
-          final currentStockByInvRef = <DocumentReference, double>{};
-          for (final invRef in invRefSet) {
-            final invSnap = invSnapByPath[invRef.path];
-            if (invSnap == null || !invSnap.exists) {
-              throw Exception('Inventory item not found: ${invRef.id}');
-            }
-            final invData = (invSnap.data() as Map<String, dynamic>?) ??
-                <String, dynamic>{};
-            // Note: Security is handled by Firestore rules (path-based eatery access)
-            // We no longer require eateryId field on inventory documents
-            final currentStockRaw = invData['currentStock'];
-            final currentStock = currentStockRaw is num
-                ? currentStockRaw.toDouble()
-                : double.tryParse(currentStockRaw?.toString() ?? '') ?? 0.0;
-            currentStockByInvRef[invRef] = currentStock;
-
-            final check = ingredientChecks[invRef.path];
-            if (check != null) {
-              final invUnit = (invData['unit'] ?? '').toString().trim();
-              final ingUnit = (check['unit'] ?? '').toString().trim();
-              if (invUnit.isNotEmpty &&
-                  ingUnit.isNotEmpty &&
-                  _norm(invUnit) != _norm(ingUnit)) {
-                throw Exception('Unit mismatch for: ${check['name']}');
-              }
-            }
-          }
-
-          final stockDeltaByInvRef = <DocumentReference, double>{};
-          for (final r in invLinkReads) {
-            final invRef = r['invRef'] as DocumentReference;
-            final qty = (r['quantity'] as int).toDouble();
-            stockDeltaByInvRef[invRef] =
-                (stockDeltaByInvRef[invRef] ?? 0) + qty;
-          }
-          for (final r in drinkFallbackReads) {
-            final invRef = r['invRef'] as DocumentReference;
-            final qty = (r['quantity'] as int).toDouble();
-            stockDeltaByInvRef[invRef] =
-                (stockDeltaByInvRef[invRef] ?? 0) + qty;
-          }
-          for (final entry in requiredByInvRef.entries) {
-            stockDeltaByInvRef[entry.key] =
-                (stockDeltaByInvRef[entry.key] ?? 0) + entry.value;
-          }
-
-          final nextStockByInvRef = <DocumentReference, double>{};
-          for (final invRef in invRefSet) {
-            final current = currentStockByInvRef[invRef] ?? 0.0;
-            final delta = stockDeltaByInvRef[invRef] ?? 0.0;
-            final next = current - delta;
-            if (next < 0) {
-              throw Exception('Insufficient inventory stock');
-            }
-            nextStockByInvRef[invRef] = next;
-          }
-
-          // Non-inventory items are unlimited - skip servings check and don't deduct
-          for (final r in menuNoInvAdjustments) {
-            final menuRef = r['menuRef'] as DocumentReference;
-            // Mark menu item as still available (unlimited servings)
-            tx.update(menuRef, {
-              'isAvailable': true,
-              'updatedAt': FieldValue.serverTimestamp(),
-            });
-          }
-
-          for (final r in invLinkReads) {
-            final invRef = r['invRef'] as DocumentReference;
-            final menuRef = r['menuRef'] as DocumentReference;
-            final nextStock = nextStockByInvRef[invRef] ?? 0.0;
-            tx.update(invRef, {
-              'currentStock': nextStock,
-              'updatedAt': FieldValue.serverTimestamp(),
-            });
-            tx.update(menuRef, {
-              'availableServings': nextStock,
-              'isAvailable': nextStock > 0,
-              'updatedAt': FieldValue.serverTimestamp(),
-            });
-          }
-
-          for (final r in drinkFallbackReads) {
-            final invRef = r['invRef'] as DocumentReference;
-            final menuRef = r['menuRef'] as DocumentReference;
-            final nextStock = nextStockByInvRef[invRef] ?? 0.0;
-            tx.update(invRef, {
-              'currentStock': nextStock,
-              'updatedAt': FieldValue.serverTimestamp(),
-            });
-            tx.update(menuRef, {
-              'inventoryItemId': invRef.id,
-              'availableServings': nextStock,
-              'isAvailable': nextStock > 0,
-              'updatedAt': FieldValue.serverTimestamp(),
-            });
-          }
-
-          for (final entry in requiredByInvRef.entries) {
-            final invRef = entry.key;
-            final nextStock = nextStockByInvRef[invRef] ?? 0.0;
-            tx.update(invRef, {
-              'currentStock': nextStock,
-              'updatedAt': FieldValue.serverTimestamp(),
-            });
-          }
-
-          tx.set(
               orderRef,
               {
                 'status': 'completed',
                 'completedAt': FieldValue.serverTimestamp(),
                 'updatedAt': FieldValue.serverTimestamp(),
+                'inventoryDeducted': true,
                 ...paymentFields,
               },
-              SetOptions(merge: true));
+              SetOptions(merge: true),
+            );
+            return {'ok': true, 'status': 'completed'};
+          }
 
-          return {'ok': true, 'status': 'completed'};
+          final rawItems =
+              (order['items'] as List?)?.cast<dynamic>() ?? const [];
+          if (rawItems.isEmpty) {
+            throw Exception('Invalid order payload');
+          }
+          final items = rawItems
+              .map((raw) {
+                if (raw is Map<String, dynamic>) return raw;
+                if (raw is Map) return Map<String, dynamic>.from(raw);
+                return <String, dynamic>{};
+              })
+              .where((item) => item.isNotEmpty)
+              .toList();
+
+          final deduction = await _applyOrderDeduction(
+            tx: tx,
+            eateryId: eateryId,
+            orderItems: items,
+            inventory: inventory,
+          );
+
+          tx.set(
+            orderRef,
+            {
+              'status': 'completed',
+              'completedAt': FieldValue.serverTimestamp(),
+              'updatedAt': FieldValue.serverTimestamp(),
+              'inventoryDeducted': true,
+              'inventoryDeductions': deduction.plan.toJsonLines(),
+              'inventoryPerServing': deduction.plan.perServingByMenuId,
+              ...paymentFields,
+            },
+            SetOptions(merge: true),
+          );
+
+          return {
+            'ok': true,
+            'status': 'completed',
+            'lowStockItems': deduction.lowStockItems,
+          };
         }),
       );
 
@@ -2514,9 +2453,13 @@ class FirebaseService {
       if (!snap.exists) {
         throw Exception('Order not found');
       }
+      final currentStatus =
+          (snap.data()?['status'] ?? '').toString().trim().toLowerCase();
       await orderRef.set({
         'status': 'pending',
         'rejectReason': '',
+        if (currentStatus == 'rejected' || currentStatus == 'voided')
+          'inventoryDeducted': false,
         'updatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
       BusinessContextBuilder.invalidate();
@@ -2545,66 +2488,195 @@ class FirebaseService {
         throw Exception('Only pending orders can be voided');
       }
 
-      final items = (data['items'] as List?)?.cast<dynamic>() ?? const [];
       final uid = _auth.currentUser?.uid ?? '';
+      final marker = data['inventoryDeducted'];
+      final rawSnapshot = data['inventoryDeductions'];
+      final snapshot = rawSnapshot is List
+          ? rawSnapshot
+              .whereType<Map>()
+              .map((line) => Map<String, dynamic>.from(line))
+              .where((line) =>
+                  (line['inventoryItemId'] ?? '').toString().isNotEmpty)
+              .toList()
+          : <Map<String, dynamic>>[];
+      final shouldRestore = snapshot.isNotEmpty || marker != false;
 
-      // Use transaction to void order and restore stock atomically
       await _firestore.runTransaction((tx) async {
-        // Restore stock for all items
-        for (final raw in items) {
-          final it = raw as Map?;
-          final menuItemId = (it?['menuItemId'] ?? '').toString().trim();
-          final qtyNum = it?['quantity'];
-          final quantity = qtyNum is num
-              ? qtyNum.toInt()
-              : int.tryParse(qtyNum?.toString() ?? '') ?? 0;
+        if (shouldRestore) {
+          if (snapshot.isNotEmpty) {
+            final restoreByInventoryId = <String, double>{};
+            for (final line in snapshot) {
+              final id = (line['inventoryItemId'] ?? '').toString().trim();
+              final qty = _asDouble(line['quantityBase']);
+              if (id.isEmpty || qty <= 0) continue;
+              restoreByInventoryId[id] = (restoreByInventoryId[id] ?? 0) + qty;
+            }
+            final invRefs = {
+              for (final id in restoreByInventoryId.keys)
+                id: _eaterySubcollection(eateryId, inventoryCollection).doc(id),
+            };
+            final invSnaps =
+                await Future.wait(invRefs.values.map((ref) => tx.get(ref)));
+            final nextStockById = <String, double>{};
+            for (final invSnap in invSnaps) {
+              if (!invSnap.exists) continue;
+              final currentStock = _asDouble(invSnap.data()?['currentStock']);
+              nextStockById[invSnap.id] =
+                  currentStock + (restoreByInventoryId[invSnap.id] ?? 0.0);
+            }
+            for (final entry in nextStockById.entries) {
+              tx.update(invRefs[entry.key]!, {
+                'currentStock': entry.value,
+                'updatedAt': FieldValue.serverTimestamp(),
+              });
+            }
 
-          if (menuItemId.isEmpty || quantity <= 0) continue;
+            final perServingRaw = data['inventoryPerServing'];
+            final affectedMenuIds = <String>{};
+            if (perServingRaw is Map) {
+              affectedMenuIds.addAll(
+                perServingRaw.keys.map((key) => key.toString()),
+              );
+            }
+            affectedMenuIds.addAll(
+              snapshot
+                  .where((line) => line['source'] == 'direct')
+                  .map((line) => (line['menuItemId'] ?? '').toString())
+                  .where((id) => id.isNotEmpty),
+            );
+            final menuRefs = {
+              for (final id in affectedMenuIds)
+                id: _eaterySubcollection(eateryId, menuCollection).doc(id),
+            };
+            final menuSnaps =
+                await Future.wait(menuRefs.values.map((ref) => tx.get(ref)));
+            final manualAvailabilityByMenuId = <String, bool>{
+              for (final menuSnap in menuSnaps)
+                if (menuSnap.exists)
+                  menuSnap.id: menuSnap.data()?['isAvailable'] is bool
+                      ? menuSnap.data()!['isAvailable'] as bool
+                      : true,
+            };
 
-          final menuRef =
-              _eaterySubcollection(eateryId, menuCollection).doc(menuItemId);
-          final menuSnap = await tx.get(menuRef);
-
-          if (menuSnap.exists) {
-            final menu = menuSnap.data() ?? {};
-            final curServings = menu['availableServings'];
-            final currentServings = curServings is num
-                ? curServings.toInt()
-                : int.tryParse(curServings?.toString() ?? '') ?? 0;
-
-            // Restore available servings
-            final nextServings = currentServings + quantity;
-
-            tx.update(menuRef, {
-              'availableServings': nextServings,
-              'isAvailable': nextServings > 0,
-              'updatedAt': FieldValue.serverTimestamp(),
-            });
-
-            // Also restore linked inventory if exists
-            final inventoryItemId =
-                (menu['inventoryItemId'] ?? '').toString().trim();
-            if (inventoryItemId.isNotEmpty) {
-              final invRef = _eaterySubcollection(eateryId, inventoryCollection)
-                  .doc(inventoryItemId);
-              final invSnap = await tx.get(invRef);
-              if (invSnap.exists) {
-                final inv = invSnap.data() ?? {};
-                final curStock = inv['currentStock'];
-                final currentStock = curStock is num
-                    ? curStock.toDouble()
-                    : double.tryParse(curStock?.toString() ?? '') ?? 0.0;
-                final nextStock = currentStock + quantity;
-                tx.update(invRef, {
-                  'currentStock': nextStock,
-                  'updatedAt': FieldValue.serverTimestamp(),
-                });
+            if (perServingRaw is Map) {
+              for (final entry in perServingRaw.entries) {
+                final menuItemId = entry.key.toString();
+                if (entry.value is! Map) continue;
+                double? limiting;
+                for (final requirement in (entry.value as Map).entries) {
+                  final id = requirement.key.toString();
+                  final qty = _asDouble(requirement.value);
+                  if (qty <= 0) continue;
+                  final stock = nextStockById[id] ?? 0.0;
+                  final servings = stock / qty;
+                  limiting =
+                      limiting == null ? servings : min(limiting, servings);
+                }
+                if (limiting == null) continue;
+                final servings = max(0, limiting.floor());
+                tx.update(
+                  _eaterySubcollection(eateryId, menuCollection)
+                      .doc(menuItemId),
+                  {
+                    'availableServings': servings,
+                    'updatedAt': FieldValue.serverTimestamp(),
+                  },
+                );
               }
+            }
+
+            final directMenuIds = snapshot
+                .where((line) => line['source'] == 'direct')
+                .map((line) => (line['menuItemId'] ?? '').toString())
+                .where((id) => id.isNotEmpty)
+                .toSet();
+            for (final menuItemId in directMenuIds) {
+              final line = snapshot.firstWhere(
+                (line) =>
+                    line['menuItemId'] == menuItemId &&
+                    line['source'] == 'direct',
+                orElse: () => const <String, dynamic>{},
+              );
+              final inventoryItemId =
+                  (line['inventoryItemId'] ?? '').toString();
+              if (inventoryItemId.isEmpty) continue;
+              final nextStock = nextStockById[inventoryItemId] ?? 0.0;
+              final manualOn = manualAvailabilityByMenuId[menuItemId] ?? true;
+              tx.update(
+                _eaterySubcollection(eateryId, menuCollection).doc(menuItemId),
+                {
+                  'availableServings': nextStock,
+                  'isAvailable': manualOn && nextStock > 0,
+                  'updatedAt': FieldValue.serverTimestamp(),
+                },
+              );
+            }
+          } else {
+            final rawItems =
+                (data['items'] as List?)?.cast<dynamic>() ?? const [];
+            final qtyByMenuId = <String, int>{};
+            for (final raw in rawItems) {
+              final item = raw as Map?;
+              final menuItemId = (item?['menuItemId'] ?? '').toString().trim();
+              final quantity = item?['quantity'] is num
+                  ? (item!['quantity'] as num).toInt()
+                  : int.tryParse(item?['quantity']?.toString() ?? '') ?? 0;
+              if (menuItemId.isEmpty || quantity <= 0) continue;
+              qtyByMenuId[menuItemId] =
+                  (qtyByMenuId[menuItemId] ?? 0) + quantity;
+            }
+            final menuRefs = {
+              for (final id in qtyByMenuId.keys)
+                id: _eaterySubcollection(eateryId, menuCollection).doc(id),
+            };
+            final menuSnaps =
+                await Future.wait(menuRefs.values.map((ref) => tx.get(ref)));
+            final qtyByInventoryId = <String, double>{};
+            final menuInventoryById = <String, String>{};
+            final manualAvailabilityByMenuId = <String, bool>{};
+            for (final menuSnap in menuSnaps) {
+              if (!menuSnap.exists) continue;
+              final menu = menuSnap.data() ?? <String, dynamic>{};
+              final manualAvailability = menu['isAvailable'];
+              manualAvailabilityByMenuId[menuSnap.id] =
+                  manualAvailability is bool ? manualAvailability : true;
+              final inventoryItemId =
+                  (menu['inventoryItemId'] ?? '').toString().trim();
+              if (inventoryItemId.isEmpty) continue;
+              menuInventoryById[menuSnap.id] = inventoryItemId;
+              qtyByInventoryId[inventoryItemId] =
+                  (qtyByInventoryId[inventoryItemId] ?? 0.0) +
+                      (qtyByMenuId[menuSnap.id] ?? 0).toDouble();
+            }
+            final invRefs = {
+              for (final id in qtyByInventoryId.keys)
+                id: _eaterySubcollection(eateryId, inventoryCollection).doc(id),
+            };
+            final invSnaps =
+                await Future.wait(invRefs.values.map((ref) => tx.get(ref)));
+            final nextStockById = <String, double>{};
+            for (final invSnap in invSnaps) {
+              if (!invSnap.exists) continue;
+              final currentStock = _asDouble(invSnap.data()?['currentStock']);
+              nextStockById[invSnap.id] =
+                  currentStock + (qtyByInventoryId[invSnap.id] ?? 0.0);
+              tx.update(invSnap.reference, {
+                'currentStock': nextStockById[invSnap.id],
+                'updatedAt': FieldValue.serverTimestamp(),
+              });
+            }
+            for (final entry in menuInventoryById.entries) {
+              final nextStock = nextStockById[entry.value] ?? 0.0;
+              final manualOn = manualAvailabilityByMenuId[entry.key] ?? true;
+              tx.update(menuRefs[entry.key]!, {
+                'availableServings': nextStock,
+                'isAvailable': manualOn && nextStock > 0,
+                'updatedAt': FieldValue.serverTimestamp(),
+              });
             }
           }
         }
 
-        // Update order status to voided
         tx.set(
             orderRef,
             {
@@ -2612,6 +2684,9 @@ class FirebaseService {
               'voidReason': reason.trim(),
               'voidedAt': FieldValue.serverTimestamp(),
               'voidedBy': uid,
+              'inventoryDeducted': false,
+              'inventoryDeductions': [],
+              'inventoryPerServing': {},
               'updatedAt': FieldValue.serverTimestamp(),
             },
             SetOptions(merge: true));
@@ -2648,57 +2723,194 @@ class FirebaseService {
           (data['items'] as List?)?.cast<dynamic>() ?? const [];
       final uid = _auth.currentUser?.uid ?? '';
 
+      final marker = data['inventoryDeducted'];
+      final rawSnapshot = data['inventoryDeductions'];
+      final snapshot = rawSnapshot is List
+          ? rawSnapshot
+              .whereType<Map>()
+              .map((line) => Map<String, dynamic>.from(line))
+              .where((line) =>
+                  (line['inventoryItemId'] ?? '').toString().isNotEmpty)
+              .toList()
+          : <Map<String, dynamic>>[];
+      final shouldRestore = snapshot.isNotEmpty || marker != false;
+
       // Use transaction to void items and restore stock atomically
       await _firestore.runTransaction((tx) async {
-        // Restore stock for voided items
-        for (final voidItem in itemsToVoid) {
-          final menuItemId = (voidItem['menuItemId'] ?? '').toString().trim();
-          final qtyNum = voidItem['quantity'];
-          final quantity = qtyNum is num
-              ? qtyNum.toInt()
-              : int.tryParse(qtyNum?.toString() ?? '') ?? 0;
+        if (shouldRestore) {
+          final voidQtyByMenuId = <String, int>{};
+          for (final voidItem in itemsToVoid) {
+            final menuItemId = (voidItem['menuItemId'] ?? '').toString().trim();
+            final quantity = voidItem['quantity'] is num
+                ? (voidItem['quantity'] as num).toInt()
+                : int.tryParse(voidItem['quantity']?.toString() ?? '') ?? 0;
+            if (menuItemId.isEmpty || quantity <= 0) continue;
+            voidQtyByMenuId[menuItemId] =
+                (voidQtyByMenuId[menuItemId] ?? 0) + quantity;
+          }
 
-          if (menuItemId.isEmpty || quantity <= 0) continue;
+          if (snapshot.isNotEmpty) {
+            final restoreByInventoryId = <String, double>{};
+            for (final line in snapshot) {
+              final menuItemId = (line['menuItemId'] ?? '').toString();
+              final voidQty = voidQtyByMenuId[menuItemId] ?? 0;
+              final lineQty = _asDouble(line['menuQuantity']);
+              if (voidQty <= 0 || lineQty <= 0) continue;
+              final ratio = min(1.0, voidQty / lineQty);
+              final id = (line['inventoryItemId'] ?? '').toString().trim();
+              final qty = _asDouble(line['quantityBase']) * ratio;
+              if (id.isEmpty || qty <= 0) continue;
+              restoreByInventoryId[id] =
+                  (restoreByInventoryId[id] ?? 0.0) + qty;
+            }
+            final invRefs = {
+              for (final id in restoreByInventoryId.keys)
+                id: _eaterySubcollection(eateryId, inventoryCollection).doc(id),
+            };
+            final invSnaps =
+                await Future.wait(invRefs.values.map((ref) => tx.get(ref)));
+            final nextStockById = <String, double>{};
+            for (final invSnap in invSnaps) {
+              if (!invSnap.exists) continue;
+              nextStockById[invSnap.id] =
+                  _asDouble(invSnap.data()?['currentStock']) +
+                      (restoreByInventoryId[invSnap.id] ?? 0.0);
+              tx.update(invSnap.reference, {
+                'currentStock': nextStockById[invSnap.id],
+                'updatedAt': FieldValue.serverTimestamp(),
+              });
+            }
 
-          final menuRef =
-              _eaterySubcollection(eateryId, menuCollection).doc(menuItemId);
-          final menuSnap = await tx.get(menuRef);
+            final perServingRaw = data['inventoryPerServing'];
+            final affectedMenuIds = <String>{};
+            if (perServingRaw is Map) {
+              affectedMenuIds.addAll(
+                perServingRaw.keys.map((key) => key.toString()),
+              );
+            }
+            affectedMenuIds.addAll(
+              snapshot
+                  .where((line) => line['source'] == 'direct')
+                  .map((line) => (line['menuItemId'] ?? '').toString())
+                  .where((id) => id.isNotEmpty),
+            );
+            final menuRefs = {
+              for (final id in affectedMenuIds)
+                id: _eaterySubcollection(eateryId, menuCollection).doc(id),
+            };
+            final menuSnaps =
+                await Future.wait(menuRefs.values.map((ref) => tx.get(ref)));
+            final manualAvailabilityByMenuId = <String, bool>{
+              for (final menuSnap in menuSnaps)
+                if (menuSnap.exists)
+                  menuSnap.id: menuSnap.data()?['isAvailable'] is bool
+                      ? menuSnap.data()!['isAvailable'] as bool
+                      : true,
+            };
 
-          if (menuSnap.exists) {
-            final menu = menuSnap.data() ?? {};
-            final curServings = menu['availableServings'];
-            final currentServings = curServings is num
-                ? curServings.toInt()
-                : int.tryParse(curServings?.toString() ?? '') ?? 0;
-
-            // Restore available servings
-            final nextServings = currentServings + quantity;
-
-            tx.update(menuRef, {
-              'availableServings': nextServings,
-              'isAvailable': nextServings > 0,
-              'updatedAt': FieldValue.serverTimestamp(),
-            });
-
-            // Also restore linked inventory if exists
-            final inventoryItemId =
-                (menu['inventoryItemId'] ?? '').toString().trim();
-            if (inventoryItemId.isNotEmpty) {
-              final invRef = _eaterySubcollection(eateryId, inventoryCollection)
-                  .doc(inventoryItemId);
-              final invSnap = await tx.get(invRef);
-              if (invSnap.exists) {
-                final inv = invSnap.data() ?? {};
-                final curStock = inv['currentStock'];
-                final currentStock = curStock is num
-                    ? curStock.toDouble()
-                    : double.tryParse(curStock?.toString() ?? '') ?? 0.0;
-                final nextStock = currentStock + quantity;
-                tx.update(invRef, {
-                  'currentStock': nextStock,
-                  'updatedAt': FieldValue.serverTimestamp(),
-                });
+            if (perServingRaw is Map) {
+              for (final entry in perServingRaw.entries) {
+                final menuItemId = entry.key.toString();
+                if (!voidQtyByMenuId.containsKey(menuItemId)) continue;
+                if (entry.value is! Map) continue;
+                double? limiting;
+                for (final requirement in (entry.value as Map).entries) {
+                  final id = requirement.key.toString();
+                  final qty = _asDouble(requirement.value);
+                  if (qty <= 0) continue;
+                  final stock = nextStockById[id] ?? 0.0;
+                  final servings = stock / qty;
+                  limiting =
+                      limiting == null ? servings : min(limiting, servings);
+                }
+                if (limiting == null) continue;
+                final servings = max(0, limiting.floor());
+                tx.update(
+                  _eaterySubcollection(eateryId, menuCollection)
+                      .doc(menuItemId),
+                  {
+                    'availableServings': servings,
+                    'updatedAt': FieldValue.serverTimestamp(),
+                  },
+                );
               }
+            }
+
+            final directMenuIds = snapshot
+                .where((line) => line['source'] == 'direct')
+                .map((line) => (line['menuItemId'] ?? '').toString())
+                .where((id) => id.isNotEmpty)
+                .toSet();
+            for (final menuItemId in directMenuIds) {
+              final line = snapshot.firstWhere(
+                (line) =>
+                    line['menuItemId'] == menuItemId &&
+                    line['source'] == 'direct',
+                orElse: () => const <String, dynamic>{},
+              );
+              final inventoryItemId =
+                  (line['inventoryItemId'] ?? '').toString();
+              if (inventoryItemId.isEmpty) continue;
+              final nextStock = nextStockById[inventoryItemId] ?? 0.0;
+              final manualOn = manualAvailabilityByMenuId[menuItemId] ?? true;
+              tx.update(
+                _eaterySubcollection(eateryId, menuCollection).doc(menuItemId),
+                {
+                  'availableServings': nextStock,
+                  'isAvailable': manualOn && nextStock > 0,
+                  'updatedAt': FieldValue.serverTimestamp(),
+                },
+              );
+            }
+          } else {
+            final menuRefs = {
+              for (final id in voidQtyByMenuId.keys)
+                id: _eaterySubcollection(eateryId, menuCollection).doc(id),
+            };
+            final menuSnaps =
+                await Future.wait(menuRefs.values.map((ref) => tx.get(ref)));
+            final qtyByInventoryId = <String, double>{};
+            final menuInventoryById = <String, String>{};
+            final manualAvailabilityByMenuId = <String, bool>{};
+            for (final menuSnap in menuSnaps) {
+              if (!menuSnap.exists) continue;
+              final menu = menuSnap.data() ?? <String, dynamic>{};
+              final manualAvailability = menu['isAvailable'];
+              manualAvailabilityByMenuId[menuSnap.id] =
+                  manualAvailability is bool ? manualAvailability : true;
+              final inventoryItemId =
+                  (menu['inventoryItemId'] ?? '').toString().trim();
+              if (inventoryItemId.isEmpty) continue;
+              menuInventoryById[menuSnap.id] = inventoryItemId;
+              qtyByInventoryId[inventoryItemId] =
+                  (qtyByInventoryId[inventoryItemId] ?? 0.0) +
+                      (voidQtyByMenuId[menuSnap.id] ?? 0).toDouble();
+            }
+            final invRefs = {
+              for (final id in qtyByInventoryId.keys)
+                id: _eaterySubcollection(eateryId, inventoryCollection).doc(id),
+            };
+            final invSnaps =
+                await Future.wait(invRefs.values.map((ref) => tx.get(ref)));
+            final nextStockById = <String, double>{};
+            for (final invSnap in invSnaps) {
+              if (!invSnap.exists) continue;
+              nextStockById[invSnap.id] =
+                  _asDouble(invSnap.data()?['currentStock']) +
+                      (qtyByInventoryId[invSnap.id] ?? 0.0);
+              tx.update(invSnap.reference, {
+                'currentStock': nextStockById[invSnap.id],
+                'updatedAt': FieldValue.serverTimestamp(),
+              });
+            }
+            for (final entry in menuInventoryById.entries) {
+              final nextStock = nextStockById[entry.value] ?? 0.0;
+              final manualOn = manualAvailabilityByMenuId[entry.key] ?? true;
+              tx.update(menuRefs[entry.key]!, {
+                'availableServings': nextStock,
+                'isAvailable': manualOn && nextStock > 0,
+                'updatedAt': FieldValue.serverTimestamp(),
+              });
             }
           }
         }
@@ -2801,7 +3013,8 @@ class FirebaseService {
     DateTime? parseCreatedAt(dynamic createdAt) {
       if (createdAt is Timestamp) return createdAt.toDate();
       if (createdAt is DateTime) return createdAt;
-      if (createdAt is int) return DateTime.fromMillisecondsSinceEpoch(createdAt);
+      if (createdAt is int)
+        return DateTime.fromMillisecondsSinceEpoch(createdAt);
       return DateTime.tryParse(createdAt?.toString() ?? '');
     }
 
@@ -2848,16 +3061,15 @@ class FirebaseService {
               isGreaterThanOrEqualTo: Timestamp.fromDate(startDate));
         }
         if (endDate != null) {
-          query = query.where('createdAt',
-              isLessThan: Timestamp.fromDate(endDate));
+          query =
+              query.where('createdAt', isLessThan: Timestamp.fromDate(endDate));
         }
         query = query.orderBy('createdAt', descending: true);
 
         try {
           final subSnap = await _withRetry(() => query.get());
-          final ranged = subSnap.docs
-              .map((doc) => {'id': doc.id, ...doc.data()})
-              .toList();
+          final ranged =
+              subSnap.docs.map((doc) => {'id': doc.id, ...doc.data()}).toList();
           return _filterOrdersByRange(ranged, null, null);
         } catch (e) {
           debugPrint(
@@ -2867,9 +3079,8 @@ class FirebaseService {
       }
 
       final allSnap = await _withRetry(() => collection.get());
-      final allOrders = allSnap.docs
-          .map((doc) => {'id': doc.id, ...doc.data()})
-          .toList();
+      final allOrders =
+          allSnap.docs.map((doc) => {'id': doc.id, ...doc.data()}).toList();
       return _filterOrdersByRange(allOrders, startDate, endDate);
     } catch (e) {
       throw Exception('Failed to fetch orders: $e');
@@ -2877,38 +3088,38 @@ class FirebaseService {
   }
 
   /// Pending orders created before today — the ones that were opened on an
-/// earlier day and never completed.
-///
-/// Queries only on the `createdAt` range and filters `status` on the client, so
-/// it runs on the single-field index. Filtering `status` in the query instead
-/// would need a composite index that does not exist yet.
-static Future<List<Map<String, dynamic>>> getIncompleteOrders({
-  int limit = 200,
-}) async {
-  try {
-    final eateryId = await _requireCurrentEateryId();
-    final now = DateTime.now();
-    final startOfToday = DateTime(now.year, now.month, now.day);
+  /// earlier day and never completed.
+  ///
+  /// Queries only on the `createdAt` range and filters `status` on the client, so
+  /// it runs on the single-field index. Filtering `status` in the query instead
+  /// would need a composite index that does not exist yet.
+  static Future<List<Map<String, dynamic>>> getIncompleteOrders({
+    int limit = 200,
+  }) async {
+    try {
+      final eateryId = await _requireCurrentEateryId();
+      final now = DateTime.now();
+      final startOfToday = DateTime(now.year, now.month, now.day);
 
-    final snap = await _withRetry(
-      () => _eaterySubcollection(eateryId, ordersCollection)
-          .where('createdAt', isLessThan: Timestamp.fromDate(startOfToday))
-          .orderBy('createdAt', descending: true)
-          .limit(limit)
-          .get(),
-    );
+      final snap = await _withRetry(
+        () => _eaterySubcollection(eateryId, ordersCollection)
+            .where('createdAt', isLessThan: Timestamp.fromDate(startOfToday))
+            .orderBy('createdAt', descending: true)
+            .limit(limit)
+            .get(),
+      );
 
-    return snap.docs
-        .map((doc) => {'id': doc.id, ...doc.data()})
-        .where((o) =>
-            (o['status'] ?? '').toString().trim().toLowerCase() == 'pending')
-        .toList();
-  } catch (e) {
-    throw Exception('Failed to fetch incomplete orders: $e');
+      return snap.docs
+          .map((doc) => {'id': doc.id, ...doc.data()})
+          .where((o) =>
+              (o['status'] ?? '').toString().trim().toLowerCase() == 'pending')
+          .toList();
+    } catch (e) {
+      throw Exception('Failed to fetch incomplete orders: $e');
+    }
   }
-}
 
-/// Orders created strictly before today, newest first.
+  /// Orders created strictly before today, newest first.
   ///
   /// Uses a range query with an explicit [limit] rather than [getOrders], which
   /// downloads the whole collection before filtering on the client. Only the
@@ -2924,16 +3135,13 @@ static Future<List<Map<String, dynamic>>> getIncompleteOrders({
 
       final snap = await _withRetry(
         () => _eaterySubcollection(eateryId, ordersCollection)
-            .where('createdAt',
-                isLessThan: Timestamp.fromDate(startOfToday))
+            .where('createdAt', isLessThan: Timestamp.fromDate(startOfToday))
             .orderBy('createdAt', descending: true)
             .limit(limit)
             .get(),
       );
 
-      return snap.docs
-          .map((doc) => {'id': doc.id, ...doc.data()})
-          .toList();
+      return snap.docs.map((doc) => {'id': doc.id, ...doc.data()}).toList();
     } catch (e) {
       throw Exception('Failed to fetch order history: $e');
     }
@@ -3224,21 +3432,20 @@ static Future<List<Map<String, dynamic>>> getIncompleteOrders({
           final recipeId = (menu['recipeId'] ?? '').toString();
           final recipe = recipeById[recipeId];
           if (recipe == null) continue;
-          final baseServingsRaw = recipe['baseServings'] ?? recipe['batchYield'];
-          final baseServings = baseServingsRaw is num
-              ? baseServingsRaw.toDouble()
-              : double.tryParse(baseServingsRaw?.toString() ?? '') ?? 1.0;
-          final factor = baseServings > 0 ? qtySold / baseServings : qtySold;
-          final ingredients = recipe['ingredients'] as List<dynamic>? ?? const [];
-          final menuAgg = byMenu.putIfAbsent(menuItemId, () => {
-                'menuItemId': menuItemId,
-                'menuItemName': menuName,
-                'recipeId': recipeId,
-                'recipeName': (recipe['name'] ?? '').toString(),
-                'quantitySold': 0.0,
-                'estimatedIngredientCost': 0.0,
-                'ingredients': <Map<String, dynamic>>[],
-              });
+          final recipeYield = RecipeConsumption.recipeYield(recipe);
+          final ingredients =
+              recipe['ingredients'] as List<dynamic>? ?? const [];
+          final menuAgg = byMenu.putIfAbsent(
+              menuItemId,
+              () => {
+                    'menuItemId': menuItemId,
+                    'menuItemName': menuName,
+                    'recipeId': recipeId,
+                    'recipeName': (recipe['name'] ?? '').toString(),
+                    'quantitySold': 0.0,
+                    'estimatedIngredientCost': 0.0,
+                    'ingredients': <Map<String, dynamic>>[],
+                  });
           menuAgg['quantitySold'] =
               (menuAgg['quantitySold'] as double) + qtySold;
           double menuCost = 0;
@@ -3247,34 +3454,44 @@ static Future<List<Map<String, dynamic>>> getIncompleteOrders({
             final ing = ingRaw as Map? ?? const {};
             final ingName = (ing['name'] ?? '').toString().trim();
             if (ingName.isEmpty) continue;
-            final perBatch = (ing['quantity'] as num?)?.toDouble() ?? 0;
-            if (perBatch <= 0) continue;
-            final usedQty = perBatch * factor;
+            final rawQty = ing['quantityPerServing'] ?? ing['quantity'];
+            final perServing = rawQty is num
+                ? rawQty.toDouble()
+                : double.tryParse(rawQty?.toString() ?? '') ?? 0.0;
+            final normalizedPerServing = ing['quantityPerServing'] == null
+                ? perServing / recipeYield
+                : perServing;
+            if (normalizedPerServing <= 0) continue;
+            final usedQty = normalizedPerServing * qtySold;
             final unitCost = (ing['unitCost'] as num?)?.toDouble() ?? 0;
             final usedCost = usedQty * unitCost;
             final inv = invByNormName[_norm(ingName)];
             final invId = inv?['id']?.toString() ?? '';
             final key = invId.isNotEmpty ? invId : _norm(ingName);
-            final agg = byIngredient.putIfAbsent(key, () => {
-                  'ingredientKey': key,
-                  'inventoryItemId': invId,
-                  'name': ingName,
-                  'unit': (ing['unit'] ?? inv?['unit'] ?? '').toString(),
-                  'usedQty': 0.0,
-                  'estimatedCost': 0.0,
-                  'menuItems': <String, double>{},
-                });
+            final agg = byIngredient.putIfAbsent(
+                key,
+                () => {
+                      'ingredientKey': key,
+                      'inventoryItemId': invId,
+                      'name': ingName,
+                      'unit': (ing['unit'] ?? inv?['unit'] ?? '').toString(),
+                      'usedQty': 0.0,
+                      'estimatedCost': 0.0,
+                      'menuItems': <String, double>{},
+                    });
             agg['usedQty'] = (agg['usedQty'] as double) + usedQty;
             agg['estimatedCost'] = (agg['estimatedCost'] as double) + usedCost;
             final mm = (agg['menuItems'] as Map<String, double>);
             mm[menuName] = (mm[menuName] ?? 0) + usedQty;
             menuCost += usedCost;
-            final mi = menuIngAgg.putIfAbsent(key, () => {
-                  'name': ingName,
-                  'unit': (ing['unit'] ?? '').toString(),
-                  'usedQty': 0.0,
-                  'estimatedCost': 0.0,
-                });
+            final mi = menuIngAgg.putIfAbsent(
+                key,
+                () => {
+                      'name': ingName,
+                      'unit': (ing['unit'] ?? '').toString(),
+                      'usedQty': 0.0,
+                      'estimatedCost': 0.0,
+                    });
             mi['usedQty'] = (mi['usedQty'] as double) + usedQty;
             mi['estimatedCost'] = (mi['estimatedCost'] as double) + usedCost;
           }
@@ -3286,8 +3503,7 @@ static Future<List<Map<String, dynamic>>> getIncompleteOrders({
         }
       }
 
-      List<Map<String, dynamic>> ingredientList =
-          byIngredient.values.map((e) {
+      List<Map<String, dynamic>> ingredientList = byIngredient.values.map((e) {
         final m = Map<String, dynamic>.from(e);
         final menuItems = (e['menuItems'] as Map<String, double>)
             .entries
@@ -3298,8 +3514,8 @@ static Future<List<Map<String, dynamic>>> getIncompleteOrders({
         m['menuItems'] = menuItems;
         return m;
       }).toList()
-            ..sort((a, b) => ((b['usedQty'] as num?)?.toDouble() ?? 0)
-                .compareTo((a['usedQty'] as num?)?.toDouble() ?? 0));
+        ..sort((a, b) => ((b['usedQty'] as num?)?.toDouble() ?? 0)
+            .compareTo((a['usedQty'] as num?)?.toDouble() ?? 0));
 
       final menuList = byMenu.values.toList()
         ..sort((a, b) => ((b['quantitySold'] as num?)?.toDouble() ?? 0)
@@ -3314,7 +3530,6 @@ static Future<List<Map<String, dynamic>>> getIncompleteOrders({
       throw Exception('Failed to compute ingredient usage: $e');
     }
   }
-
 
   static Future<Map<String, dynamic>> getDailySalesAnalytics({
     int days = 30,
@@ -3403,8 +3618,7 @@ static Future<List<Map<String, dynamic>>> getIncompleteOrders({
         final menuItems = await getMenuItems();
         final menuById = <String, Map<String, dynamic>>{
           for (final m in menuItems)
-            if ((m['id'] ?? '').toString().isNotEmpty)
-              (m['id'] as String): m,
+            if ((m['id'] ?? '').toString().isNotEmpty) (m['id'] as String): m,
         };
         for (final stat in itemStats.values) {
           final menu = menuById[stat['id']?.toString()];
@@ -3751,13 +3965,17 @@ static Future<List<Map<String, dynamic>>> getIncompleteOrders({
     final endKey =
         '${endDate.year.toString().padLeft(4, '0')}-${endDate.month.toString().padLeft(2, '0')}-${endDate.day.toString().padLeft(2, '0')}';
 
+    // Keep this to a single-field date range so it works without a composite
+    // index, then filter the staff member client-side.
     final snapshot = await _eaterySubcollection(eateryId, 'staff_attendance')
-        .where('uid', isEqualTo: uid)
         .where('date', isGreaterThanOrEqualTo: startKey)
         .where('date', isLessThanOrEqualTo: endKey)
         .get();
 
-    return snapshot.docs.map((doc) => {'id': doc.id, ...doc.data()}).toList();
+    return snapshot.docs
+        .where((doc) => (doc.data()['uid'] ?? '').toString() == uid)
+        .map((doc) => {'id': doc.id, ...doc.data()})
+        .toList();
   }
 
   static Future<Map<String, dynamic>?> getTodayAttendance({
@@ -3775,66 +3993,5 @@ static Future<List<Map<String, dynamic>>> getIncompleteOrders({
 
     if (!doc.exists) return null;
     return {'id': doc.id, ...doc.data()!};
-  }
-
-  static Future<Map<String, dynamic>> recordAttendanceCheckIn({
-    required String eateryId,
-    required String uid,
-    required String checkInType, // 'morning' or 'afternoon'
-  }) async {
-    final now = DateTime.now();
-    final todayKey =
-        '${now.year.toString().padLeft(4, '0')}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
-
-    final docId = '${eateryId}_${uid}_$todayKey';
-    final docRef =
-        _eaterySubcollection(eateryId, 'staff_attendance').doc(docId);
-
-    final existing = await docRef.get();
-    final data = existing.data();
-
-    final updates = <String, dynamic>{
-      'eateryId': eateryId,
-      'uid': uid,
-      'date': todayKey,
-      'updatedAt': DateTime.now().toIso8601String(),
-    };
-
-    if (checkInType == 'morning') {
-      updates['morningCheckIn'] = DateTime.now().toIso8601String();
-      if (data?['afternoonCheckIn'] != null) {
-        // Both check-ins present = full day
-        updates['present'] = true;
-        updates['workUnit'] = 1.0;
-        updates['status'] = 'present';
-      } else {
-        // Only morning = half day for now
-        updates['present'] = true;
-        updates['workUnit'] = 0.5;
-        updates['status'] = 'halfday';
-      }
-    } else if (checkInType == 'afternoon') {
-      updates['afternoonCheckIn'] = DateTime.now().toIso8601String();
-      if (data?['morningCheckIn'] != null) {
-        // Both check-ins present = full day
-        updates['present'] = true;
-        updates['workUnit'] = 1.0;
-        updates['status'] = 'present';
-      } else {
-        // Only afternoon = half day
-        updates['present'] = true;
-        updates['workUnit'] = 0.5;
-        updates['status'] = 'halfday';
-      }
-    }
-
-    if (!existing.exists) {
-      updates['createdAt'] = DateTime.now().toIso8601String();
-    }
-
-    await docRef.set(updates, SetOptions(merge: true));
-
-    final updated = await docRef.get();
-    return {'id': updated.id, ...updated.data()!};
   }
 }

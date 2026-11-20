@@ -1,5 +1,6 @@
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
+import '../../theme.dart';
 
 /// A single point on the sales trend chart.
 class TrendPoint {
@@ -14,7 +15,7 @@ class RevenueTrendChart extends StatelessWidget {
   const RevenueTrendChart({
     super.key,
     required this.points,
-    this.color = const Color(0xFF1E88E5),
+    this.color = AppTheme.sageAccent,
     this.height = 190,
   });
 
@@ -30,8 +31,6 @@ class RevenueTrendChart extends StatelessWidget {
         child: const Center(child: Text('No sales data yet.')),
       );
     }
-
-    final scheme = Theme.of(context).colorScheme;
 
     var maxValue = 0.0;
     for (final p in points) {
@@ -58,8 +57,10 @@ class RevenueTrendChart extends StatelessWidget {
             show: true,
             drawVerticalLine: false,
             horizontalInterval: interval,
-            getDrawingHorizontalLine: (_) =>
-                FlLine(color: scheme.outlineVariant, strokeWidth: 1),
+            getDrawingHorizontalLine: (_) => FlLine(
+              color: Colors.white.withValues(alpha: 0.09),
+              strokeWidth: 1,
+            ),
           ),
           borderData: FlBorderData(show: false),
           titlesData: FlTitlesData(
@@ -80,7 +81,7 @@ class RevenueTrendChart extends StatelessWidget {
                         : '₱${value.toInt()}',
                     style: TextStyle(
                       fontSize: 10,
-                      color: scheme.onSurfaceVariant,
+                      color: Colors.white.withValues(alpha: 0.58),
                     ),
                   ),
                 ),
@@ -102,7 +103,7 @@ class RevenueTrendChart extends StatelessWidget {
                       points[index].label,
                       style: TextStyle(
                         fontSize: 10,
-                        color: scheme.onSurfaceVariant,
+                        color: Colors.white.withValues(alpha: 0.58),
                       ),
                     ),
                   );
@@ -115,14 +116,15 @@ class RevenueTrendChart extends StatelessWidget {
             handleBuiltInTouches: true,
             touchSpotThreshold: 24,
             touchTooltipData: LineTouchTooltipData(
-              tooltipBgColor: const Color(0xFF17324D),
+              tooltipBgColor: const Color(0xFF101C33),
               tooltipRoundedRadius: 10,
               tooltipPadding:
                   const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
               getTooltipItems: (touchedSpots) => touchedSpots.map((spot) {
                 final index = spot.x.round();
-                final label =
-                    index >= 0 && index < points.length ? points[index].label : '';
+                final label = index >= 0 && index < points.length
+                    ? points[index].label
+                    : '';
                 return LineTooltipItem(
                   '$label\n₱${spot.y.toStringAsFixed(2)}',
                   const TextStyle(

@@ -20,7 +20,6 @@ class PaymentDetails {
     this.change,
     this.referenceNumber,
     required this.paymentStatus,
-    this.wantsReceipt = false,
   });
 
   /// `'cash'`, `'gcash'` or `'other'`.
@@ -37,27 +36,18 @@ class PaymentDetails {
 
   /// `'paid'` or `'pending'` (always `'paid'` for cash).
   final String paymentStatus;
-
-  /// Whether the user asked for a receipt for this order.
-  final bool wantsReceipt;
 }
 
 /// Opens the checkout payment dialog.
 ///
-/// Returns the captured [PaymentDetails], or null when cancelled. When
-/// [askForReceipt] is true an extra "print a receipt?" switch is offered and
-/// the result's [PaymentDetails.wantsReceipt] carries the answer.
+/// Returns the captured [PaymentDetails], or null when cancelled.
 Future<PaymentDetails?> showPaymentDetailsDialog(
   BuildContext context, {
   required double totalAmount,
-  bool askForReceipt = false,
 }) {
   return showDialog<PaymentDetails>(
     context: context,
-    builder: (_) => PaymentMethodDialog(
-      totalAmount: totalAmount,
-      askForReceipt: askForReceipt,
-    ),
+    builder: (_) => PaymentMethodDialog(totalAmount: totalAmount),
   );
 }
 
@@ -72,11 +62,9 @@ class PaymentMethodDialog extends StatefulWidget {
   const PaymentMethodDialog({
     super.key,
     required this.totalAmount,
-    this.askForReceipt = false,
   });
 
   final double totalAmount;
-  final bool askForReceipt;
 
   @override
   State<PaymentMethodDialog> createState() => _PaymentMethodDialogState();
@@ -90,7 +78,6 @@ class _PaymentMethodDialogState extends State<PaymentMethodDialog> {
 
   String _method = 'cash';
   String _paymentStatus = 'paid';
-  bool _wantsReceipt = false;
   String? _error;
 
   @override
@@ -108,8 +95,7 @@ class _PaymentMethodDialogState extends State<PaymentMethodDialog> {
     super.dispose();
   }
 
-  double? get _amountReceived =>
-      double.tryParse(_amountController.text.trim());
+  double? get _amountReceived => double.tryParse(_amountController.text.trim());
 
   bool get _isCash => _method == 'cash';
 
@@ -139,7 +125,6 @@ class _PaymentMethodDialogState extends State<PaymentMethodDialog> {
         amountReceived: received,
         change: received - widget.totalAmount,
         paymentStatus: 'paid',
-        wantsReceipt: _wantsReceipt,
       ));
       return;
     }
@@ -149,7 +134,6 @@ class _PaymentMethodDialogState extends State<PaymentMethodDialog> {
           ? null
           : _referenceController.text.trim(),
       paymentStatus: _paymentStatus,
-      wantsReceipt: _wantsReceipt,
     ));
   }
 
@@ -206,19 +190,10 @@ class _PaymentMethodDialogState extends State<PaymentMethodDialog> {
                 ],
               ),
               const SizedBox(height: 16),
-              if (_isCash) ..._buildCashFields(scheme)
-              else ..._buildEWalletFields(scheme),
-              if (widget.askForReceipt) ...[
-                const Divider(height: 24),
-                SwitchListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: const Text('Print a receipt for this order?'),
-                  value: _wantsReceipt,
-                  onChanged: (value) =>
-                      setState(() => _wantsReceipt = value),
-                  secondary: const Icon(Icons.receipt_long_outlined),
-                ),
-              ],
+              if (_isCash)
+                ..._buildCashFields(scheme)
+              else
+                ..._buildEWalletFields(scheme),
             ],
           ),
         ),
@@ -243,8 +218,7 @@ class _PaymentMethodDialogState extends State<PaymentMethodDialog> {
       TextField(
         controller: _amountController,
         autofocus: true,
-        keyboardType:
-            const TextInputType.numberWithOptions(decimal: true),
+        keyboardType: const TextInputType.numberWithOptions(decimal: true),
         inputFormatters: [
           FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d{0,2}')),
         ],
@@ -256,8 +230,7 @@ class _PaymentMethodDialogState extends State<PaymentMethodDialog> {
             child: Center(
               child: Text(
                 '₱',
-                style: TextStyle(
-                    fontSize: 20, fontWeight: FontWeight.w700),
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
               ),
             ),
           ),
@@ -267,8 +240,8 @@ class _PaymentMethodDialogState extends State<PaymentMethodDialog> {
       const SizedBox(height: 8),
       ActionChip(
         label: const Text('Exact amount'),
-        onPressed: () => _amountController.text =
-            widget.totalAmount.toStringAsFixed(2),
+        onPressed: () =>
+            _amountController.text = widget.totalAmount.toStringAsFixed(2),
       ),
       const SizedBox(height: 12),
       Container(
@@ -288,9 +261,7 @@ class _PaymentMethodDialogState extends State<PaymentMethodDialog> {
                 fontSize: 11,
                 fontWeight: FontWeight.w800,
                 letterSpacing: 0.5,
-                color: change >= 0
-                    ? Colors.green.shade700
-                    : scheme.error,
+                color: change >= 0 ? Colors.green.shade700 : scheme.error,
               ),
             ),
             const Spacer(),
@@ -299,9 +270,7 @@ class _PaymentMethodDialogState extends State<PaymentMethodDialog> {
               style: TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.w800,
-                color: change >= 0
-                    ? Colors.green.shade700
-                    : scheme.error,
+                color: change >= 0 ? Colors.green.shade700 : scheme.error,
               ),
             ),
           ],

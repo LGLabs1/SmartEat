@@ -61,12 +61,10 @@ class ExpenseFormDialog extends StatefulWidget {
 }
 
 class _ExpenseFormDialogState extends State<ExpenseFormDialog> {
-  late String _category = widget.categories.isNotEmpty
-      ? widget.categories.first
-      : 'Other';
-  late String _paymentMethod = widget.paymentMethods.isNotEmpty
-      ? widget.paymentMethods.first
-      : 'Cash';
+  late String _category =
+      widget.categories.isNotEmpty ? widget.categories.first : 'Other';
+  late String _paymentMethod =
+      widget.paymentMethods.isNotEmpty ? widget.paymentMethods.first : 'Cash';
   final _nameController = TextEditingController();
   final _notesController = TextEditingController();
   final _amountController = TextEditingController();
@@ -105,16 +103,14 @@ class _ExpenseFormDialogState extends State<ExpenseFormDialog> {
     }
   }
 
-  double? get _parsedAmount =>
-      double.tryParse(_amountController.text.trim());
+  double? get _parsedAmount => double.tryParse(_amountController.text.trim());
 
   void _save() {
     final name = _nameController.text.trim();
     final amount = _parsedAmount;
     final nameError = name.isEmpty ? 'Please enter an expense name' : null;
-    final amountError = (amount == null || amount <= 0)
-        ? 'Please enter a valid amount'
-        : null;
+    final amountError =
+        (amount == null || amount <= 0) ? 'Please enter a valid amount' : null;
     if (nameError != null || amountError != null) {
       setState(() {
         _nameError = nameError;
@@ -137,12 +133,11 @@ class _ExpenseFormDialogState extends State<ExpenseFormDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
     return FinanceFormShell(
       title: 'Add Expense',
       subtitle: 'Record a one-off or manual business expense',
       icon: Icons.receipt_long_outlined,
-      accentColor: AppTheme.primary,
+      accentColor: AppTheme.sageAccent,
       saveLabel: 'Save Expense',
       onCancel: () => Navigator.of(context).pop(),
       onSave: _save,
@@ -253,9 +248,7 @@ class _ExpenseFormDialogState extends State<ExpenseFormDialog> {
                 prefixIcon: const Icon(Icons.notes),
                 alignLabelWithHint: true,
                 filled: true,
-                fillColor: scheme.surfaceContainerHighest.withValues(
-                  alpha: 0.4,
-                ),
+                fillColor: Colors.white.withValues(alpha: 0.06),
               ),
               minLines: 2,
               maxLines: 4,

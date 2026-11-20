@@ -1,6 +1,8 @@
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 
+import '../../../../theme.dart';
+
 /// A single point on the cash-out trend chart.
 class CashflowPoint {
   const CashflowPoint({required this.label, required this.value});
@@ -16,7 +18,7 @@ class CashflowTrendChart extends StatelessWidget {
     super.key,
     required this.points,
     required this.compactMoney,
-    this.color = const Color(0xFF1E88E5),
+    this.color = AppTheme.sageCyan,
     this.height = 200,
   });
 
@@ -61,8 +63,8 @@ class CashflowTrendChart extends StatelessWidget {
             show: true,
             drawVerticalLine: false,
             horizontalInterval: interval,
-            getDrawingHorizontalLine: (_) =>
-                FlLine(color: scheme.outlineVariant, strokeWidth: 1),
+            getDrawingHorizontalLine: (_) => FlLine(
+                color: Colors.white.withValues(alpha: 0.1), strokeWidth: 1),
           ),
           borderData: FlBorderData(show: false),
           titlesData: FlTitlesData(

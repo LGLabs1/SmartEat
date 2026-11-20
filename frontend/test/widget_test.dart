@@ -13,6 +13,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 import 'package:smarteat/main.dart';
 import 'package:smarteat/models/business_context.dart';
+import 'package:smarteat/screens/landing_screen.dart';
 import 'package:smarteat/screens/login_screen.dart';
 import 'package:smarteat/widgets/sage_briefing_card.dart';
 
@@ -42,8 +43,13 @@ class _FakeFirebasePlatform extends FirebasePlatform {
 
 class _FakeFirebaseApp extends FirebaseAppPlatform {
   _FakeFirebaseApp()
-      : super(defaultFirebaseAppName,
-            const FirebaseOptions(apiKey: 'test', appId: 'test', messagingSenderId: 'test', projectId: 'test'));
+      : super(
+            defaultFirebaseAppName,
+            const FirebaseOptions(
+                apiKey: 'test',
+                appId: 'test',
+                messagingSenderId: 'test',
+                projectId: 'test'));
 }
 
 class _FakeAuthPlatform extends FirebaseAuthPlatform {
@@ -87,17 +93,14 @@ void main() {
     _FakeAuthPlatform();
   });
 
-  testWidgets('App starts and shows login screen', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
+  testWidgets('App starts and shows landing screen when signed out',
+      (WidgetTester tester) async {
     await tester.pumpWidget(const SmartEatApp());
-    // The login screen uses infinitely repeating ambient animations, so
-    // pumpAndSettle would never return. Pump a few frames instead to let the
-    // auth stream resolve to the signed-out (login) state.
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));
 
-    // Verify that the login screen is shown
-    expect(find.byType(LoginScreen), findsOneWidget);
+    expect(find.byType(LandingScreen), findsOneWidget);
+    expect(find.byType(LoginScreen), findsNothing);
   });
 
   test('Sage briefing generates dynamic content using business metrics', () {

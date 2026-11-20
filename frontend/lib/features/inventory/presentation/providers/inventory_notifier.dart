@@ -1,4 +1,4 @@
-﻿import 'package:flutter/foundation.dart';
+import 'package:flutter/foundation.dart';
 import '../../data/repositories/inventory_remote_repository.dart';
 import '../../data/repositories/inventory_repository.dart';
 import '../../../../../models/inventory_item.dart';
@@ -50,30 +50,67 @@ class InventoryState {
 }
 
 class InventoryNotifier extends ChangeNotifier {
-  final InventoryRepository _repo = InventoryRemoteRepository();
+  InventoryNotifier({InventoryRepository? repository})
+      : _repo = repository ?? InventoryRemoteRepository();
+
+  final InventoryRepository _repo;
   InventoryState _state = InventoryState();
   InventoryState get state => _state;
 
   Future<void> load() async {
     _state = _state.copyWith(loading: true, error: null);
     notifyListeners();
+
+    late final List<InventoryItem> items;
     try {
-      final items = await _repo.getInventoryItems();
-      final menu = await _repo.getMenuItemIngredients();
-      final movements = await _repo.getStockMovements();
-      final purchases = await _repo.getPurchaseReceipts();
-      final adjustments = await _repo.getStockAdjustments();
-      _state = _state.copyWith(
-        items: items,
-        menuIngredients: menu,
-        movements: movements,
-        purchases: purchases,
-        adjustments: adjustments,
-        loading: false,
-      );
+      items = await _repo.getInventoryItems();
     } catch (e) {
-      _state = _state.copyWith(loading: false, error: e.toString());
+      _state = _state.copyWith(
+        loading: false,
+        error: 'Unable to load inventory items: $e',
+      );
+      notifyListeners();
+      return;
     }
+
+    _state = _state.copyWith(items: items, loading: false);
+    notifyListeners();
+
+    String? error;
+    List<MenuItemIngredient>? menu;
+    List<StockMovement>? movements;
+    List<PurchaseReceipt>? purchases;
+    List<StockAdjustment>? adjustments;
+
+    try {
+      menu = await _repo.getMenuItemIngredients();
+    } catch (e) {
+      error = 'Menu links could not be refreshed: $e';
+    }
+    try {
+      movements = await _repo.getStockMovements();
+    } catch (e) {
+      error ??= 'Stock movements could not be refreshed: $e';
+    }
+    try {
+      purchases = await _repo.getPurchaseReceipts();
+    } catch (e) {
+      error ??= 'Purchases could not be refreshed: $e';
+    }
+    try {
+      adjustments = await _repo.getStockAdjustments();
+    } catch (e) {
+      error ??= 'Adjustments could not be refreshed: $e';
+    }
+
+    _state = _state.copyWith(
+      menuIngredients: menu,
+      movements: movements,
+      purchases: purchases,
+      adjustments: adjustments,
+      loading: false,
+      error: error,
+    );
     notifyListeners();
   }
 
@@ -93,7 +130,8 @@ class InventoryNotifier extends ChangeNotifier {
   }
 
   Future<void> recordDirectSale(String itemId, double qtyBaseSold) async {
-    await _repo.recordDirectSaleConsumption(itemId: itemId, qtyBaseSold: qtyBaseSold);
+    await _repo.recordDirectSaleConsumption(
+        itemId: itemId, qtyBaseSold: qtyBaseSold);
     await load();
   }
 
@@ -106,6 +144,8 @@ class InventoryNotifier extends ChangeNotifier {
     return FifoQueueService.computeTotalValue(lots);
   }
 
-  double toBase(double qty, double factor) => UnitConversion.toBase(qty, factor);
-  double fromBase(double qtyBase, double factor) => UnitConversion.fromBase(qtyBase, factor);
+  double toBase(double qty, double factor) =>
+      UnitConversion.toBase(qty, factor);
+  double fromBase(double qtyBase, double factor) =>
+      UnitConversion.fromBase(qtyBase, factor);
 }

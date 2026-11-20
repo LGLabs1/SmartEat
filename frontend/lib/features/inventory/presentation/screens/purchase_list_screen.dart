@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import '../../../../../models/inventory_item.dart';
+import '../../../../../theme.dart';
 import '../../data/models/purchase_list_item.dart';
 import '../../data/models/purchase_receipt.dart';
 import '../../data/services/purchase_list_pdf_service.dart';
@@ -41,7 +42,9 @@ class _PurchaseListScreenState extends State<PurchaseListScreen> {
           controller: controller,
           autofocus: true,
           keyboardType: const TextInputType.numberWithOptions(decimal: true),
-          inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d*'))],
+          inputFormatters: [
+            FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d*'))
+          ],
           decoration: InputDecoration(
             labelText: 'Quantity (${entry.unit})',
             border: const OutlineInputBorder(),
@@ -72,7 +75,8 @@ class _PurchaseListScreenState extends State<PurchaseListScreen> {
     final list = notifier.list;
     if (list.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Add items to the list before exporting.')),
+        const SnackBar(
+            content: Text('Add items to the list before exporting.')),
       );
       return;
     }
@@ -84,7 +88,8 @@ class _PurchaseListScreenState extends State<PurchaseListScreen> {
     final notifier = context.read<PurchaseListNotifier>();
     if (notifier.list.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Add items to the list before recording.')),
+        const SnackBar(
+            content: Text('Add items to the list before recording.')),
       );
       return;
     }
@@ -188,11 +193,12 @@ class _PurchaseListScreenState extends State<PurchaseListScreen> {
     );
   }
 
-  Widget _buildMyList(
-      BuildContext context, PurchaseListNotifier notifier, List<PurchaseListItem> list) {
+  Widget _buildMyList(BuildContext context, PurchaseListNotifier notifier,
+      List<PurchaseListItem> list) {
     final theme = Theme.of(context);
     return Card(
-      margin: isWideLayout(context) ? const EdgeInsets.all(12) : EdgeInsets.zero,
+      margin:
+          isWideLayout(context) ? const EdgeInsets.all(12) : EdgeInsets.zero,
       child: Padding(
         padding: const EdgeInsets.all(12),
         child: Column(
@@ -205,12 +211,13 @@ class _PurchaseListScreenState extends State<PurchaseListScreen> {
                     size: 20, color: theme.colorScheme.primary),
                 const SizedBox(width: 8),
                 Text('Your Purchase List',
-                    style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold)),
+                    style: theme.textTheme.titleSmall
+                        ?.copyWith(fontWeight: FontWeight.bold)),
                 const Spacer(),
                 Text('${notifier.pendingCount} pending',
                     style: theme.textTheme.bodySmall?.copyWith(
-                          color: theme.colorScheme.onSurfaceVariant,
-                        )),
+                      color: theme.colorScheme.onSurfaceVariant,
+                    )),
               ],
             ),
             const Divider(height: 16),
@@ -234,17 +241,20 @@ class _PurchaseListScreenState extends State<PurchaseListScreen> {
         child: Column(
           children: [
             Icon(Icons.shopping_cart_outlined,
-                size: 40, color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.4)),
+                size: 40,
+                color:
+                    theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.4)),
             const SizedBox(height: 8),
             Text('No items yet',
-                style: theme.textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w600)),
+                style: theme.textTheme.bodyLarge
+                    ?.copyWith(fontWeight: FontWeight.w600)),
             const SizedBox(height: 4),
             Text(
               'Tap items in Critical / Safe / All below, or use Generate to fill from critical items.',
               textAlign: TextAlign.center,
               style: theme.textTheme.bodySmall?.copyWith(
-                    color: theme.colorScheme.onSurfaceVariant,
-                  ),
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
             ),
           ],
         ),
@@ -252,8 +262,8 @@ class _PurchaseListScreenState extends State<PurchaseListScreen> {
     );
   }
 
-  Widget _listRow(
-      BuildContext context, PurchaseListNotifier notifier, PurchaseListItem entry) {
+  Widget _listRow(BuildContext context, PurchaseListNotifier notifier,
+      PurchaseListItem entry) {
     final theme = Theme.of(context);
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
@@ -273,16 +283,19 @@ class _PurchaseListScreenState extends State<PurchaseListScreen> {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: theme.textTheme.bodyMedium?.copyWith(
-                        fontWeight: FontWeight.w600,
-                        decoration: entry.checked ? TextDecoration.lineThrough : null,
-                        color: entry.checked ? theme.colorScheme.onSurfaceVariant : null,
-                      ),
+                    fontWeight: FontWeight.w600,
+                    decoration:
+                        entry.checked ? TextDecoration.lineThrough : null,
+                    color: entry.checked
+                        ? theme.colorScheme.onSurfaceVariant
+                        : null,
+                  ),
                 ),
                 Text(
                   '${_formatCurrency(entry.unitCost)} / ${entry.unit}',
                   style: theme.textTheme.labelSmall?.copyWith(
-                        color: theme.colorScheme.onSurfaceVariant,
-                      ),
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
                 ),
               ],
             ),
@@ -295,9 +308,10 @@ class _PurchaseListScreenState extends State<PurchaseListScreen> {
               _formatCurrency(entry.lineCost),
               textAlign: TextAlign.right,
               style: theme.textTheme.bodyMedium?.copyWith(
-                    fontWeight: FontWeight.bold,
-                    color: entry.checked ? theme.colorScheme.onSurfaceVariant : null,
-                  ),
+                fontWeight: FontWeight.bold,
+                color:
+                    entry.checked ? theme.colorScheme.onSurfaceVariant : null,
+              ),
             ),
           ),
           IconButton(
@@ -311,8 +325,8 @@ class _PurchaseListScreenState extends State<PurchaseListScreen> {
     );
   }
 
-  Widget _qtyStepper(
-      BuildContext context, PurchaseListNotifier notifier, PurchaseListItem entry) {
+  Widget _qtyStepper(BuildContext context, PurchaseListNotifier notifier,
+      PurchaseListItem entry) {
     final theme = Theme.of(context);
     return Container(
       decoration: BoxDecoration(
@@ -326,7 +340,8 @@ class _PurchaseListScreenState extends State<PurchaseListScreen> {
             onTap: () => notifier.decrementQty(entry.itemId),
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-              child: Icon(Icons.remove, size: 16, color: theme.colorScheme.primary),
+              child: Icon(Icons.remove,
+                  size: 16, color: theme.colorScheme.primary),
             ),
           ),
           InkWell(
@@ -337,7 +352,8 @@ class _PurchaseListScreenState extends State<PurchaseListScreen> {
                 entry.qty % 1 == 0
                     ? entry.qty.toInt().toString()
                     : entry.qty.toString(),
-                style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.bold),
+                style: theme.textTheme.bodyMedium
+                    ?.copyWith(fontWeight: FontWeight.bold),
               ),
             ),
           ),
@@ -345,7 +361,8 @@ class _PurchaseListScreenState extends State<PurchaseListScreen> {
             onTap: () => notifier.incrementQty(entry.itemId),
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-              child: Icon(Icons.add, size: 16, color: theme.colorScheme.primary),
+              child:
+                  Icon(Icons.add, size: 16, color: theme.colorScheme.primary),
             ),
           ),
         ],
@@ -360,15 +377,16 @@ class _PurchaseListScreenState extends State<PurchaseListScreen> {
         Expanded(
           child: Text(
             'Total (pending)',
-            style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold),
+            style: theme.textTheme.titleSmall
+                ?.copyWith(fontWeight: FontWeight.bold),
           ),
         ),
         Text(
           _formatCurrency(notifier.pendingCost),
           style: theme.textTheme.titleMedium?.copyWith(
-                fontWeight: FontWeight.bold,
-                color: theme.colorScheme.primary,
-              ),
+            fontWeight: FontWeight.bold,
+            color: theme.colorScheme.primary,
+          ),
         ),
       ],
     );
@@ -378,7 +396,8 @@ class _PurchaseListScreenState extends State<PurchaseListScreen> {
       List<InventoryItem> critical, List<InventoryItem> safe) {
     final theme = Theme.of(context);
     return Card(
-      margin: isWideLayout(context) ? const EdgeInsets.all(12) : EdgeInsets.zero,
+      margin:
+          isWideLayout(context) ? const EdgeInsets.all(12) : EdgeInsets.zero,
       child: Padding(
         padding: const EdgeInsets.all(12),
         child: Column(
@@ -391,28 +410,36 @@ class _PurchaseListScreenState extends State<PurchaseListScreen> {
                     size: 18, color: theme.colorScheme.primary),
                 const SizedBox(width: 8),
                 Text('Suggested Items',
-                    style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold)),
+                    style: theme.textTheme.titleSmall
+                        ?.copyWith(fontWeight: FontWeight.bold)),
                 const Spacer(),
                 FilledButton.tonalIcon(
                   icon: const Icon(Icons.flash_on, size: 16),
                   label: const Text('Generate'),
-                  onPressed: critical.isEmpty ? null : () => _confirmGenerate(critical),
-                  style: FilledButton.styleFrom(visualDensity: VisualDensity.compact),
+                  onPressed: critical.isEmpty
+                      ? null
+                      : () => _confirmGenerate(critical),
+                  style: FilledButton.styleFrom(
+                      visualDensity: VisualDensity.compact),
                 ),
               ],
             ),
             const Divider(height: 16),
-            _suggestionHeader(context, 'Critical — restock now', Colors.red),
+            _suggestionHeader(
+                context, 'Critical — restock now', AppTheme.error),
             if (critical.isEmpty)
               _noSuggestion(context, 'No critical items. All stock is healthy.')
             else
-              ...critical.map((item) => _suggestionRow(context, notifier, item, accent: Colors.red)),
+              ...critical.map((item) => _suggestionRow(context, notifier, item,
+                  accent: AppTheme.error)),
             const SizedBox(height: 12),
-            _suggestionHeader(context, 'Safe — optional top-up', Colors.green),
+            _suggestionHeader(
+                context, 'Safe — optional top-up', AppTheme.sageSuccess),
             if (safe.isEmpty)
               _noSuggestion(context, 'No safe items to top up right now.')
             else
-              ...safe.map((item) => _suggestionRow(context, notifier, item, accent: Colors.green)),
+              ...safe.map((item) => _suggestionRow(context, notifier, item,
+                  accent: AppTheme.sageSuccess)),
           ],
         ),
       ),
@@ -426,7 +453,14 @@ class _PurchaseListScreenState extends State<PurchaseListScreen> {
 
     // Categories available for filtering: "All" plus every category actually
     // present in the inventory (defaults first, then any custom ones).
-    const defaultCats = ['Vegetables', 'Meat', 'Dairy', 'Grains', 'Spices', 'Beverages'];
+    const defaultCats = [
+      'Vegetables',
+      'Meat',
+      'Dairy',
+      'Grains',
+      'Spices',
+      'Beverages'
+    ];
     final present = all
         .map((e) => e.category.trim())
         .where((c) => c.isNotEmpty)
@@ -439,7 +473,8 @@ class _PurchaseListScreenState extends State<PurchaseListScreen> {
       ...present.where((c) => !defaultCats.contains(c)),
     ];
     // Keep the selection valid if the current category disappears.
-    final selectedCat = categories.contains(_allItemsCategory) ? _allItemsCategory : 'All';
+    final selectedCat =
+        categories.contains(_allItemsCategory) ? _allItemsCategory : 'All';
 
     final filtered = all.where((e) {
       final matchesCategory = selectedCat == 'All' || e.category == selectedCat;
@@ -450,7 +485,8 @@ class _PurchaseListScreenState extends State<PurchaseListScreen> {
     }).toList();
 
     return Card(
-      margin: isWideLayout(context) ? const EdgeInsets.all(12) : EdgeInsets.zero,
+      margin:
+          isWideLayout(context) ? const EdgeInsets.all(12) : EdgeInsets.zero,
       child: Padding(
         padding: const EdgeInsets.all(12),
         child: Column(
@@ -463,15 +499,16 @@ class _PurchaseListScreenState extends State<PurchaseListScreen> {
                     size: 18, color: theme.colorScheme.primary),
                 const SizedBox(width: 8),
                 Text('All Items',
-                    style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold)),
+                    style: theme.textTheme.titleSmall
+                        ?.copyWith(fontWeight: FontWeight.bold)),
                 const Spacer(),
                 Text(
                     selectedCat == 'All' && query.isEmpty
                         ? '${all.length} total'
                         : '${filtered.length} of ${all.length}',
                     style: theme.textTheme.bodySmall?.copyWith(
-                          color: theme.colorScheme.onSurfaceVariant,
-                        )),
+                      color: theme.colorScheme.onSurfaceVariant,
+                    )),
               ],
             ),
             const SizedBox(height: 8),
@@ -538,15 +575,16 @@ class _PurchaseListScreenState extends State<PurchaseListScreen> {
           Container(
             width: 4,
             height: 14,
-            decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(2)),
+            decoration: BoxDecoration(
+                color: color, borderRadius: BorderRadius.circular(2)),
           ),
           const SizedBox(width: 8),
           Text(
             text,
             style: theme.textTheme.labelLarge?.copyWith(
-                  fontWeight: FontWeight.bold,
-                  color: color,
-                ),
+              fontWeight: FontWeight.bold,
+              color: color,
+            ),
           ),
         ],
       ),
@@ -559,13 +597,15 @@ class _PurchaseListScreenState extends State<PurchaseListScreen> {
       padding: const EdgeInsets.symmetric(vertical: 8),
       child: Text(
         text,
-        style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+        style: theme.textTheme.bodySmall
+            ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
       ),
     );
   }
 
-  Widget _suggestionRow(BuildContext context, PurchaseListNotifier notifier,
-      InventoryItem item, {required Color accent}) {
+  Widget _suggestionRow(
+      BuildContext context, PurchaseListNotifier notifier, InventoryItem item,
+      {required Color accent}) {
     final theme = Theme.of(context);
     final inList = notifier.isInList(item.id);
     return Padding(
@@ -576,7 +616,10 @@ class _PurchaseListScreenState extends State<PurchaseListScreen> {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
           decoration: BoxDecoration(
-            color: inList ? theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5) : null,
+            color: inList
+                ? theme.colorScheme.surfaceContainerHighest
+                    .withValues(alpha: 0.5)
+                : null,
             borderRadius: BorderRadius.circular(8),
           ),
           child: Row(
@@ -590,21 +633,23 @@ class _PurchaseListScreenState extends State<PurchaseListScreen> {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: theme.textTheme.bodyMedium?.copyWith(
-                            fontWeight: FontWeight.w600,
-                            color: inList ? theme.colorScheme.onSurfaceVariant : null,
-                          ),
+                        fontWeight: FontWeight.w600,
+                        color:
+                            inList ? theme.colorScheme.onSurfaceVariant : null,
+                      ),
                     ),
                     Text(
                       '${item.currentStock.toStringAsFixed(1)} / ${item.maxStock.toStringAsFixed(1)} ${item.unit}',
                       style: theme.textTheme.labelSmall?.copyWith(
-                            color: accent.withValues(alpha: 0.9),
-                          ),
+                        color: accent.withValues(alpha: 0.9),
+                      ),
                     ),
                   ],
                 ),
               ),
               if (inList)
-                Icon(Icons.check_circle, size: 20, color: theme.colorScheme.primary)
+                Icon(Icons.check_circle,
+                    size: 20, color: theme.colorScheme.primary)
               else
                 Icon(Icons.add_circle_outline, size: 20, color: accent),
             ],
@@ -645,7 +690,8 @@ class _PurchaseListScreenState extends State<PurchaseListScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Regenerate list?'),
-        content: const Text('Your current list will be replaced with critical items.'),
+        content: const Text(
+            'Your current list will be replaced with critical items.'),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(),

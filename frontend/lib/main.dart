@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:firebase_auth/firebase_auth.dart' hide AuthProvider;
@@ -7,15 +9,17 @@ import 'services/ai_assistant_provider.dart';
 import 'services/firebase_service.dart';
 import 'services/notification_service.dart';
 import 'screens/dashboard_screen.dart';
+import 'screens/landing_screen.dart';
 import 'screens/login_screen.dart';
+import 'screens/forgot_password_screen.dart';
 import 'screens/register_screen.dart';
 import 'screens/profile_screen.dart';
 import 'screens/settings_screen.dart';
 import 'screens/sms_settings_screen.dart';
+import 'screens/notification_settings_screen.dart';
 import 'screens/notifications_screen.dart';
 import 'screens/about_screen.dart';
 import 'widgets/ai_side_panel.dart';
-import 'widgets/floating_ai_button.dart';
 import 'widgets/sage_briefing_card.dart';
 import 'widgets/sage_full_screen.dart';
 import 'theme.dart';
@@ -49,16 +53,29 @@ class SmartEatApp extends StatelessWidget {
           return child ?? const SizedBox.shrink();
         },
         routes: {
-          '/': (context) => const AuthGate(),
+          '/': (context) => const AuthGate(showLandingWhenSignedOut: true),
           '/login': (context) => const AuthGate(),
+          '/forgot-password': (context) => const ForgotPasswordScreen(),
           '/register': (context) => const RegisterScreen(),
           '/home': (context) => const AuthGate(child: DashboardScreen()),
-          '/settings': (context) => const AuthGate(child: SettingsScreen()),
+          '/settings': (context) => Theme(
+                data: AppTheme.dashboardTheme,
+                child: const AuthGate(child: SettingsScreen()),
+              ),
           '/settings/sms': (context) =>
               const AuthGate(child: SmsSettingsScreen()),
-          '/notifications': (context) =>
-              const AuthGate(child: NotificationsScreen()),
-          '/profile': (context) => const AuthGate(child: ProfileScreen()),
+          '/settings/notifications': (context) => Theme(
+                data: AppTheme.dashboardTheme,
+                child: const AuthGate(child: NotificationSettingsScreen()),
+              ),
+          '/notifications': (context) => Theme(
+                data: AppTheme.dashboardTheme,
+                child: const AuthGate(child: NotificationsScreen()),
+              ),
+          '/profile': (context) => Theme(
+                data: AppTheme.dashboardTheme,
+                child: const AuthGate(child: ProfileScreen()),
+              ),
           '/about': (context) => const AuthGate(child: AboutScreen()),
         },
         debugShowCheckedModeBanner: false,
@@ -123,16 +140,6 @@ class AIAssistantShell extends StatelessWidget {
                     child: AISidePanel(),
                   ),
                 ],
-                // Draggable assistant button — only while collapsed.
-                if (!assistant.isExpanded && !assistant.isFullScreen)
-                  AnimatedPositioned(
-                    duration: const Duration(milliseconds: 240),
-                    curve: Curves.easeOutCubic,
-                    left: assistant.buttonPosition?.dx ?? 24,
-                    top: assistant.buttonPosition?.dy ?? 24,
-                    child: const FloatingAIAssistantButton(),
-                  ),
-
                 if (!assistant.isFullScreen &&
                     assistant.showSageBriefing &&
                     assistant.sageBriefingContent != null)
@@ -208,9 +215,14 @@ class AIAssistantShell extends StatelessWidget {
 }
 
 class AuthGate extends StatefulWidget {
-  const AuthGate({Key? key, this.child}) : super(key: key);
+  const AuthGate({
+    Key? key,
+    this.child,
+    this.showLandingWhenSignedOut = false,
+  }) : super(key: key);
 
   final Widget? child;
+  final bool showLandingWhenSignedOut;
 
   @override
   State<AuthGate> createState() => _AuthGateState();
@@ -218,10 +230,21 @@ class AuthGate extends StatefulWidget {
 
 class _AuthGateState extends State<AuthGate> {
   bool? _lastAuthState;
+  bool _routeResetScheduled = false;
 
   // Memoized so rebuilds reuse the same auth stream instead of resubscribing.
   late final Stream<User?> _authStateStream =
       FirebaseAuth.instance.authStateChanges();
+  late final StreamSubscription<User?> _preferencesSubscription =
+      _authStateStream.listen((user) {
+    if (user != null) NotificationService().loadPreferences();
+  });
+
+  @override
+  void dispose() {
+    _preferencesSubscription.cancel();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -267,12 +290,29 @@ class _AuthGateState extends State<AuthGate> {
         }
         final user = snapshot.data;
         final isAuthenticated = user != null;
+        final wasAuthenticated = _lastAuthState ?? false;
 
         if (_lastAuthState != null && _lastAuthState != isAuthenticated) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (!mounted) return;
             ScaffoldMessenger.maybeOf(context)?.clearSnackBars();
           });
+        }
+        if (!wasAuthenticated && isAuthenticated && !_routeResetScheduled) {
+          final routeName = ModalRoute.of(context)?.settings.name;
+          if (routeName == '/login') {
+            _routeResetScheduled = true;
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (!mounted) return;
+              Navigator.of(context).pushNamedAndRemoveUntil(
+                '/',
+                (route) => false,
+              );
+            });
+          }
+        }
+        if (!isAuthenticated) {
+          _routeResetScheduled = false;
         }
         _lastAuthState = isAuthenticated;
 
@@ -285,6 +325,10 @@ class _AuthGateState extends State<AuthGate> {
 
         if (isAuthenticated) {
           return const AIAssistantShell(child: DashboardScreen());
+        }
+
+        if (widget.showLandingWhenSignedOut) {
+          return const LandingScreen();
         }
 
         return const LoginScreen();

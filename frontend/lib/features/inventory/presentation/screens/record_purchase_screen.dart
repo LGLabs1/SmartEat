@@ -24,10 +24,8 @@ class _RecordLine {
   final TextEditingController costController;
 
   _RecordLine(this.item, {required this.included})
-      : qtyController =
-            TextEditingController(text: _formatNum(item.qty)),
-        costController =
-            TextEditingController(text: _formatNum(item.unitCost));
+      : qtyController = TextEditingController(text: _formatNum(item.qty)),
+        costController = TextEditingController(text: _formatNum(item.unitCost));
 
   static String _formatNum(double v) =>
       v % 1 == 0 ? v.toInt().toString() : v.toString();
@@ -75,11 +73,9 @@ class _RecordPurchaseScreenState extends State<RecordPurchaseScreen> {
   String _formatCurrency(double amount) =>
       NumberFormat.currency(symbol: '₱', decimalDigits: 2).format(amount);
 
-  List<_RecordLine> get _selected =>
-      _lines.where((l) => l.included).toList();
+  List<_RecordLine> get _selected => _lines.where((l) => l.included).toList();
 
-  double get _total =>
-      _selected.fold(0.0, (sum, l) => sum + l.lineCost);
+  double get _total => _selected.fold(0.0, (sum, l) => sum + l.lineCost);
 
   bool get _isValid =>
       _selected.isNotEmpty && _selected.every((l) => l.qty > 0);
@@ -142,8 +138,7 @@ class _RecordPurchaseScreenState extends State<RecordPurchaseScreen> {
                       const Spacer(),
                       TextButton(
                         onPressed: () => setState(() {
-                          final allOn =
-                              _lines.every((l) => l.included);
+                          final allOn = _lines.every((l) => l.included);
                           for (final l in _lines) {
                             l.included = !allOn;
                           }
@@ -268,8 +263,10 @@ class _RecordPurchaseScreenState extends State<RecordPurchaseScreen> {
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.symmetric(vertical: 4),
-      decoration: const BoxDecoration(
-        border: Border(bottom: BorderSide(color: Color(0x1F000000))),
+      decoration: BoxDecoration(
+        border: Border(
+          bottom: BorderSide(color: Colors.white.withValues(alpha: 0.08)),
+        ),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -288,9 +285,7 @@ class _RecordPurchaseScreenState extends State<RecordPurchaseScreen> {
                   overflow: TextOverflow.ellipsis,
                   style: theme.textTheme.bodyMedium?.copyWith(
                     fontWeight: FontWeight.w600,
-                    color: disabled
-                        ? theme.colorScheme.onSurfaceVariant
-                        : null,
+                    color: disabled ? theme.colorScheme.onSurfaceVariant : null,
                   ),
                 ),
               ),
@@ -298,9 +293,7 @@ class _RecordPurchaseScreenState extends State<RecordPurchaseScreen> {
                 _formatCurrency(l.lineCost),
                 style: theme.textTheme.bodyMedium?.copyWith(
                   fontWeight: FontWeight.bold,
-                  color: disabled
-                      ? theme.colorScheme.onSurfaceVariant
-                      : null,
+                  color: disabled ? theme.colorScheme.onSurfaceVariant : null,
                 ),
               ),
             ],
@@ -314,11 +307,10 @@ class _RecordPurchaseScreenState extends State<RecordPurchaseScreen> {
                   child: TextField(
                     controller: l.qtyController,
                     enabled: l.included,
-                    keyboardType: const TextInputType.numberWithOptions(
-                        decimal: true),
+                    keyboardType:
+                        const TextInputType.numberWithOptions(decimal: true),
                     inputFormatters: [
-                      FilteringTextInputFormatter.allow(
-                          RegExp(r'^\d*\.?\d*')),
+                      FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d*')),
                     ],
                     onChanged: (_) => setState(() {}),
                     decoration: InputDecoration(
@@ -338,19 +330,18 @@ class _RecordPurchaseScreenState extends State<RecordPurchaseScreen> {
                   child: TextField(
                     controller: l.costController,
                     enabled: l.included,
-                    keyboardType: const TextInputType.numberWithOptions(
-                        decimal: true),
+                    keyboardType:
+                        const TextInputType.numberWithOptions(decimal: true),
                     inputFormatters: [
-                      FilteringTextInputFormatter.allow(
-                          RegExp(r'^\d*\.?\d*')),
+                      FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d*')),
                     ],
                     onChanged: (_) => setState(() {}),
                     decoration: const InputDecoration(
                       isDense: true,
                       labelText: 'Unit cost (₱)',
                       border: OutlineInputBorder(),
-                      contentPadding: EdgeInsets.symmetric(
-                          horizontal: 8, vertical: 8),
+                      contentPadding:
+                          EdgeInsets.symmetric(horizontal: 8, vertical: 8),
                     ),
                   ),
                 ),

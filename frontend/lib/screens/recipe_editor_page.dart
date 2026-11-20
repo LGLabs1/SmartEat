@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../features/inventory/domain/services/recipe_consumption.dart';
+import '../features/inventory/domain/services/unit_conversion.dart';
 import '../services/firebase_service.dart';
 import '../theme.dart';
+import '../widgets/dashboard/section_card.dart';
 
 class RecipeEditorPage extends StatefulWidget {
   final Map<String, dynamic>? recipe;
@@ -16,7 +19,6 @@ class _RecipeEditorPageState extends State<RecipeEditorPage> {
   final _formKey = GlobalKey<FormState>();
   final _nameController = TextEditingController();
   final _descController = TextEditingController();
-  final _batchYieldController = TextEditingController(text: '1');
 
   List<Map<String, dynamic>> _ingredients = [];
   List<Map<String, dynamic>> _inventoryItems = [];
@@ -31,18 +33,17 @@ class _RecipeEditorPageState extends State<RecipeEditorPage> {
     super.initState();
     final recipe = widget.recipe;
     if (recipe != null) {
-      _nameController.text = (recipe['name'] ?? '').toString();
-      _descController.text = (recipe['description'] ?? '').toString();
-      _batchYieldController.text =
-          (recipe['batchYield'] ?? recipe['baseServings'] ?? 1).toString();
-      final ingredients = recipe['ingredients'];
+      final normalized = RecipeConsumption.normalizeRecipe(recipe);
+      _nameController.text = (normalized['name'] ?? '').toString();
+      _descController.text = (normalized['description'] ?? '').toString();
+      final ingredients = normalized['ingredients'];
       if (ingredients is List) {
         _ingredients = ingredients
             .whereType<Map>()
             .map((e) => Map<String, dynamic>.from(e))
             .toList();
       }
-      final linked = recipe['linkedMenuItemIds'];
+      final linked = normalized['linkedMenuItemIds'];
       if (linked is List) {
         _selectedMenuItemIds = linked.map((e) => e.toString()).toList();
       }
@@ -54,7 +55,6 @@ class _RecipeEditorPageState extends State<RecipeEditorPage> {
   void dispose() {
     _nameController.dispose();
     _descController.dispose();
-    _batchYieldController.dispose();
     super.dispose();
   }
 
@@ -75,29 +75,69 @@ class _RecipeEditorPageState extends State<RecipeEditorPage> {
   }
 
   void _recomputeCost() {
-    final recipeData = {
-      'ingredients': _ingredients,
-      'batchYield': double.tryParse(_batchYieldController.text) ?? 1.0,
-    };
-    final computed = FirebaseService.computeRecipeCostTotals(recipeData);
-    setState(() {
-      _ingredients = List<Map<String, dynamic>>.from(
-          computed['ingredients'] ?? _ingredients);
-    });
+    final updated = <Map<String, dynamic>>[];
+    for (final raw in _ingredients) {
+      final ingredient = Map<String, dynamic>.from(raw);
+      final qtyRaw = ingredient['quantityPerServing'] ?? ingredient['quantity'];
+      final qty = qtyRaw is num
+          ? qtyRaw.toDouble()
+          : double.tryParse(qtyRaw?.toString() ?? '') ?? 0.0;
+      final unitCostRaw = ingredient['unitCost'];
+      final unitCost = unitCostRaw is num
+          ? unitCostRaw.toDouble()
+          : double.tryParse(unitCostRaw?.toString() ?? '') ?? 0.0;
+      ingredient['quantity'] = qty;
+      ingredient['quantityPerServing'] = qty;
+      ingredient['unitCost'] = unitCost;
+      ingredient['totalCost'] = qty * unitCost;
+      updated.add(ingredient);
+    }
+    setState(() => _ingredients = updated);
   }
 
-  double get _batchCost {
-    double sum = 0;
-    for (final ing in _ingredients) {
-      sum += (ing['totalCost'] as num?)?.toDouble() ?? 0.0;
+  double get _costPerServing {
+    var sum = 0.0;
+    for (final ingredient in _ingredients) {
+      final qtyRaw = ingredient['quantityPerServing'] ?? ingredient['quantity'];
+      final qty = qtyRaw is num
+          ? qtyRaw.toDouble()
+          : double.tryParse(qtyRaw?.toString() ?? '') ?? 0.0;
+      final unitCostRaw = ingredient['unitCost'];
+      final unitCost = unitCostRaw is num
+          ? unitCostRaw.toDouble()
+          : double.tryParse(unitCostRaw?.toString() ?? '') ?? 0.0;
+      sum += qty * unitCost;
     }
     return sum;
   }
 
-  double get _costPerServing {
-    final y = double.tryParse(_batchYieldController.text) ?? 1.0;
-    if (y <= 0) return 0;
-    return _batchCost / y;
+  Map<String, dynamic>? _inventoryForIngredient(
+      Map<String, dynamic> ingredient) {
+    final id = (ingredient['inventoryItemId'] ?? '').toString().trim();
+    if (id.isNotEmpty) {
+      for (final item in _inventoryItems) {
+        if ((item['id'] ?? '').toString() == id) return item;
+      }
+    }
+    final name = (ingredient['name'] ?? '').toString().trim().toLowerCase();
+    if (name.isEmpty) return null;
+    for (final item in _inventoryItems) {
+      if ((item['name'] ?? '').toString().trim().toLowerCase() == name) {
+        return item;
+      }
+    }
+    return null;
+  }
+
+  double _recipeUnitCost(Map<String, dynamic> inventoryItem, String unit) {
+    try {
+      return RecipeConsumption.costPerRecipeUnit(
+        inventoryItem: inventoryItem,
+        recipeUnit: unit,
+      );
+    } catch (_) {
+      return (inventoryItem['unitCost'] as num?)?.toDouble() ?? 0.0;
+    }
   }
 
   Future<void> _addFromInventory() async {
@@ -112,22 +152,27 @@ class _RecipeEditorPageState extends State<RecipeEditorPage> {
         (i) => id != null && i['inventoryItemId']?.toString() == id);
     if (existingIndex >= 0) {
       setState(() {
-        _ingredients[existingIndex]['quantity'] =
-            ((_ingredients[existingIndex]['quantity'] as num?)?.toDouble() ??
-                    0) +
-                1;
+        final current =
+            (_ingredients[existingIndex]['quantityPerServing'] as num?)
+                    ?.toDouble() ??
+                1.0;
+        _ingredients[existingIndex]['quantityPerServing'] = current + 1;
+        _ingredients[existingIndex]['quantity'] = current + 1;
       });
     } else {
+      final unit = (selected['unit'] ?? '').toString();
       setState(() {
         _ingredients.add({
           'inventoryItemId': selected['id'],
           'name': selected['name'],
           'quantity': 1.0,
-          'unit': selected['unit'] ?? '',
-          'unitCost': (selected['unitCost'] as num?)?.toDouble() ?? 0.0,
+          'quantityPerServing': 1.0,
+          'unit': unit,
+          'unitCost': _recipeUnitCost(selected, unit),
           'totalCost': 0.0,
           'isAutoCreated': false,
           'inventoryCategory': selected['category'],
+          'inventoryUnit': unit,
         });
       });
     }
@@ -150,26 +195,28 @@ class _RecipeEditorPageState extends State<RecipeEditorPage> {
         notes: result['notes'],
       );
       if (!mounted) return;
+      final unit = (created['unit'] ?? result['unit'] ?? '').toString();
       setState(() {
         _ingredients.add({
           'inventoryItemId': created['id'],
           'name': created['name'],
           'quantity': 1.0,
-          'unit': created['unit'] ?? result['unit'] ?? '',
-          'unitCost': (created['unitCost'] as num?)?.toDouble() ??
-              (result['unitCost'] as num).toDouble(),
+          'quantityPerServing': 1.0,
+          'unit': unit,
+          'unitCost': _recipeUnitCost(created, unit),
           'totalCost': 0.0,
           'isAutoCreated': created['isAutoCreated'] == true ||
               created['createdBy'] == 'recipe_auto_create',
           'inventoryCategory': result['category'],
+          'inventoryUnit': unit,
         });
       });
       await _loadData();
       _recomputeCost();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content: Text(
-                'Inventory item created as recipe-pending and added.')));
+            content:
+                Text('Inventory item created as recipe-pending and added.')));
       }
     } catch (e) {
       if (mounted) {
@@ -179,6 +226,17 @@ class _RecipeEditorPageState extends State<RecipeEditorPage> {
     }
   }
 
+  void _changeIngredientUnit(Map<String, dynamic> ingredient, String unit) {
+    final inventoryItem = _inventoryForIngredient(ingredient);
+    setState(() {
+      ingredient['unit'] = unit;
+      if (inventoryItem != null) {
+        ingredient['unitCost'] = _recipeUnitCost(inventoryItem, unit);
+      }
+    });
+    _recomputeCost();
+  }
+
   Future<void> _saveRecipe() async {
     if (!_formKey.currentState!.validate()) return;
     if (_ingredients.isEmpty) {
@@ -186,15 +244,30 @@ class _RecipeEditorPageState extends State<RecipeEditorPage> {
           const SnackBar(content: Text('Add at least one ingredient')));
       return;
     }
+    final invalidIngredient = _ingredients.any((ingredient) {
+      final qtyRaw = ingredient['quantityPerServing'] ?? ingredient['quantity'];
+      final qty = qtyRaw is num
+          ? qtyRaw.toDouble()
+          : double.tryParse(qtyRaw?.toString() ?? '') ?? 0.0;
+      return qty <= 0;
+    });
+    if (invalidIngredient) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Each ingredient needs a quantity per serving')));
+      return;
+    }
+
     setState(() => _isSaving = true);
     _recomputeCost();
+    final cost = _costPerServing;
     final recipeData = {
       'name': _nameController.text.trim(),
       'description': _descController.text.trim(),
-      'batchYield': double.tryParse(_batchYieldController.text) ?? 1.0,
+      'baseServings': 1.0,
+      'batchYield': 1.0,
       'ingredients': _ingredients,
-      'batchCost': _batchCost,
-      'costPerServing': _costPerServing,
+      'batchCost': cost,
+      'costPerServing': cost,
       'costingMethod': 'recipe',
       'costSource': 'recipe_calculated',
       'linkedMenuItemIds': _selectedMenuItemIds,
@@ -208,16 +281,14 @@ class _RecipeEditorPageState extends State<RecipeEditorPage> {
         final created = await FirebaseService.createRecipe(recipeData);
         recipeId = created['id'].toString();
       }
-      if (_selectedMenuItemIds.isNotEmpty) {
-        await FirebaseService.linkRecipeToMenuItems(
-          recipeId: recipeId,
-          menuItemIds: _selectedMenuItemIds,
-          recipeCostData: {
-            'batchCost': _batchCost,
-            'costPerServing': _costPerServing
-          },
-        );
-      }
+      await FirebaseService.linkRecipeToMenuItems(
+        recipeId: recipeId,
+        menuItemIds: _selectedMenuItemIds,
+        recipeCostData: {
+          'batchCost': cost,
+          'costPerServing': cost,
+        },
+      );
       if (mounted) {
         ScaffoldMessenger.of(context)
             .showSnackBar(const SnackBar(content: Text('Recipe saved')));
@@ -237,208 +308,250 @@ class _RecipeEditorPageState extends State<RecipeEditorPage> {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final isEdit = widget.recipe != null;
-    return Scaffold(
-      backgroundColor: AppTheme.background,
-      appBar: AppBar(
-        title: Text(isEdit ? 'Edit Recipe' : 'New Recipe'),
-        actions: [
-          Padding(
-            padding: const EdgeInsets.only(right: 8),
-            child: FilledButton.icon(
-              onPressed: _isSaving ? null : _saveRecipe,
-              icon: _isSaving
-                  ? const SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2))
-                  : const Icon(Icons.check, size: 18),
-              label: Text(_isSaving ? 'Saving' : 'Save'),
+    return Theme(
+      data: AppTheme.dashboardTheme,
+      child: Scaffold(
+        backgroundColor: AppTheme.sageNavy,
+        appBar: AppBar(
+          backgroundColor: Colors.transparent,
+          title: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(isEdit ? 'Edit Recipe' : 'New Recipe'),
+              Text(
+                'Per-serving costing',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w500,
+                  color: scheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            Padding(
+              padding: const EdgeInsets.only(right: 12),
+              child: FilledButton.icon(
+                onPressed: _isSaving ? null : _saveRecipe,
+                icon: _isSaving
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.check, size: 18),
+                label: Text(_isSaving ? 'Saving' : 'Save'),
+              ),
             ),
+          ],
+        ),
+        body: Container(
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [AppTheme.sageNavy, AppTheme.sagePanel],
+            ),
+          ),
+          child: _isLoading
+              ? const Center(child: CircularProgressIndicator())
+              : Form(
+                  key: _formKey,
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      final wide = constraints.maxWidth >= 980;
+                      final content = [
+                        _sectionCard(
+                          title: 'Recipe details',
+                          icon: Icons.edit_note_rounded,
+                          child: Column(
+                            children: [
+                              TextFormField(
+                                controller: _nameController,
+                                decoration: const InputDecoration(
+                                  labelText: 'Recipe name *',
+                                  prefixIcon: Icon(Icons.restaurant_outlined),
+                                ),
+                                validator: (v) => v == null || v.trim().isEmpty
+                                    ? 'Required'
+                                    : null,
+                              ),
+                              const SizedBox(height: 12),
+                              TextFormField(
+                                controller: _descController,
+                                decoration: const InputDecoration(
+                                  labelText: 'Description',
+                                  prefixIcon: Icon(Icons.notes_outlined),
+                                ),
+                                maxLines: 2,
+                              ),
+                              const SizedBox(height: 12),
+                              Container(
+                                width: double.infinity,
+                                padding: const EdgeInsets.all(12),
+                                decoration: BoxDecoration(
+                                  color:
+                                      AppTheme.sageBlue.withValues(alpha: .1),
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(
+                                    color: AppTheme.sageBlue
+                                        .withValues(alpha: .22),
+                                  ),
+                                ),
+                                child: Row(
+                                  children: [
+                                    const Icon(Icons.percent_rounded,
+                                        size: 18, color: AppTheme.sageCyan),
+                                    const SizedBox(width: 10),
+                                    Expanded(
+                                      child: Text(
+                                        'Quantities and costs are for one serving. SmartEat multiplies by ordered quantity when the order is completed.',
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          color: scheme.onSurfaceVariant,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 14),
+                        _sectionCard(
+                          title: 'Ingredients',
+                          icon: Icons.inventory_2_outlined,
+                          trailing: Wrap(
+                            spacing: 6,
+                            runSpacing: 6,
+                            children: [
+                              OutlinedButton.icon(
+                                onPressed: _addFromInventory,
+                                icon: const Icon(Icons.search, size: 16),
+                                label: const Text('From inventory'),
+                              ),
+                              FilledButton.tonalIcon(
+                                onPressed: _createNewItem,
+                                icon: const Icon(Icons.add, size: 16),
+                                label: const Text('New item'),
+                              ),
+                            ],
+                          ),
+                          child: _ingredients.isEmpty
+                              ? _emptyIngredients(scheme)
+                              : Column(
+                                  children: [
+                                    for (int i = 0;
+                                        i < _ingredients.length;
+                                        i++)
+                                      _IngredientRow(
+                                        key: ValueKey(
+                                            '${_ingredients[i]['inventoryItemId'] ?? _ingredients[i]['name']}_$i'),
+                                        ingredient: _ingredients[i],
+                                        onChanged: _recomputeCost,
+                                        onUnitChanged: (unit) =>
+                                            _changeIngredientUnit(
+                                                _ingredients[i], unit),
+                                        onRemove: () {
+                                          setState(
+                                              () => _ingredients.removeAt(i));
+                                          _recomputeCost();
+                                        },
+                                      ),
+                                  ],
+                                ),
+                        ),
+                        const SizedBox(height: 14),
+                        _buildLinkCard(scheme),
+                      ];
+                      final side = [
+                        _buildCostCard(scheme),
+                        const SizedBox(height: 14),
+                        _sectionCard(
+                          title: 'Inventory & menu',
+                          icon: Icons.link_outlined,
+                          child: const Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              _HintRow(
+                                icon: Icons.inventory_2_outlined,
+                                text:
+                                    'Unit cost comes from inventory and converts between compatible mass or volume units.',
+                              ),
+                              SizedBox(height: 8),
+                              _HintRow(
+                                icon: Icons.pending_actions_outlined,
+                                text:
+                                    'Stock is deducted only when an order is completed, never when it is created.',
+                              ),
+                              SizedBox(height: 8),
+                              _HintRow(
+                                icon: Icons.restaurant_menu_outlined,
+                                text:
+                                    'A menu item uses either this recipe or a direct inventory link, never both.',
+                              ),
+                            ],
+                          ),
+                        ),
+                      ];
+                      return SingleChildScrollView(
+                        padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+                        child: wide
+                            ? Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Expanded(
+                                      flex: 7,
+                                      child: Column(children: content)),
+                                  const SizedBox(width: 14),
+                                  Expanded(
+                                      flex: 4, child: Column(children: side)),
+                                ],
+                              )
+                            : Column(
+                                children: [
+                                  ...content,
+                                  const SizedBox(height: 14),
+                                  ...side,
+                                ],
+                              ),
+                      );
+                    },
+                  ),
+                ),
+        ),
+      ),
+    );
+  }
+
+  Widget _emptyIngredients(ColorScheme scheme) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: AppTheme.sagePanel.withValues(alpha: .55),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.white.withValues(alpha: .08)),
+      ),
+      child: Column(
+        children: [
+          Icon(Icons.kitchen_outlined, color: scheme.onSurfaceVariant),
+          const SizedBox(height: 8),
+          const Text('No ingredients yet',
+              style: TextStyle(fontWeight: FontWeight.w700)),
+          const SizedBox(height: 4),
+          Text(
+            'Add from inventory or create a new recipe-pending item.',
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
           ),
         ],
       ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : Form(
-              key: _formKey,
-              child: LayoutBuilder(
-                builder: (context, constraints) {
-                  final wide = constraints.maxWidth >= 980;
-                  final content = [
-                    _sectionCard(
-                      title: 'Recipe details',
-                      icon: Icons.edit_note_rounded,
-                      child: Column(
-                        children: [
-                          TextFormField(
-                            controller: _nameController,
-                            decoration: const InputDecoration(
-                              labelText: 'Recipe name *',
-                              prefixIcon: Icon(Icons.restaurant_outlined),
-                            ),
-                            validator: (v) =>
-                                v == null || v.trim().isEmpty ? 'Required' : null,
-                          ),
-                          const SizedBox(height: 12),
-                          TextFormField(
-                            controller: _descController,
-                            decoration: const InputDecoration(
-                              labelText: 'Description',
-                              prefixIcon: Icon(Icons.notes_outlined),
-                            ),
-                            maxLines: 2,
-                          ),
-                          const SizedBox(height: 12),
-                          TextFormField(
-                            controller: _batchYieldController,
-                            decoration: const InputDecoration(
-                              labelText: 'Batch yield (servings) *',
-                              helperText:
-                                  'How many servings this batch produces',
-                              prefixIcon: Icon(Icons.pie_chart_outline),
-                            ),
-                            keyboardType: const TextInputType.numberWithOptions(
-                                decimal: true),
-                            inputFormatters: [
-                              FilteringTextInputFormatter.allow(
-                                  RegExp(r'^\d*\.?\d*'))
-                            ],
-                            validator: (v) {
-                              final d = double.tryParse(v ?? '');
-                              if (d == null || d <= 0) return 'Must be > 0';
-                              return null;
-                            },
-                            onChanged: (_) => _recomputeCost(),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 14),
-                    _sectionCard(
-                      title: 'Ingredients',
-                      icon: Icons.inventory_2_outlined,
-                      trailing: Wrap(
-                        spacing: 6,
-                        runSpacing: 6,
-                        children: [
-                          OutlinedButton.icon(
-                            onPressed: _addFromInventory,
-                            icon: const Icon(Icons.search, size: 16),
-                            label: const Text('From inventory'),
-                          ),
-                          FilledButton.tonalIcon(
-                            onPressed: _createNewItem,
-                            icon: const Icon(Icons.add, size: 16),
-                            label: const Text('New item'),
-                          ),
-                        ],
-                      ),
-                      child: _ingredients.isEmpty
-                          ? Container(
-                              width: double.infinity,
-                              padding: const EdgeInsets.all(18),
-                              decoration: BoxDecoration(
-                                color: scheme.surfaceContainerHighest
-                                    .withValues(alpha: 0.35),
-                                borderRadius: BorderRadius.circular(14),
-                                border:
-                                    Border.all(color: scheme.outlineVariant),
-                              ),
-                              child: Column(
-                                children: [
-                                  Icon(Icons.kitchen_outlined,
-                                      color: scheme.outline),
-                                  const SizedBox(height: 8),
-                                  const Text('No ingredients yet',
-                                      style: TextStyle(
-                                          fontWeight: FontWeight.w700)),
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    'Add from inventory or create a new recipe-pending item.',
-                                    textAlign: TextAlign.center,
-                                    style: TextStyle(
-                                        fontSize: 12,
-                                        color: scheme.onSurfaceVariant),
-                                  ),
-                                ],
-                              ),
-                            )
-                          : Column(
-                              children: [
-                                for (int i = 0; i < _ingredients.length; i++)
-                                  _IngredientRow(
-                                    key: ValueKey(
-                                        '${_ingredients[i]['inventoryItemId'] ?? _ingredients[i]['name']}_$i'),
-                                    ingredient: _ingredients[i],
-                                    onChanged: () {
-                                      _recomputeCost();
-                                      setState(() {});
-                                    },
-                                    onRemove: () {
-                                      setState(() => _ingredients.removeAt(i));
-                                      _recomputeCost();
-                                    },
-                                  ),
-                              ],
-                            ),
-                    ),
-                    const SizedBox(height: 14),
-                    _buildLinkCard(scheme),
-                  ];
-                  final side = [
-                    _buildCostCard(scheme),
-                    const SizedBox(height: 14),
-                    _sectionCard(
-                      title: 'Inventory & menu',
-                      icon: Icons.link_outlined,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: const [
-                          _HintRow(
-                              icon: Icons.inventory_2_outlined,
-                              text:
-                                  'Ingredient unit cost comes from inventory; override per recipe as needed.'),
-                          SizedBox(height: 8),
-                          _HintRow(
-                              icon: Icons.pending_actions_outlined,
-                              text:
-                                  'New items are created as recipe-pending (not a direct deduction flow).'),
-                          SizedBox(height: 8),
-                          _HintRow(
-                              icon: Icons.restaurant_menu_outlined,
-                              text:
-                                  'Linked menu items use recipe costing (separate from Actual COGS).'),
-                        ],
-                      ),
-                    ),
-                  ];
-                  return SingleChildScrollView(
-                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
-                    child: wide
-                        ? Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Expanded(flex: 7, child: Column(children: content)),
-                              const SizedBox(width: 14),
-                              Expanded(flex: 4, child: Column(children: side)),
-                            ],
-                          )
-                        : Column(
-                            children: [
-                              ...content,
-                              const SizedBox(height: 14),
-                              ...side
-                            ],
-                          ),
-                  );
-                },
-              ),
-            ),
     );
   }
 
   Widget _buildCostCard(ColorScheme scheme) {
-    final y = double.tryParse(_batchYieldController.text) ?? 1.0;
     return _sectionCard(
       title: 'Costing',
       icon: Icons.calculate_outlined,
@@ -450,27 +563,30 @@ class _RecipeEditorPageState extends State<RecipeEditorPage> {
       child: Column(
         children: [
           _CostTile(
-              label: 'Batch cost',
-              value: '₱${_batchCost.toStringAsFixed(2)}',
-              color: AppTheme.primary,
-              icon: Icons.layers_outlined),
+            label: 'Cost / serving',
+            value: '₱${_costPerServing.toStringAsFixed(2)}',
+            color: AppTheme.sageSuccess,
+            icon: Icons.price_check_outlined,
+            emphasized: true,
+          ),
           const SizedBox(height: 8),
           _CostTile(
-              label: 'Batch yield',
-              value: '${y.toStringAsFixed(y % 1 == 0 ? 0 : 2)} servings',
-              color: scheme.secondary,
-              icon: Icons.pie_chart_outline),
+            label: 'Ingredient lines',
+            value: '${_ingredients.length}',
+            color: AppTheme.sageCyan,
+            icon: Icons.format_list_numbered,
+          ),
           const SizedBox(height: 8),
           _CostTile(
-              label: 'Cost / serving',
-              value: '₱${_costPerServing.toStringAsFixed(2)}',
-              color: AppTheme.success,
-              icon: Icons.price_check_outlined,
-              emphasized: true),
+            label: 'Linked menu',
+            value: '${_selectedMenuItemIds.length}',
+            color: AppTheme.sageBlue,
+            icon: Icons.restaurant_menu_outlined,
+          ),
           if (_selectedMenuItemIds.isNotEmpty) ...[
             const SizedBox(height: 10),
             Text(
-              'Saving syncs costing to ${_selectedMenuItemIds.length} linked menu item${_selectedMenuItemIds.length == 1 ? '' : 's'}.',
+              'Saving syncs per-serving costing to ${_selectedMenuItemIds.length} linked menu item${_selectedMenuItemIds.length == 1 ? '' : 's'}.',
               style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
             ),
           ],
@@ -494,14 +610,17 @@ class _RecipeEditorPageState extends State<RecipeEditorPage> {
           ? Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
               decoration: BoxDecoration(
-                color: AppTheme.primary.withValues(alpha: 0.12),
+                color: AppTheme.sageBlue.withValues(alpha: .14),
                 borderRadius: BorderRadius.circular(999),
               ),
-              child: Text('${_selectedMenuItemIds.length} selected',
-                  style: const TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                      color: AppTheme.primary)),
+              child: Text(
+                '${_selectedMenuItemIds.length} selected',
+                style: const TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  color: AppTheme.sageCyan,
+                ),
+              ),
             )
           : null,
       child: Column(
@@ -529,12 +648,17 @@ class _RecipeEditorPageState extends State<RecipeEditorPage> {
                 final selected = _selectedMenuItemIds.contains(id);
                 final price = (menuItem['price'] as num?)?.toDouble();
                 final name = (menuItem['name'] ?? '').toString();
+                final hasDirectLink =
+                    (menuItem['inventoryItemId'] ?? '').toString().isNotEmpty;
                 return FilterChip(
                   label: Text(price != null
                       ? '$name  ·  ₱${price.toStringAsFixed(0)}'
                       : name),
                   selected: selected,
                   showCheckmark: true,
+                  avatar: hasDirectLink && !selected
+                      ? const Icon(Icons.inventory_2_outlined, size: 15)
+                      : null,
                   onSelected: (val) {
                     setState(() {
                       if (val) {
@@ -549,45 +673,31 @@ class _RecipeEditorPageState extends State<RecipeEditorPage> {
                 );
               }).toList(),
             ),
+          if (filtered.any(
+              (m) => (m['inventoryItemId'] ?? '').toString().isNotEmpty)) ...[
+            const SizedBox(height: 10),
+            Text(
+              'Selecting a directly linked menu item replaces its inventory link with this recipe.',
+              style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
+            ),
+          ],
         ],
       ),
     );
   }
 
-  Widget _sectionCard(
-      {required String title,
-      required IconData icon,
-      required Widget child,
-      Widget? trailing}) {
-    final scheme = Theme.of(context).colorScheme;
-    return Card(
-      elevation: 0,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(18),
-        side: BorderSide(color: scheme.outlineVariant),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(icon, size: 18, color: AppTheme.primary),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(title,
-                      style: const TextStyle(
-                          fontSize: 16, fontWeight: FontWeight.w800)),
-                ),
-                if (trailing != null) trailing,
-              ],
-            ),
-            const SizedBox(height: 14),
-            child,
-          ],
-        ),
-      ),
+  Widget _sectionCard({
+    required String title,
+    required IconData icon,
+    required Widget child,
+    Widget? trailing,
+  }) {
+    return SectionCard(
+      title: title,
+      icon: icon,
+      iconColor: AppTheme.sageCyan,
+      action: trailing,
+      child: child,
     );
   }
 }
@@ -597,28 +707,109 @@ class _IngredientRow extends StatelessWidget {
     super.key,
     required this.ingredient,
     required this.onChanged,
+    required this.onUnitChanged,
     required this.onRemove,
   });
 
   final Map<String, dynamic> ingredient;
   final VoidCallback onChanged;
+  final ValueChanged<String> onUnitChanged;
   final VoidCallback onRemove;
+
+  static const _units = [
+    'g',
+    'kg',
+    'ml',
+    'L',
+    'pcs',
+    'pack',
+    'box',
+    'bottle',
+    'can',
+  ];
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final qty = (ingredient['quantity'] as num?)?.toDouble() ?? 0.0;
-    final unitCost = (ingredient['unitCost'] as num?)?.toDouble() ?? 0.0;
+    final qtyRaw = ingredient['quantityPerServing'] ?? ingredient['quantity'];
+    final qty = qtyRaw is num
+        ? qtyRaw.toDouble()
+        : double.tryParse(qtyRaw?.toString() ?? '') ?? 0.0;
+    final unitCostRaw = ingredient['unitCost'];
+    final unitCost = unitCostRaw is num
+        ? unitCostRaw.toDouble()
+        : double.tryParse(unitCostRaw?.toString() ?? '') ?? 0.0;
     final line = qty * unitCost;
     final pending = ingredient['isAutoCreated'] == true ||
         ingredient['createdBy'] == 'recipe_auto_create';
+    final unit = (ingredient['unit'] ?? '').toString();
+    final inventoryUnit = (ingredient['inventoryUnit'] ?? '').toString();
+    final mismatch = unit.isNotEmpty &&
+        inventoryUnit.isNotEmpty &&
+        !UnitConversion.isCompatible(unit, inventoryUnit);
+    final units = <String>{..._units, if (unit.isNotEmpty) unit}.toList();
+
+    final qtyField = TextFormField(
+      key: ValueKey(
+          'qty_${ingredient['inventoryItemId']}_${ingredient['name']}'),
+      initialValue: qty.toString(),
+      decoration: const InputDecoration(
+        labelText: 'Qty / serving',
+        isDense: true,
+      ),
+      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+      inputFormatters: [
+        FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d*')),
+      ],
+      onChanged: (v) {
+        final value = double.tryParse(v) ?? 0;
+        ingredient['quantity'] = value;
+        ingredient['quantityPerServing'] = value;
+        onChanged();
+      },
+    );
+
+    final unitField = DropdownButtonFormField<String>(
+      key: ValueKey(
+          'unit_${ingredient['inventoryItemId']}_${ingredient['name']}'),
+      initialValue: units.contains(unit) ? unit : null,
+      decoration: const InputDecoration(
+        labelText: 'Recipe unit',
+        isDense: true,
+      ),
+      items: units
+          .map((value) => DropdownMenuItem(value: value, child: Text(value)))
+          .toList(),
+      onChanged: (value) {
+        if (value != null) onUnitChanged(value);
+      },
+    );
+
+    final costField = TextFormField(
+      key: ValueKey(
+          'cost_${ingredient['inventoryItemId']}_${ingredient['name']}'),
+      initialValue: unitCost.toString(),
+      decoration: const InputDecoration(
+        labelText: 'Cost / unit (₱)',
+        isDense: true,
+      ),
+      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+      inputFormatters: [
+        FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d*')),
+      ],
+      onChanged: (v) {
+        ingredient['unitCost'] = double.tryParse(v) ?? 0;
+        onChanged();
+      },
+    );
+
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: scheme.surface,
+        color: AppTheme.sagePanel.withValues(alpha: .55),
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: scheme.outlineVariant),
+        border: Border.all(color: Colors.white.withValues(alpha: .08)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -633,25 +824,38 @@ class _IngredientRow extends StatelessWidget {
                       (ingredient['name'] ?? 'Ingredient').toString(),
                       style: const TextStyle(fontWeight: FontWeight.w700),
                     ),
-                    const SizedBox(height: 2),
+                    const SizedBox(height: 4),
                     Wrap(
                       spacing: 6,
                       runSpacing: 4,
                       children: [
                         _MiniTag(
-                            label: (ingredient['unit'] ?? '').toString(),
-                            color: scheme.secondary),
+                          label: unit,
+                          color: AppTheme.sageCyan,
+                        ),
                         if (pending)
                           const _MiniTag(
-                              label: 'Recipe-pending', color: AppTheme.warning),
+                            label: 'Recipe-pending',
+                            color: AppTheme.warning,
+                          ),
+                        if (mismatch)
+                          const _MiniTag(
+                            label: 'Unit mismatch',
+                            color: AppTheme.error,
+                          ),
                       ],
                     ),
                   ],
                 ),
               ),
-              Text('₱${line.toStringAsFixed(2)}',
-                  style: const TextStyle(
-                      fontWeight: FontWeight.w800, color: AppTheme.success)),
+              const SizedBox(width: 8),
+              Text(
+                '₱${line.toStringAsFixed(2)}',
+                style: const TextStyle(
+                  fontWeight: FontWeight.w800,
+                  color: AppTheme.sageSuccess,
+                ),
+              ),
               IconButton(
                 tooltip: 'Remove',
                 onPressed: onRemove,
@@ -661,47 +865,37 @@ class _IngredientRow extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 10),
-          Row(
-            children: [
-              Expanded(
-                child: TextFormField(
-                  key: ValueKey(
-                      'qty_${ingredient['inventoryItemId']}_${ingredient['name']}'),
-                  initialValue: qty.toString(),
-                  decoration: const InputDecoration(
-                      labelText: 'Qty / batch', isDense: true),
-                  keyboardType:
-                      const TextInputType.numberWithOptions(decimal: true),
-                  inputFormatters: [
-                    FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d*'))
+          LayoutBuilder(
+            builder: (context, constraints) {
+              if (constraints.maxWidth < 520) {
+                return Column(
+                  children: [
+                    qtyField,
+                    const SizedBox(height: 8),
+                    unitField,
+                    const SizedBox(height: 8),
+                    costField,
                   ],
-                  onChanged: (v) {
-                    ingredient['quantity'] = double.tryParse(v) ?? 0;
-                    onChanged();
-                  },
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: TextFormField(
-                  key: ValueKey(
-                      'cost_${ingredient['inventoryItemId']}_${ingredient['name']}'),
-                  initialValue: unitCost.toString(),
-                  decoration: const InputDecoration(
-                      labelText: 'Unit cost (₱)', isDense: true),
-                  keyboardType:
-                      const TextInputType.numberWithOptions(decimal: true),
-                  inputFormatters: [
-                    FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d*'))
-                  ],
-                  onChanged: (v) {
-                    ingredient['unitCost'] = double.tryParse(v) ?? 0;
-                    onChanged();
-                  },
-                ),
-              ),
-            ],
+                );
+              }
+              return Row(
+                children: [
+                  Expanded(child: qtyField),
+                  const SizedBox(width: 10),
+                  Expanded(child: unitField),
+                  const SizedBox(width: 10),
+                  Expanded(child: costField),
+                ],
+              );
+            },
           ),
+          if (mismatch) ...[
+            const SizedBox(height: 8),
+            Text(
+              'Recipe unit is incompatible with inventory unit $inventoryUnit. Use a mass or volume unit that matches.',
+              style: TextStyle(fontSize: 11, color: scheme.error),
+            ),
+          ],
         ],
       ),
     );
@@ -712,18 +906,24 @@ class _MiniTag extends StatelessWidget {
   const _MiniTag({required this.label, required this.color});
   final String label;
   final Color color;
+
   @override
   Widget build(BuildContext context) {
     if (label.isEmpty) return const SizedBox.shrink();
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
       decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.1),
+        color: color.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(999),
       ),
-      child: Text(label,
-          style: TextStyle(
-              fontSize: 10.5, fontWeight: FontWeight.w700, color: color)),
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: 10.5,
+          fontWeight: FontWeight.w700,
+          color: color,
+        ),
+      ),
     );
   }
 }
@@ -736,6 +936,7 @@ class _CostTile extends StatelessWidget {
     required this.icon,
     this.emphasized = false,
   });
+
   final String label;
   final String value;
   final Color color;
@@ -747,23 +948,26 @@ class _CostTile extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: color.withValues(alpha: emphasized ? 0.12 : 0.07),
+        color: color.withValues(alpha: emphasized ? 0.14 : 0.08),
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: color.withValues(alpha: 0.18)),
+        border: Border.all(color: color.withValues(alpha: 0.2)),
       ),
       child: Row(
         children: [
           Icon(icon, size: 18, color: color),
           const SizedBox(width: 10),
           Expanded(
-            child:
-                Text(label, style: const TextStyle(fontWeight: FontWeight.w600)),
+            child: Text(label,
+                style: const TextStyle(fontWeight: FontWeight.w600)),
           ),
-          Text(value,
-              style: TextStyle(
-                  fontSize: emphasized ? 18 : 15,
-                  fontWeight: FontWeight.w800,
-                  color: color)),
+          Text(
+            value,
+            style: TextStyle(
+              fontSize: emphasized ? 18 : 15,
+              fontWeight: FontWeight.w800,
+              color: color,
+            ),
+          ),
         ],
       ),
     );
@@ -774,6 +978,7 @@ class _HintRow extends StatelessWidget {
   const _HintRow({required this.icon, required this.text});
   final IconData icon;
   final String text;
+
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
@@ -783,9 +988,11 @@ class _HintRow extends StatelessWidget {
         Icon(icon, size: 16, color: scheme.onSurfaceVariant),
         const SizedBox(width: 8),
         Expanded(
-            child: Text(text,
-                style:
-                    TextStyle(fontSize: 12, color: scheme.onSurfaceVariant))),
+          child: Text(
+            text,
+            style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
+          ),
+        ),
       ],
     );
   }
@@ -853,9 +1060,9 @@ class _InventoryPickerDialogState extends State<_InventoryPickerDialog> {
                             contentPadding: EdgeInsets.zero,
                             leading: CircleAvatar(
                               backgroundColor:
-                                  AppTheme.primary.withValues(alpha: 0.12),
+                                  AppTheme.sageBlue.withValues(alpha: 0.14),
                               child: const Icon(Icons.inventory_2_outlined,
-                                  color: AppTheme.primary, size: 18),
+                                  color: AppTheme.sageCyan, size: 18),
                             ),
                             title: Text((item['name'] ?? '').toString()),
                             subtitle: Text(
@@ -882,7 +1089,8 @@ class _CreateInventoryItemDialog extends StatefulWidget {
       _CreateInventoryItemDialogState();
 }
 
-class _CreateInventoryItemDialogState extends State<_CreateInventoryItemDialog> {
+class _CreateInventoryItemDialogState
+    extends State<_CreateInventoryItemDialog> {
   final _formKey = GlobalKey<FormState>();
   final _nameController = TextEditingController();
   final _categoryController = TextEditingController();
@@ -892,7 +1100,15 @@ class _CreateInventoryItemDialogState extends State<_CreateInventoryItemDialog> 
   final _notesController = TextEditingController();
 
   final List<String> _units = const [
-    'kg', 'g', 'L', 'ml', 'pcs', 'pack', 'box', 'bottle', 'can'
+    'kg',
+    'g',
+    'L',
+    'ml',
+    'pcs',
+    'pack',
+    'box',
+    'bottle',
+    'can',
   ];
 
   @override
@@ -919,10 +1135,11 @@ class _CreateInventoryItemDialogState extends State<_CreateInventoryItemDialog> 
               mainAxisSize: MainAxisSize.min,
               children: [
                 Text(
-                  'Created items are marked recipe-pending so they don’t affect direct stock deduction until configured.',
+                  'Created items are marked recipe-pending so they do not affect direct stock deduction until configured.',
                   style: TextStyle(
-                      fontSize: 12,
-                      color: Theme.of(context).colorScheme.onSurfaceVariant),
+                    fontSize: 12,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
                 ),
                 const SizedBox(height: 12),
                 TextFormField(
@@ -955,7 +1172,7 @@ class _CreateInventoryItemDialogState extends State<_CreateInventoryItemDialog> 
                   keyboardType:
                       const TextInputType.numberWithOptions(decimal: true),
                   inputFormatters: [
-                    FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d*'))
+                    FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d*')),
                   ],
                   validator: (v) =>
                       double.tryParse(v ?? '') == null ? 'Required' : null,
@@ -967,7 +1184,7 @@ class _CreateInventoryItemDialogState extends State<_CreateInventoryItemDialog> 
                   keyboardType:
                       const TextInputType.numberWithOptions(decimal: true),
                   inputFormatters: [
-                    FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d*'))
+                    FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d*')),
                   ],
                 ),
                 const SizedBox(height: 10),

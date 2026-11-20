@@ -3,6 +3,7 @@ import 'package:intl/intl.dart';
 
 import '../../../../../models/inventory_item.dart';
 import '../../../../../services/api_service.dart';
+import '../../../../../theme.dart';
 
 class ItemDetailScreen extends StatefulWidget {
   final InventoryItem item;
@@ -27,8 +28,8 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
     try {
       final res = await ApiService.getIngredientUsageByMenuItem(days: 30);
       final data = res['data'] as Map<String, dynamic>? ?? const {};
-      final ingredients = List<Map<String, dynamic>>.from(
-          data['ingredients'] ?? const []);
+      final ingredients =
+          List<Map<String, dynamic>>.from(data['ingredients'] ?? const []);
       final match = ingredients.cast<Map<String, dynamic>?>().firstWhere(
             (i) =>
                 (i?['inventoryItemId'] ?? '').toString() == widget.item.id ||
@@ -67,14 +68,16 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
         : isLowStock
             ? Chip(
                 label: const Text('Low Stock'),
-                backgroundColor: Colors.orange.withValues(alpha: 0.1),
-                labelStyle: const TextStyle(color: Colors.orange, fontSize: 11),
+                backgroundColor: AppTheme.warning.withValues(alpha: 0.1),
+                labelStyle:
+                    const TextStyle(color: AppTheme.warning, fontSize: 11),
                 visualDensity: VisualDensity.compact,
               )
             : Chip(
                 label: const Text('In Stock'),
-                backgroundColor: Colors.green.withValues(alpha: 0.1),
-                labelStyle: const TextStyle(color: Colors.green, fontSize: 11),
+                backgroundColor: AppTheme.sageSuccess.withValues(alpha: 0.1),
+                labelStyle:
+                    const TextStyle(color: AppTheme.sageSuccess, fontSize: 11),
                 visualDensity: VisualDensity.compact,
               );
 
@@ -110,8 +113,9 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
                           isOutOfStock
                               ? theme.colorScheme.error.withValues(alpha: 0.08)
                               : isLowStock
-                                  ? Colors.orange.withValues(alpha: 0.08)
-                                  : Colors.green.withValues(alpha: 0.06),
+                                  ? AppTheme.warning.withValues(alpha: 0.08)
+                                  : AppTheme.sageSuccess
+                                      .withValues(alpha: 0.06),
                         ],
                       ),
                     ),
@@ -126,15 +130,18 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
                               CircleAvatar(
                                 radius: 20,
                                 backgroundColor: isOutOfStock
-                                    ? theme.colorScheme.error.withValues(alpha: 0.15)
+                                    ? theme.colorScheme.error
+                                        .withValues(alpha: 0.15)
                                     : isLowStock
-                                        ? Colors.orange.withValues(alpha: 0.15)
-                                        : theme.colorScheme.primary.withValues(alpha: 0.15),
+                                        ? AppTheme.warning
+                                            .withValues(alpha: 0.15)
+                                        : theme.colorScheme.primary
+                                            .withValues(alpha: 0.15),
                                 child: Icon(Icons.inventory_2_outlined,
                                     color: isOutOfStock
                                         ? theme.colorScheme.error
                                         : isLowStock
-                                            ? Colors.orange
+                                            ? AppTheme.warning
                                             : theme.colorScheme.primary,
                                     size: 20),
                               ),
@@ -146,33 +153,43 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
                                     Wrap(
                                       spacing: 6,
                                       runSpacing: 4,
-                                      crossAxisAlignment: WrapCrossAlignment.center,
+                                      crossAxisAlignment:
+                                          WrapCrossAlignment.center,
                                       children: [
                                         Text(
                                           item.name,
-                                          style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+                                          style: theme.textTheme.titleMedium
+                                              ?.copyWith(
+                                                  fontWeight: FontWeight.bold),
                                         ),
                                         statusChip,
-                                        if (item.sku != null && item.sku!.isNotEmpty)
+                                        if (item.sku != null &&
+                                            item.sku!.isNotEmpty)
                                           Chip(
                                             label: Text('SKU: ${item.sku}'),
-                                            visualDensity: VisualDensity.compact,
+                                            visualDensity:
+                                                VisualDensity.compact,
                                           ),
-                                        if (item.brand != null && item.brand!.isNotEmpty)
+                                        if (item.brand != null &&
+                                            item.brand!.isNotEmpty)
                                           Chip(
                                             label: Text('Brand: ${item.brand}'),
-                                            visualDensity: VisualDensity.compact,
+                                            visualDensity:
+                                                VisualDensity.compact,
                                           ),
                                       ],
                                     ),
                                     const SizedBox(height: 4),
                                     Text(
                                       item.category,
-                                      style: theme.textTheme.bodySmall?.copyWith(
-                                        color: theme.colorScheme.onSurfaceVariant,
+                                      style:
+                                          theme.textTheme.bodySmall?.copyWith(
+                                        color:
+                                            theme.colorScheme.onSurfaceVariant,
                                       ),
                                     ),
-                                    if (item.description != null && item.description!.isNotEmpty) ...[
+                                    if (item.description != null &&
+                                        item.description!.isNotEmpty) ...[
                                       const SizedBox(height: 4),
                                       Text(
                                         item.description!,
@@ -194,14 +211,16 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
                                   child: ClipRRect(
                                     borderRadius: BorderRadius.circular(6),
                                     child: LinearProgressIndicator(
-                                      value: (item.currentStock / item.maxStock).clamp(0.0, 1.0),
+                                      value: (item.currentStock / item.maxStock)
+                                          .clamp(0.0, 1.0),
                                       minHeight: 8,
-                                      backgroundColor: theme.colorScheme.surfaceContainerHighest,
+                                      backgroundColor: theme
+                                          .colorScheme.surfaceContainerHighest,
                                       color: isOutOfStock
                                           ? theme.colorScheme.error
                                           : isLowStock
-                                              ? Colors.orange
-                                              : Colors.green,
+                                              ? AppTheme.warning
+                                              : AppTheme.sageSuccess,
                                     ),
                                   ),
                                 ),
@@ -213,8 +232,8 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
                                     color: isOutOfStock
                                         ? theme.colorScheme.error
                                         : isLowStock
-                                            ? Colors.orange
-                                            : Colors.green,
+                                            ? AppTheme.warning
+                                            : AppTheme.sageSuccess,
                                   ),
                                 ),
                               ],
@@ -232,34 +251,43 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
                   children: [
                     _CompactCard(
                       title: 'Current Stock',
-                      value: '${item.currentStock.toStringAsFixed(2)} ${item.effectiveBaseUnit}',
-                      valueColor: isOutOfStock ? theme.colorScheme.error : isLowStock ? Colors.orange : Colors.green,
+                      value:
+                          '${item.currentStock.toStringAsFixed(2)} ${item.effectiveBaseUnit}',
+                      valueColor: isOutOfStock
+                          ? theme.colorScheme.error
+                          : isLowStock
+                              ? AppTheme.warning
+                              : AppTheme.sageSuccess,
                       icon: Icons.layers_outlined,
                       width: isWide ? 160 : (constraints.maxWidth - 16) / 2,
                     ),
                     _CompactCard(
                       title: 'Min / Reorder / Max',
-                      value: '${item.minStock.toStringAsFixed(2)} / ${item.reorderPoint.toStringAsFixed(2)} / ${item.maxStock.toStringAsFixed(2)}',
+                      value:
+                          '${item.minStock.toStringAsFixed(2)} / ${item.reorderPoint.toStringAsFixed(2)} / ${item.maxStock.toStringAsFixed(2)}',
                       icon: Icons.trending_down_outlined,
-                      valueColor: Colors.blue,
+                      valueColor: AppTheme.sageAccent,
                       width: isWide ? 220 : (constraints.maxWidth - 16) / 2,
                     ),
                     _CompactCard(
                       title: 'Safety / Lead Time',
-                      value: '${item.safetyStock.toStringAsFixed(2)} / ${item.leadTimeDays}d',
+                      value:
+                          '${item.safetyStock.toStringAsFixed(2)} / ${item.leadTimeDays}d',
                       icon: Icons.security_outlined,
-                      valueColor: Colors.purple,
+                      valueColor: Colors.deepPurpleAccent,
                       width: isWide ? 160 : (constraints.maxWidth - 16) / 2,
                     ),
                     _CompactCard(
                       title: 'Consumption',
-                      value: item.consumptionMode == ConsumptionMode.recipePending
-                          ? 'Recipe-pending'
-                          : 'Direct',
+                      value:
+                          item.consumptionMode == ConsumptionMode.recipePending
+                              ? 'Recipe-pending'
+                              : 'Direct',
                       icon: Icons.sync_alt_outlined,
-                      valueColor: item.consumptionMode == ConsumptionMode.recipePending
-                          ? Colors.orange
-                          : Colors.teal,
+                      valueColor:
+                          item.consumptionMode == ConsumptionMode.recipePending
+                              ? AppTheme.warning
+                              : AppTheme.sageCyan,
                       width: isWide ? 140 : (constraints.maxWidth - 16) / 2,
                     ),
                   ],
@@ -273,21 +301,22 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
                       title: 'Unit Cost',
                       value: _formatCurrency(item.unitCost),
                       icon: Icons.payments_outlined,
-                      valueColor: Colors.green.shade700,
+                      valueColor: AppTheme.sageSuccess,
                       width: isWide ? 140 : (constraints.maxWidth - 16) / 2,
                     ),
                     _CompactCard(
                       title: 'Selling Price',
                       value: _formatCurrency(item.sellingPrice),
                       icon: Icons.sell_outlined,
-                      valueColor: Colors.amber.shade800,
+                      valueColor: AppTheme.warning,
                       width: isWide ? 140 : (constraints.maxWidth - 16) / 2,
                     ),
                     _CompactCard(
                       title: 'Last / Avg Cost',
-                      value: '${_formatCurrency(item.lastPurchaseCost)} / ${_formatCurrency(item.avgCost)}',
+                      value:
+                          '${_formatCurrency(item.lastPurchaseCost)} / ${_formatCurrency(item.avgCost)}',
                       icon: Icons.calculate_outlined,
-                      valueColor: Colors.indigo,
+                      valueColor: AppTheme.sageAccent,
                       width: isWide ? 220 : constraints.maxWidth,
                     ),
                   ],
@@ -299,16 +328,19 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
                   children: [
                     _CompactCard(
                       title: 'Consumption',
-                      value: item.consumptionMode == ConsumptionMode.recipePending
-                          ? 'Recipe-pending'
-                          : 'Direct',
+                      value:
+                          item.consumptionMode == ConsumptionMode.recipePending
+                              ? 'Recipe-pending'
+                              : 'Direct',
                       icon: Icons.sync_alt_outlined,
-                      valueColor: item.consumptionMode == ConsumptionMode.recipePending
-                          ? Colors.orange
-                          : Colors.teal,
+                      valueColor:
+                          item.consumptionMode == ConsumptionMode.recipePending
+                              ? AppTheme.warning
+                              : AppTheme.sageCyan,
                       width: isWide ? 140 : (constraints.maxWidth - 16) / 2,
                     ),
-                    if (item.purchaseUnit != null && item.purchaseUnit!.isNotEmpty)
+                    if (item.purchaseUnit != null &&
+                        item.purchaseUnit!.isNotEmpty)
                       _CompactCard(
                         title: 'Purchase Unit',
                         value: item.purchaseUnit!,
@@ -345,7 +377,8 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Icon(Icons.note_outlined,
-                              size: 18, color: theme.colorScheme.onSurfaceVariant),
+                              size: 18,
+                              color: theme.colorScheme.onSurfaceVariant),
                           const SizedBox(width: 8),
                           Expanded(
                             child: Column(
@@ -353,7 +386,8 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
                               children: [
                                 Text('Notes',
                                     style: theme.textTheme.labelMedium
-                                        ?.copyWith(fontWeight: FontWeight.bold)),
+                                        ?.copyWith(
+                                            fontWeight: FontWeight.bold)),
                                 const SizedBox(height: 2),
                                 Text(
                                   item.notes!,
@@ -390,7 +424,8 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
                               const SizedBox(
                                   width: 14,
                                   height: 14,
-                                  child: CircularProgressIndicator(strokeWidth: 2)),
+                                  child: CircularProgressIndicator(
+                                      strokeWidth: 2)),
                           ],
                         ),
                         const SizedBox(height: 6),
@@ -402,7 +437,8 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
                         const SizedBox(height: 10),
                         if (_ingredientUsage == null && !_loadingUsage)
                           Text(
-                            item.consumptionMode == ConsumptionMode.recipePending
+                            item.consumptionMode ==
+                                    ConsumptionMode.recipePending
                                 ? 'No usage found yet. Link this item in a recipe and complete menu sales to see usage.'
                                 : 'No recipe/menu usage linked to this inventory item in the last 30 days.',
                             style: theme.textTheme.bodySmall,
@@ -431,7 +467,8 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
                               style: theme.textTheme.labelLarge
                                   ?.copyWith(fontWeight: FontWeight.w700)),
                           const SizedBox(height: 6),
-                          ...(((_ingredientUsage!['menuItems'] as List?) ?? const [])
+                          ...(((_ingredientUsage!['menuItems'] as List?) ??
+                                      const [])
                                   .take(8))
                               .map((m) {
                             final name = (m['name'] ?? '').toString();
@@ -532,7 +569,6 @@ class _CompactCard extends StatelessWidget {
     );
   }
 }
-
 
 class _UsageChip extends StatelessWidget {
   const _UsageChip({required this.label, required this.value});

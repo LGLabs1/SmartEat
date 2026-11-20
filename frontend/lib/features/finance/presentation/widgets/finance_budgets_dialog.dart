@@ -94,7 +94,6 @@ class _FinanceBudgetsDialogState extends State<FinanceBudgetsDialog> {
                     labelText: category,
                     prefixText: '${widget.currencySymbol} ',
                     isDense: true,
-                    border: const OutlineInputBorder(),
                   ),
                 ),
                 const SizedBox(height: 10),

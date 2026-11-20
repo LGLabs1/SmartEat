@@ -122,10 +122,10 @@ class _MealsTabState extends State<_MealsTab> {
     final total = staffMealOrderTotal(order);
     final status = (order['status'] ?? 'pending').toString().toLowerCase();
     final statusColor = status == 'completed'
-        ? Colors.green
+        ? AppTheme.sageSuccess
         : status == 'cancelled'
-            ? Colors.grey
-            : Colors.orange;
+            ? Colors.white.withValues(alpha: 0.65)
+            : AppTheme.warning;
 
     showDialog(
       context: context,
@@ -328,7 +328,7 @@ class _MealsTabState extends State<_MealsTab> {
                         'Total Cost: ₱${totalCost.toStringAsFixed(2)}',
                         style: const TextStyle(
                           fontWeight: FontWeight.bold,
-                          color: Colors.blue,
+                          color: AppTheme.sageAccent,
                         ),
                       ),
                     ],
@@ -383,15 +383,16 @@ class _MealsTabState extends State<_MealsTab> {
                             late final IconData statusIcon;
                             late final String statusLabel;
                             if (status == 'completed') {
-                              statusColor = Colors.green;
+                              statusColor = AppTheme.sageSuccess;
                               statusIcon = Icons.check;
                               statusLabel = 'Completed';
                             } else if (status == 'cancelled') {
-                              statusColor = Colors.grey;
+                              statusColor =
+                                  Colors.white.withValues(alpha: 0.14);
                               statusIcon = Icons.cancel;
                               statusLabel = 'Cancelled';
                             } else {
-                              statusColor = Colors.orange;
+                              statusColor = AppTheme.warning;
                               statusIcon = Icons.access_time;
                               statusLabel = 'Pending';
                             }
@@ -414,7 +415,7 @@ class _MealsTabState extends State<_MealsTab> {
                                 trailing: Text(
                                   createdLabel,
                                   style: TextStyle(
-                                    color: Colors.grey.shade600,
+                                    color: Colors.white.withValues(alpha: 0.6),
                                     fontSize: 12,
                                   ),
                                 ),

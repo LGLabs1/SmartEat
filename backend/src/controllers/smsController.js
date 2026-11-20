@@ -1,4 +1,4 @@
-﻿const axios = require('axios');
+﻿const { sendSmsMessage, extractProviderMessage } = require('../services/smsService');
 
 /**
  * POST /api/sms/send
@@ -12,24 +12,9 @@ async function sendSms(req, res) {
       return res.status(400).json({ status: 400, message: 'phone_number and message are required' });
     }
 
-    const apiToken = (process.env.IPROG_SMS_API_TOKEN || process.env.SMS_API_TOKEN || '').trim();
-    if (!apiToken) {
-      return res.status(500).json({
-        status: 500,
-        message: 'SMS provider token not configured on server (set IPROG_SMS_API_TOKEN)',
-      });
-    }
-
-    const payload = {
-      api_token: apiToken,
-      phone_number: String(phone_number),
-      message: String(message),
-    };
-
-    const response = await axios.post('https://www.iprogsms.com/api/v1/sms_messages', payload, {
-      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-      timeout: 60000,
-      validateStatus: () => true,
+    const response = await sendSmsMessage({
+      phoneNumber: phone_number,
+      message,
     });
 
     const data = response.data;
@@ -46,13 +31,11 @@ async function sendSms(req, res) {
       });
     }
 
-    const errMsg = (data && typeof data === 'object' && (data.message || data.error))
-      ? (data.message || data.error)
-      : (typeof data === 'string' && data ? data : `HTTP ${response.status}`);
+    const errMsg = extractProviderMessage(data) || `HTTP ${response.status}`;
     return res.status(response.status).json({ status: response.status, message: errMsg, data });
   } catch (error) {
     console.error('[SMS] send error:', error.message);
-    const status = error.response?.status || 502;
+    const status = error.status || error.response?.status || 502;
     const message = error.response?.data?.message || error.message || 'SMS provider request failed';
     return res.status(status).json({ status, message });
   }

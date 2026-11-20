@@ -75,8 +75,7 @@ Widget buildLatestBriefingCard(SageBriefingContent briefing) {
               ),
             ),
             Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
               decoration: BoxDecoration(
                 color: Colors.blueAccent.withValues(alpha: 0.15),
                 borderRadius: BorderRadius.circular(999),
@@ -162,18 +161,24 @@ Widget buildSummarySection(AIAssistantProvider provider) {
 
   final double todayRev = (summary['todayRevenue'] as num?)?.toDouble() ?? 0.0;
   final int todayOrders = (summary['todayOrdersCount'] as num?)?.toInt() ?? 0;
-  final int pendingOrders = (summary['pendingOrdersCount'] as num?)?.toInt() ?? 0;
+  final int pendingOrders =
+      (summary['pendingOrdersCount'] as num?)?.toInt() ?? 0;
   final int lowStock = (summary['lowStockCount'] as num?)?.toInt() ?? 0;
   final String topSeller = (summary['topSeller'] as String?) ?? 'None';
   final double weekRev = (summary['weekRevenue'] as num?)?.toDouble() ?? 0.0;
-  final double dayChange = (summary['dayChangePercent'] as num?)?.toDouble() ?? 0.0;
+  final double dayChange =
+      (summary['dayChangePercent'] as num?)?.toDouble() ?? 0.0;
   final double aov = (summary['averageOrderValue'] as num?)?.toDouble() ?? 0.0;
-  final double healthScore = (summary['healthScore'] as num?)?.toDouble() ?? 0.0;
+  final double healthScore =
+      (summary['healthScore'] as num?)?.toDouble() ?? 0.0;
   final String healthLabel = (summary['healthLabel'] as String?) ?? '';
   final String trendDir = (summary['trendDirection'] as String?) ?? 'stable';
-  final double monthGrowth = (summary['monthlyGrowthPercent'] as num?)?.toDouble() ?? 0.0;
+  final double monthGrowth =
+      (summary['monthlyGrowthPercent'] as num?)?.toDouble() ?? 0.0;
   final String peakHour = (summary['peakHour'] as String?) ?? 'N/A';
   final String bestDay = (summary['bestDayOfWeek'] as String?) ?? 'N/A';
+  final double bestDayRevenue =
+      (summary['bestDayRevenue'] as num?)?.toDouble() ?? 0.0;
 
   final dayChangeLabel = dayChange >= 0
       ? '+${dayChange.toStringAsFixed(1)}%'
@@ -215,8 +220,7 @@ Widget buildSummarySection(AIAssistantProvider provider) {
             ),
             if (healthLabel.isNotEmpty)
               Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                 decoration: BoxDecoration(
                   color: _healthColor(healthScore).withValues(alpha: 0.18),
                   borderRadius: BorderRadius.circular(20),
@@ -318,7 +322,7 @@ Widget buildSummarySection(AIAssistantProvider provider) {
             if (peakHour != 'N/A')
               _buildChip(Icons.access_time_rounded, 'Peak: $peakHour',
                   Colors.blueAccent),
-            if (bestDay != 'N/A')
+            if (bestDay != 'N/A' && bestDayRevenue > 0)
               _buildChip(Icons.calendar_today_rounded, 'Best: $bestDay',
                   Colors.purple),
             if (monthGrowth != 0)
@@ -372,7 +376,8 @@ Widget buildInsightsSection(AIAssistantProvider provider) {
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints(),
             onPressed: () => provider.refreshData(),
-            icon: Icon(Icons.refresh, color: Colors.white.withValues(alpha: 0.38), size: 14),
+            icon: Icon(Icons.refresh,
+                color: Colors.white.withValues(alpha: 0.38), size: 14),
           ),
         ],
       ),
@@ -541,8 +546,7 @@ Widget _buildBriefingDateGroup(
 }) {
   final now = DateTime.now();
   final todayKey = briefingDateKey(now);
-  final yesterdayKey =
-      briefingDateKey(now.subtract(const Duration(days: 1)));
+  final yesterdayKey = briefingDateKey(now.subtract(const Duration(days: 1)));
   final relative = dateKey == todayKey
       ? 'Today'
       : dateKey == yesterdayKey
@@ -595,8 +599,7 @@ Widget _buildBriefingDateGroup(
             ),
             if (relative.isNotEmpty)
               Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                 decoration: BoxDecoration(
                   color: Colors.blueAccent.withValues(alpha: 0.18),
                   borderRadius: BorderRadius.circular(20),
@@ -618,8 +621,7 @@ Widget _buildBriefingDateGroup(
         ),
         children: [
           Theme(
-            data:
-                Theme.of(context).copyWith(dividerColor: Colors.transparent),
+            data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
             child: ExpansionTile(
               tilePadding: const EdgeInsets.symmetric(horizontal: 8),
               childrenPadding: const EdgeInsets.only(bottom: 4),
@@ -809,8 +811,7 @@ class SageBriefingDetailDialog extends StatelessWidget {
           ),
           if (healthLabel.isNotEmpty)
             Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
               decoration: BoxDecoration(
                 color: healthColor.withValues(alpha: 0.16),
                 borderRadius: BorderRadius.circular(999),
@@ -833,21 +834,20 @@ class SageBriefingDetailDialog extends StatelessWidget {
   Widget _buildStructuredBody(Map<String, String> fields) {
     final tiles = <Widget>[
       if (fields['Revenue'] != null)
-        _metricTile('Revenue', fields['Revenue']!,
-            Icons.payments_rounded, Colors.greenAccent),
+        _metricTile('Revenue', fields['Revenue']!, Icons.payments_rounded,
+            Colors.greenAccent),
       if (fields['Orders'] != null)
-        _metricTile('Orders', fields['Orders']!,
-            Icons.receipt_long_rounded, Colors.blueAccent),
+        _metricTile('Orders', fields['Orders']!, Icons.receipt_long_rounded,
+            Colors.blueAccent),
       if (fields['Best Seller'] != null)
-        _metricTile('Best Seller', fields['Best Seller']!,
-            Icons.star_rounded, Colors.amber),
+        _metricTile('Best Seller', fields['Best Seller']!, Icons.star_rounded,
+            Colors.amber),
       if (fields['Peak Hours'] != null)
-        _metricTile('Peak Hours', fields['Peak Hours']!,
-            Icons.schedule_rounded, Colors.purpleAccent),
+        _metricTile('Peak Hours', fields['Peak Hours']!, Icons.schedule_rounded,
+            Colors.purpleAccent),
     ];
 
-    final recommendation =
-        fields['Recommendations'] ?? briefing.recommendation;
+    final recommendation = fields['Recommendations'] ?? briefing.recommendation;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -909,9 +909,8 @@ class SageBriefingDetailDialog extends StatelessWidget {
                   Expanded(child: tiles[i]),
                   const SizedBox(width: 10),
                   Expanded(
-                    child: i + 1 < tiles.length
-                        ? tiles[i + 1]
-                        : const SizedBox(),
+                    child:
+                        i + 1 < tiles.length ? tiles[i + 1] : const SizedBox(),
                   ),
                 ],
               ),
@@ -921,8 +920,7 @@ class SageBriefingDetailDialog extends StatelessWidget {
     );
   }
 
-  Widget _metricTile(
-      String label, String value, IconData icon, Color color) {
+  Widget _metricTile(String label, String value, IconData icon, Color color) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
@@ -1116,8 +1114,8 @@ class SageBriefingDetailDialog extends StatelessWidget {
             onPressed: onClose,
             style: TextButton.styleFrom(
               foregroundColor: Colors.white70,
-              textStyle: const TextStyle(
-                  fontSize: 12.5, fontWeight: FontWeight.w700),
+              textStyle:
+                  const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
             ),
             child: const Text('Close'),
           ),
@@ -1188,8 +1186,7 @@ class _DownloadPdfButtonState extends State<_DownloadPdfButton> {
       label: Text(_downloading ? 'Generating…' : 'Download PDF'),
       style: TextButton.styleFrom(
         foregroundColor: Colors.blueAccent.shade100,
-        textStyle: const TextStyle(
-            fontSize: 12.5, fontWeight: FontWeight.w700),
+        textStyle: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
       ),
     );
   }

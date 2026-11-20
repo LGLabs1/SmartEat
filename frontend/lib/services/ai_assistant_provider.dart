@@ -76,6 +76,7 @@ class AIAssistantProvider extends ChangeNotifier {
           'healthScore': _businessContext!.healthScore,
           'healthLabel': _businessContext!.healthLabel,
           'bestDayOfWeek': _businessContext!.bestDayOfWeek,
+          'bestDayRevenue': _businessContext!.bestDayRevenue,
           'trendDirection': _businessContext!.trendDirection,
           'monthlyGrowthPercent': _businessContext!.monthlyGrowthPercent,
           'criticalStockCount': _businessContext!.criticalStockCount,
@@ -118,6 +119,9 @@ class AIAssistantProvider extends ChangeNotifier {
   int _activeSageTab = 0;
   int get activeSageTab => _activeSageTab;
 
+  String? _scopedUid;
+  String? _scopedEateryId;
+
   // ── Access gating ────────────────────────────────────────────────────────
 
   /// Sage is an admin-only tool. While the staff dashboard is on screen the
@@ -157,7 +161,8 @@ class AIAssistantProvider extends ChangeNotifier {
     await _loadBriefingHistory();
     if (FirebaseAuth.instance.currentUser == null) {
       print('===== FIRESTORE STARTUP GUARD =====');
-      print('AIAssistantProvider startup refresh skipped because auth user is null.');
+      print(
+          'AIAssistantProvider startup refresh skipped because auth user is null.');
       print('Current UID: ${FirebaseAuth.instance.currentUser?.uid ?? 'N/A'}');
       print('Current eateryId: N/A');
       print('===================================');
@@ -165,14 +170,35 @@ class AIAssistantProvider extends ChangeNotifier {
     }
     await refreshData();
 
-    // Refresh context when auth state changes (user signs in/out)
-    _authStateSub = FirebaseAuth.instance.authStateChanges().listen((user) {
+    _authStateSub =
+        FirebaseAuth.instance.authStateChanges().listen((user) async {
+      await _syncScope();
       if (user != null) {
-        // new login — refresh analytics and briefing history immediately
-        refreshData();
-        refreshBriefingHistory();
+        await refreshData();
+        await refreshBriefingHistory();
       }
     });
+  }
+
+  Future<void> _syncScope() async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    final eateryId = await FirebaseService.getCurrentEateryId();
+    if (uid == _scopedUid && eateryId == _scopedEateryId) return;
+
+    _scopedUid = uid;
+    _scopedEateryId = eateryId;
+    BusinessContextBuilder.invalidate(eateryId: eateryId);
+    _businessContext = null;
+    _activeInsights = [];
+    _briefingHistory = [];
+    _sageBriefingContent = null;
+    _showSageBriefing = false;
+    _showPopup = false;
+    _popupContent = null;
+    _hasNewImportantInsight = false;
+    _chatHistory.clear();
+    await _loadLocalBriefingHistory();
+    notifyListeners();
   }
 
   void _startRefreshTimer() {
@@ -202,6 +228,13 @@ class AIAssistantProvider extends ChangeNotifier {
     } else {
       _stopRefreshTimer();
     }
+    notifyListeners();
+  }
+
+  void dismissPopup() {
+    if (!_showPopup) return;
+    _showPopup = false;
+    _popupContent = null;
     notifyListeners();
   }
 
@@ -245,9 +278,11 @@ class AIAssistantProvider extends ChangeNotifier {
 
   Offset clampButtonPosition(Offset pos, {double size = 56.0}) {
     final minX = _workspaceBounds.left + 12;
-    final maxX = (_workspaceBounds.right - size - 12).clamp(minX, _workspaceBounds.right - 12);
+    final maxX = (_workspaceBounds.right - size - 12)
+        .clamp(minX, _workspaceBounds.right - 12);
     final minY = _workspaceBounds.top + 12;
-    final maxY = (_workspaceBounds.bottom - size - 12).clamp(minY, _workspaceBounds.bottom - 12);
+    final maxY = (_workspaceBounds.bottom - size - 12)
+        .clamp(minY, _workspaceBounds.bottom - 12);
 
     return Offset(
       pos.dx.clamp(minX, maxX),
@@ -257,10 +292,12 @@ class AIAssistantProvider extends ChangeNotifier {
 
   Offset snapButtonToNearestEdge(Offset pos, {double size = 56.0}) {
     final leftX = _workspaceBounds.left + 12;
-    final rightX = (_workspaceBounds.right - size - 12).clamp(leftX, _workspaceBounds.right - 12);
+    final rightX = (_workspaceBounds.right - size - 12)
+        .clamp(leftX, _workspaceBounds.right - 12);
     final clampedY = pos.dy.clamp(
       _workspaceBounds.top + 12,
-      (_workspaceBounds.bottom - size - 12).clamp(_workspaceBounds.top + 12, _workspaceBounds.bottom - 12),
+      (_workspaceBounds.bottom - size - 12)
+          .clamp(_workspaceBounds.top + 12, _workspaceBounds.bottom - 12),
     );
     final useLeft = (pos.dx - leftX).abs() <= (pos.dx - rightX).abs();
     return Offset(useLeft ? leftX : rightX, clampedY);
@@ -351,6 +388,7 @@ class AIAssistantProvider extends ChangeNotifier {
 
   /// Full refresh: rebuilds the BusinessContext then derives insights from it.
   Future<void> refreshData() async {
+    await _syncScope();
     await Future.wait([
       _buildBusinessContext(),
       _loadPageInsights(),
@@ -361,7 +399,8 @@ class AIAssistantProvider extends ChangeNotifier {
     final uid = FirebaseAuth.instance.currentUser?.uid;
     final eateryId = await FirebaseService.getCurrentEateryId();
     print('===== FIRESTORE REQUEST =====');
-    print('Collection: eateries/${eateryId ?? 'N/A'}/orders + inventory + menu');
+    print(
+        'Collection: eateries/${eateryId ?? 'N/A'}/orders + inventory + menu');
     print('Document: N/A');
     print('Operation: get (startup analytics)');
     print('Current UID: ${uid ?? 'N/A'}');
@@ -377,7 +416,8 @@ class AIAssistantProvider extends ChangeNotifier {
     } catch (e, stackTrace) {
       print('===== FIRESTORE ERROR =====');
       print('Code: ${e is FirebaseException ? e.code : 'N/A'}');
-      print('Message: ${e is FirebaseException ? e.message ?? 'N/A' : e.toString()}');
+      print(
+          'Message: ${e is FirebaseException ? e.message ?? 'N/A' : e.toString()}');
       print('Stack: $stackTrace');
       print('==========================');
       debugPrint('_buildBusinessContext error: $e');
@@ -395,15 +435,25 @@ class AIAssistantProvider extends ChangeNotifier {
     return null;
   }
 
-  String _briefingStorageKey(String period) {
+  Future<String> _currentScopeKey() async {
+    final uid = FirebaseAuth.instance.currentUser?.uid ?? 'anon';
+    final eateryId = await FirebaseService.getCurrentEateryId() ?? '';
+    return '${uid}_$eateryId';
+  }
+
+  String _historyStorageKey(String scopeKey) =>
+      'sage_briefings_history_$scopeKey';
+
+  Future<String> _briefingStorageKey(String period) async {
     final now = DateTime.now();
-    return 'sage_briefing_${period}_${now.year}_${now.month}_${now.day}';
+    final scopeKey = await _currentScopeKey();
+    return 'sage_briefing_${scopeKey}_${period}_${now.year}_${now.month}_${now.day}';
   }
 
   Future<bool> _hasSeenBriefingThisPeriod(String period) async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      return prefs.getBool(_briefingStorageKey(period)) ?? false;
+      return prefs.getBool(await _briefingStorageKey(period)) ?? false;
     } catch (_) {
       return true;
     }
@@ -412,7 +462,7 @@ class AIAssistantProvider extends ChangeNotifier {
   Future<void> _markBriefingSeen(String period) async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setBool(_briefingStorageKey(period), true);
+      await prefs.setBool(await _briefingStorageKey(period), true);
     } catch (_) {}
   }
 
@@ -483,24 +533,38 @@ class AIAssistantProvider extends ChangeNotifier {
   }
 
   Future<void> _loadBriefingHistory() async {
-    await _loadLocalBriefingHistory();
+    await _syncScope();
     await refreshBriefingHistory();
   }
 
   Future<void> _loadLocalBriefingHistory() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      final raw = prefs.getString('sage_briefings_history');
-      if (raw == null || raw.isEmpty) return;
+      final scopeKey = await _currentScopeKey();
+      final raw = prefs.getString(_historyStorageKey(scopeKey));
+      if (raw == null || raw.isEmpty) {
+        _briefingHistory = [];
+        return;
+      }
       final decoded = jsonDecode(raw);
-      if (decoded is! List) return;
+      if (decoded is! List) {
+        _briefingHistory = [];
+        return;
+      }
+      final eateryId = _scopedEateryId ?? '';
       _briefingHistory = decoded
           .whereType<Map>()
-          .map((item) => SageBriefingContent.fromJson(Map<String, dynamic>.from(item)))
+          .map((item) =>
+              SageBriefingContent.fromJson(Map<String, dynamic>.from(item)))
+          .where((briefing) =>
+              eateryId.isEmpty ||
+              briefing.eateryId.isEmpty ||
+              briefing.eateryId == eateryId)
           .toList()
         ..sort((a, b) => a.generatedAt.compareTo(b.generatedAt));
-      notifyListeners();
-    } catch (_) {}
+    } catch (_) {
+      _briefingHistory = [];
+    }
   }
 
   /// Pulls every briefing stored for this eatery from Firestore and merges it
@@ -510,8 +574,18 @@ class AIAssistantProvider extends ChangeNotifier {
     try {
       final eateryId = await FirebaseService.getCurrentEateryId();
       final remote = await BriefingHistoryService.fetch(eateryId);
-      if (remote.isEmpty) return;
-      _mergeBriefings(remote);
+      if (remote.isEmpty) {
+        if (_briefingHistory.isNotEmpty) {
+          _briefingHistory = [];
+          await _saveBriefingHistory();
+          notifyListeners();
+        }
+        return;
+      }
+      _mergeBriefings(
+        remote.where((briefing) =>
+            briefing.eateryId.isEmpty || briefing.eateryId == eateryId),
+      );
     } catch (e) {
       debugPrint('refreshBriefingHistory error: $e');
     }
@@ -540,17 +614,19 @@ class AIAssistantProvider extends ChangeNotifier {
   void _trimBriefingHistory() {
     const cap = 120;
     if (_briefingHistory.length > cap) {
-      _briefingHistory = _briefingHistory.sublist(_briefingHistory.length - cap);
+      _briefingHistory =
+          _briefingHistory.sublist(_briefingHistory.length - cap);
     }
   }
 
   Future<void> _saveBriefingHistory() async {
     try {
       final prefs = await SharedPreferences.getInstance();
+      final scopeKey = await _currentScopeKey();
       final encoded = jsonEncode(
         _briefingHistory.map((entry) => entry.toJson()).toList(),
       );
-      await prefs.setString('sage_briefings_history', encoded);
+      await prefs.setString(_historyStorageKey(scopeKey), encoded);
     } catch (_) {}
   }
 
@@ -582,7 +658,8 @@ class AIAssistantProvider extends ChangeNotifier {
     final now = DateTime.now();
     final todayKey = briefingDateKey(now);
     return startedBriefingPeriods(now).any((period) => !_briefingHistory.any(
-        (b) => briefingDateKey(b.generatedAt) == todayKey && b.period == period));
+        (b) =>
+            briefingDateKey(b.generatedAt) == todayKey && b.period == period));
   }
 
   /// Backfills briefings for today's periods that have already started but were
@@ -683,8 +760,7 @@ class AIAssistantProvider extends ChangeNotifier {
       }).toList();
 
       if (_activeInsights.isNotEmpty && !_isExpanded) {
-        final important =
-            _activeInsights.where((i) => i.isImportant).toList();
+        final important = _activeInsights.where((i) => i.isImportant).toList();
         if (important.isNotEmpty) {
           _hasNewImportantInsight = true;
           displayPopup(important.first.message);
@@ -762,8 +838,8 @@ class AIAssistantProvider extends ChangeNotifier {
         context: contextString,
       ).timeout(
         const Duration(seconds: 125),
-        onTimeout: (sink) =>
-            sink.addError(TimeoutException('AI response took too long (>125s)')),
+        onTimeout: (sink) => sink
+            .addError(TimeoutException('AI response took too long (>125s)')),
       );
 
       await for (final token in stream) {

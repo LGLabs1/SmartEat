@@ -23,7 +23,8 @@ class ChatApiException implements Exception {
 
 class ApiService {
   // Deployed demo backend (Render).
-  static const String _baseUrl = 'https://smarteat-backend-n5ta.onrender.com/api';
+  static const String _baseUrl =
+      'https://smarteat-backend-n5ta.onrender.com/api';
 
   // A single keep-alive client reused across requests. Creating a new client
   // per call forced a fresh TCP connection every time, adding latency.
@@ -103,14 +104,12 @@ class ApiService {
     String? inventoryItemId,
     required int price,
     required int availableServings,
+    bool? isAvailable,
     String? description,
     String? imageUrl,
     double? imageAlignmentX,
     double? imageAlignmentY,
   }) async {
-    final invLinked =
-        inventoryItemId != null && inventoryItemId.trim().isNotEmpty;
-    final bool initialAvailability = invLinked ? (availableServings > 0) : true;
     final item = await FirebaseService.createMenuItem({
       'name': name,
       'category': category,
@@ -125,7 +124,7 @@ class ApiService {
       'imageUrl': imageUrl ?? '',
       if (imageAlignmentX != null) 'imageAlignmentX': imageAlignmentX,
       if (imageAlignmentY != null) 'imageAlignmentY': imageAlignmentY,
-      'isAvailable': initialAvailability,
+      'isAvailable': isAvailable ?? true,
     });
     return {'data': item};
   }
@@ -168,11 +167,6 @@ class ApiService {
     if (price != null) updates['price'] = price;
     if (availableServings != null) {
       updates['availableServings'] = availableServings;
-      if (isAvailable == null) {
-        // For unlimited items (availableServings == -1), keep available unless explicitly toggled off.
-        updates['isAvailable'] =
-            availableServings == -1 ? true : availableServings > 0;
-      }
     }
     if (description != null) updates['description'] = description;
     if (isAvailable != null) updates['isAvailable'] = isAvailable;
@@ -448,8 +442,7 @@ class ApiService {
 
   static Future<Map<String, dynamic>> getIngredientUsageByMenuItem(
       {int days = 30}) async {
-    final data =
-        await FirebaseService.getIngredientUsageByMenuItem(days: days);
+    final data = await FirebaseService.getIngredientUsageByMenuItem(days: days);
     return {'data': data};
   }
 
@@ -818,8 +811,8 @@ class ApiService {
         final lowPerformers = sortedItems.where((item) {
           final sold = item['totalSold'] as int;
           final lastSold = item['lastSoldAt'] as DateTime?;
-          final stale = lastSold != null &&
-              now.difference(lastSold).inDays >= 21;
+          final stale =
+              lastSold != null && now.difference(lastSold).inDays >= 21;
           return sold < 3 || stale;
         }).toList();
 
@@ -857,8 +850,7 @@ class ApiService {
             'ingredient': name,
             'reason':
                 'Stock critically low (${currentStock.toStringAsFixed(1)} of ${minStock.toStringAsFixed(1)} min)',
-            'action':
-                'Order ${shortfall.toStringAsFixed(0)} units immediately',
+            'action': 'Order ${shortfall.toStringAsFixed(0)} units immediately',
             'impact': 'Restock to 2× minimum',
             'severity': currentStock <= 0 ? 'high' : 'medium',
           });
@@ -1288,9 +1280,11 @@ class ApiService {
     try {
       streamed = await _client.send(request);
     } on http.ClientException catch (error) {
-      throw ChatApiException(code: 'network_unavailable', message: error.message);
+      throw ChatApiException(
+          code: 'network_unavailable', message: error.message);
     } on SocketException catch (error) {
-      throw ChatApiException(code: 'network_unavailable', message: error.message);
+      throw ChatApiException(
+          code: 'network_unavailable', message: error.message);
     }
 
     if (streamed.statusCode != 200) {
@@ -1302,7 +1296,8 @@ class ApiService {
         if (decoded is Map<String, dynamic>) payload = decoded;
       } catch (_) {}
       throw ChatApiException(
-        code: (payload['code'] ?? payload['error'] ?? 'server_error').toString(),
+        code:
+            (payload['code'] ?? payload['error'] ?? 'server_error').toString(),
         message: (payload['message'] ??
                 payload['error'] ??
                 'The Sage service returned an unexpected error.')
@@ -1339,8 +1334,9 @@ class ApiService {
           case 'error':
             throw ChatApiException(
               code: (event['error'] ?? 'server_error').toString(),
-              message: (event['message'] ?? 'Sage could not complete the request.')
-                  .toString(),
+              message:
+                  (event['message'] ?? 'Sage could not complete the request.')
+                      .toString(),
             );
           case 'done':
             return;

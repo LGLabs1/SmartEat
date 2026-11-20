@@ -7,10 +7,17 @@ import '../services/api_service.dart';
 import '../services/auth_provider.dart';
 import '../services/ai_assistant_provider.dart';
 import '../services/pos_settings_service.dart';
+import '../services/printer_availability_service.dart';
+import '../services/receipt_printer_service.dart';
 import '../widgets/payment_method_dialog.dart';
+import '../widgets/pos/receipt_printer_hint.dart';
+import '../widgets/sage_header_button.dart';
 import '../widgets/skeleton_loaders.dart';
+import '../widgets/smart_eat_header.dart';
 import '../utils/haptic_feedback.dart';
 import '../utils/error_messages.dart';
+import '../features/inventory/domain/services/menu_availability.dart';
+import '../theme.dart';
 
 class POSScreen extends StatefulWidget {
   const POSScreen({
@@ -31,6 +38,7 @@ class POSScreen extends StatefulWidget {
 class _POSScreenState extends State<POSScreen> {
   List<Map<String, dynamic>> _cartItems = [];
   List<Map<String, dynamic>> _menuItems = [];
+  List<Map<String, dynamic>> _recipes = const [];
   bool _isLoading = false;
   double _totalAmount = 0.0;
   bool _isAdmin = false;
@@ -44,6 +52,15 @@ class _POSScreenState extends State<POSScreen> {
   String _selectedCategory = 'All';
   List<String> _pinnedItemIds = [];
 
+  bool _receiptPrintingEnabled = false;
+  bool _printReceipt = true;
+  bool _receiptSettingsLoaded = false;
+  PrinterAvailabilityResult _printerAvailability =
+      const PrinterAvailabilityResult(
+    available: false,
+    message: 'Checking printer connection.',
+  );
+
   /// Short-lived confirmation shown inside the cart panel after an order is
   /// created, instead of a full-screen snackbar. Auto-dismisses.
   String? _cartSuccessMessage;
@@ -55,6 +72,7 @@ class _POSScreenState extends State<POSScreen> {
   final ValueNotifier<int> _cartSheetTick = ValueNotifier<int>(0);
 
   void _openCartSheet() {
+    _loadReceiptSettings();
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -80,12 +98,19 @@ class _POSScreenState extends State<POSScreen> {
                       : _newOrderTempId,
                   isNewOrder: !_addToExistingOrder,
                   baselineQtyByMenuId: _baselineQtyByMenuId,
-                  onQuantityChanged: (index, qty) => _updateQuantity(index, qty),
+                  showReceiptToggle: _showReceiptToggle,
+                  printerAvailable: _printerAvailability.available,
+                  printerMessage: _printerAvailability.message,
+                  printReceipt: _printReceipt,
+                  onPrintReceiptChanged: _setPrintReceipt,
+                  onQuantityChanged: (index, qty) =>
+                      _updateQuantity(index, qty),
                   onRemove: (index) => _removeFromCart(index),
                   onCreateOrder: () => _createOrder(),
                   onCompleteOrder: _completeWithPayment,
                   onClearCart: _clearCart,
-                  actionLabel: _addToExistingOrder ? 'Add Items' : 'Create Order',
+                  actionLabel:
+                      _addToExistingOrder ? 'Add Items' : 'Create Order',
                 );
               },
             ),
@@ -93,6 +118,51 @@ class _POSScreenState extends State<POSScreen> {
         );
       },
     );
+  }
+
+  bool get _showReceiptToggle =>
+      !_addToExistingOrder && _receiptPrintingEnabled;
+
+  bool get _shouldPrintReceipt =>
+      _receiptPrintingEnabled &&
+      _printReceipt &&
+      _printerAvailability.available;
+
+  void _setPrintReceipt(bool value) {
+    if (!_printerAvailability.available) return;
+    setState(() {
+      _printReceipt = value;
+      _cartSheetTick.value++;
+    });
+  }
+
+  Future<void> _loadReceiptSettings() async {
+    final results = await Future.wait<dynamic>([
+      PosSettingsService.load().catchError((dynamic _) => const PosSettings()),
+      PrinterAvailabilityService.resolve(),
+    ]);
+    if (!mounted) return;
+    final settings = results[0] as PosSettings?;
+    final printer = results[1] as PrinterAvailabilityResult;
+    final wasEnabled = _receiptPrintingEnabled;
+    final wasAvailable = _printerAvailability.available;
+    setState(() {
+      if (settings != null) {
+        _receiptPrintingEnabled = settings.receiptPrintingEnabled;
+      }
+      _printerAvailability = printer;
+      if (settings != null &&
+          (!_receiptSettingsLoaded ||
+              (!wasEnabled && settings.receiptPrintingEnabled) ||
+              (!wasAvailable && printer.available))) {
+        _printReceipt = settings.receiptPrintingEnabled;
+      }
+      if (!printer.available) {
+        _printReceipt = false;
+      }
+      _receiptSettingsLoaded = true;
+      _cartSheetTick.value++;
+    });
   }
 
   late Stream<List<Map<String, dynamic>>> _menuStream;
@@ -108,8 +178,10 @@ class _POSScreenState extends State<POSScreen> {
     _inventoryFuture = ApiService.getInventoryItems();
     _addToExistingOrder = widget.initialAddToExistingOrder;
     _targetPendingOrderId = widget.initialOrderId.trim();
+    _loadRecipes();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _loadRole();
+      _loadReceiptSettings();
       context.read<AIAssistantProvider>().setActivePage('orders');
       if (_addToExistingOrder && _targetPendingOrderId.isNotEmpty) {
         _prefillPendingOrderIntoCart(_targetPendingOrderId);
@@ -252,6 +324,54 @@ class _POSScreenState extends State<POSScreen> {
     }
   }
 
+  Future<void> _loadRecipes() async {
+    try {
+      final res = await ApiService.getRecipes();
+      if (!mounted) return;
+      setState(() {
+        _recipes = List<Map<String, dynamic>>.from(res['data'] ?? const []);
+      });
+    } catch (_) {
+      // Recipe stock flags are optional; keep POS usable if recipes fail.
+    }
+  }
+
+  List<Map<String, dynamic>> _enrichMenuItems(
+    List<Map<String, dynamic>> menuItems,
+    List<Map<String, dynamic>> inventoryItems,
+  ) {
+    final inventoryById = <String, Map<String, dynamic>>{
+      for (final inv in inventoryItems)
+        (inv['id'] ?? '').toString().trim(): inv,
+    };
+    final inventoryByName = <String, Map<String, dynamic>>{
+      for (final inv in inventoryItems)
+        (inv['name'] ?? '')
+            .toString()
+            .trim()
+            .toLowerCase()
+            .replaceAll(RegExp(r'\s+'), ' '): inv,
+    };
+    final recipeById = <String, Map<String, dynamic>>{
+      for (final recipe in _recipes)
+        (recipe['id'] ?? '').toString().trim(): recipe,
+    };
+
+    return menuItems.map((item) {
+      if (item['price'] is String) {
+        item['price'] = double.tryParse(item['price']) ?? 0.0;
+      }
+      final result = MenuAvailability.resolve(
+        menuItem: item,
+        inventoryById: inventoryById,
+        inventoryByName: inventoryByName,
+        recipeById: recipeById,
+      );
+      MenuAvailability.applyTo(item, result);
+      return item;
+    }).toList();
+  }
+
   Future<void> _loadMenuItems() async {
     setState(() {
       _isLoading = true;
@@ -262,16 +382,17 @@ class _POSScreenState extends State<POSScreen> {
       final results = await Future.wait([
         ApiService.getMenuItems(),
         ApiService.getInventoryItems(),
+        ApiService.getRecipes()
+            .catchError((dynamic _) => <String, dynamic>{'data': const []}),
       ]);
 
       final menuRes = results[0];
       final invRes = results[1];
+      final recipeRes = results[2];
 
       final inventoryItems =
           List<Map<String, dynamic>>.from(invRes['data'] ?? const []);
-      final inventoryById = <String, Map<String, dynamic>>{
-        for (final inv in inventoryItems) (inv['id'] ?? '').toString(): inv,
-      };
+      _recipes = List<Map<String, dynamic>>.from(recipeRes['data'] ?? const []);
 
       final rawMenuItems =
           List<Map<String, dynamic>>.from(menuRes['data'] ?? const []);
@@ -319,6 +440,7 @@ class _POSScreenState extends State<POSScreen> {
                 inventoryItemId: invId,
                 price: selling.round(),
                 availableServings: stock,
+                isAvailable: stock > 0,
                 description: '',
                 imageUrl: '',
               );
@@ -351,27 +473,8 @@ class _POSScreenState extends State<POSScreen> {
         }
       }
 
-      final normalizedMenuItems = rawMenuItems.map((item) {
-        if (item['price'] is String) {
-          item['price'] = double.tryParse(item['price']) ?? 0.0;
-        }
-
-        final invId = (item['inventoryItemId'] ?? '').toString().trim();
-        if (invId.isNotEmpty) {
-          final inv = inventoryById[invId];
-          if (inv != null) {
-            final stockRaw = inv['currentStock'];
-            final stock = stockRaw is num
-                ? stockRaw.toInt()
-                : int.tryParse((stockRaw ?? '').toString()) ?? 0;
-            item['availableServings'] = stock;
-            final manual = item['isAvailable'];
-            final manualOff = manual is bool && manual == false;
-            item['isAvailable'] = stock > 0 && !manualOff;
-          }
-        }
-        return item;
-      }).toList();
+      final normalizedMenuItems =
+          _enrichMenuItems(rawMenuItems, inventoryItems);
 
       setState(() {
         _menuItems = normalizedMenuItems;
@@ -514,26 +617,35 @@ class _POSScreenState extends State<POSScreen> {
     if (menuId.isEmpty) return;
 
     final inventoryItemId = (item['inventoryItemId'] ?? '').toString().trim();
-    final isInventoryLinked = inventoryItemId.isNotEmpty;
-    final servingsRaw = item['servings'] ?? item['availableServings'] ?? 0;
+    final recipeId = (item['recipeId'] ?? '').toString().trim();
+    final isLinked = inventoryItemId.isNotEmpty || recipeId.isNotEmpty;
+    final servingsRaw = item['availableServings'];
     final servings = servingsRaw is num
         ? servingsRaw.toInt()
         : int.tryParse((servingsRaw ?? '').toString()) ?? 0;
-    final isUnlimited = servings == -1 || !isInventoryLinked;
     final manualAvailability = item['isAvailable'];
-    final isAvailable = manualAvailability is bool
-        ? manualAvailability
-        : (isUnlimited || servings > 0);
+    final isAvailable = manualAvailability is bool ? manualAvailability : true;
+    final rawIssues = item['stockIssues'];
+    final hasStockIssues = rawIssues is List && rawIssues.isNotEmpty;
+    final issueSummary = (item['stockIssueSummary'] ?? '').toString().trim();
 
-    if (!isAvailable && nextQty > 0) {
+    if (nextQty > 0 &&
+        (!isAvailable || (isLinked && (servings <= 0 || hasStockIssues)))) {
       HapticHelper.error();
+      final message = !isAvailable
+          ? 'This item is unavailable.'
+          : (issueSummary.isEmpty
+              ? 'This item is out of stock.'
+              : 'Not enough stock: $issueSummary');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(message)),
+      );
       return;
     }
 
-    // For unlimited items, don't cap quantity; for limited items, cap at servings
     final cappedQty =
-        isUnlimited ? nextQty : (servings > 0 ? nextQty.clamp(0, servings) : 0);
-    final exceeded = !isUnlimited && nextQty > cappedQty;
+        isLinked ? (servings > 0 ? nextQty.clamp(0, servings) : 0) : nextQty;
+    final exceeded = isLinked && nextQty > cappedQty;
 
     setState(() {
       _cartSheetTick.value++;
@@ -586,7 +698,13 @@ class _POSScreenState extends State<POSScreen> {
     if (exceeded && mounted) {
       HapticHelper.error();
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Only $servings left in stock.')),
+        SnackBar(
+          content: Text(
+            issueSummary.isEmpty
+                ? 'Only $servings left in stock.'
+                : 'Not enough stock: $issueSummary',
+          ),
+        ),
       );
     }
   }
@@ -811,6 +929,7 @@ class _POSScreenState extends State<POSScreen> {
       _baselineQtyByMenuId.clear();
       _totalAmount = 0.0;
       _newOrderTempId = '';
+      _printReceipt = _printerAvailability.available;
       if (!_addToExistingOrder) {
         _targetPendingOrderId = '';
       }
@@ -837,34 +956,21 @@ class _POSScreenState extends State<POSScreen> {
   /// picks the method (and tendered amount for cash), then the order is
   /// created as completed with those details attached.
   Future<void> _completeWithPayment() async {
-    // Whether to offer the receipt option is an eatery-level setting; load it
-    // fresh so changes on another device apply immediately.
-    var askForReceipt = false;
-    try {
-      askForReceipt = (await PosSettingsService.load()).askForReceipt;
-    } catch (_) {
-      // Setting unavailable (offline, permissions) — skip the receipt offer.
-    }
+    await _loadReceiptSettings();
     if (!mounted) return;
 
+    final shouldPrint = _shouldPrintReceipt;
     final details = await showPaymentDetailsDialog(
       context,
       totalAmount: _totalAmount,
-      askForReceipt: askForReceipt,
     );
     if (details == null) return; // cancelled
 
-    await _createOrder(completeNow: true, paymentDetails: details);
-
-    if (details.wantsReceipt && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-              'Receipt printing will be available once a printer is connected.'),
-          duration: Duration(seconds: 3),
-        ),
-      );
-    }
+    await _createOrder(
+      completeNow: true,
+      paymentDetails: details,
+      printReceipt: shouldPrint,
+    );
   }
 
   /// [completeNow] writes the order straight into 'completed'. That is passed
@@ -874,13 +980,16 @@ class _POSScreenState extends State<POSScreen> {
   Future<void> _createOrder({
     bool completeNow = false,
     PaymentDetails? paymentDetails,
+    bool printReceipt = false,
   }) async {
     if (_cartItems.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Cart is empty', style: Theme.of(context).textTheme.bodyMedium),
+          content: Text('Cart is empty',
+              style: Theme.of(context).textTheme.bodyMedium),
           behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
           margin: const EdgeInsets.all(16),
         ),
       );
@@ -900,18 +1009,18 @@ class _POSScreenState extends State<POSScreen> {
       if (menu.isEmpty) continue;
 
       final inventoryItemId = (menu['inventoryItemId'] ?? '').toString().trim();
-      final isInventoryLinked = inventoryItemId.isNotEmpty;
-      final servingsRaw = menu['servings'] ?? menu['availableServings'];
-      // Treat missing/invalid servings as unlimited (-1), or if not linked to inventory
+      final recipeId = (menu['recipeId'] ?? '').toString().trim();
+      final isLinked = inventoryItemId.isNotEmpty || recipeId.isNotEmpty;
+      final servingsRaw = menu['availableServings'];
       final servings = servingsRaw is num
           ? servingsRaw.toInt()
-          : (servingsRaw == null
-              ? -1
-              : (int.tryParse(servingsRaw.toString()) ?? -1));
-      final isUnlimited = servings == -1 || !isInventoryLinked;
+          : int.tryParse((servingsRaw ?? '').toString()) ?? 0;
       final manualAvailability = menu['isAvailable'];
       final isAvailable =
-          manualAvailability is bool ? manualAvailability : servings > 0;
+          manualAvailability is bool ? manualAvailability : true;
+      final rawIssues = menu['stockIssues'];
+      final hasStockIssues = rawIssues is List && rawIssues.isNotEmpty;
+      final issueSummary = (menu['stockIssueSummary'] ?? '').toString().trim();
 
       final qtyRaw = cart['quantity'];
       final qty = qtyRaw is num
@@ -919,9 +1028,12 @@ class _POSScreenState extends State<POSScreen> {
           : int.tryParse((qtyRaw ?? '').toString()) ?? 0;
 
       if (!isAvailable ||
-          (!isUnlimited && servings <= 0) ||
-          (!isUnlimited && qty > servings)) {
-        invalid.add((menu['name'] ?? cart['name'] ?? 'Item').toString());
+          (isLinked && (servings <= 0 || hasStockIssues)) ||
+          (isLinked && qty > servings)) {
+        final name = (menu['name'] ?? cart['name'] ?? 'Item').toString();
+        invalid.add(
+          issueSummary.isEmpty ? name : '$name ($issueSummary)',
+        );
       }
     }
 
@@ -948,6 +1060,8 @@ class _POSScreenState extends State<POSScreen> {
       _cartSheetTick.value++;
       _isLoading = true;
     });
+
+    Map<String, dynamic>? createdOrder;
 
     try {
       final List<Map<String, dynamic>> orderItems;
@@ -1004,7 +1118,7 @@ class _POSScreenState extends State<POSScreen> {
           items: orderItems,
         );
       } else {
-        await ApiService.createOrder(
+        final result = await ApiService.createOrder(
           items: orderItems,
           paymentMethod: paymentDetails?.method ?? 'cash',
           orderId: _newOrderTempId.isNotEmpty ? _newOrderTempId : null,
@@ -1013,6 +1127,9 @@ class _POSScreenState extends State<POSScreen> {
           change: paymentDetails?.change,
           referenceNumber: paymentDetails?.referenceNumber,
           paymentStatus: paymentDetails?.paymentStatus ?? 'paid',
+        );
+        createdOrder = Map<String, dynamic>.from(
+          (result['data'] as Map?) ?? const <String, dynamic>{},
         );
       }
 
@@ -1038,6 +1155,16 @@ class _POSScreenState extends State<POSScreen> {
         });
         _clearCart(dismissSuccess: false);
 
+        final orderForReceipt = createdOrder;
+        if (completeNow &&
+            printReceipt &&
+            orderForReceipt != null &&
+            _printerAvailability.available) {
+          unawaited(
+            _printOrderReceipt(orderForReceipt, orderItems, paymentDetails),
+          );
+        }
+
         _loadMenuItems().onError((Object e, StackTrace st) {
           debugPrint('POS: background menu refresh after order failed: $e');
         });
@@ -1062,6 +1189,7 @@ class _POSScreenState extends State<POSScreen> {
           onAction: () => _createOrder(
             completeNow: completeNow,
             paymentDetails: paymentDetails,
+            printReceipt: printReceipt,
           ),
           actionLabel: 'Retry',
         );
@@ -1069,35 +1197,55 @@ class _POSScreenState extends State<POSScreen> {
     }
   }
 
+  Future<void> _printOrderReceipt(
+    Map<String, dynamic> order,
+    List<Map<String, dynamic>> items,
+    PaymentDetails? details,
+  ) async {
+    final total = (order['totalAmount'] as num?)?.toDouble() ??
+        items.fold<double>(
+          0,
+          (sum, item) => sum + ((item['subtotal'] as num?)?.toDouble() ?? 0),
+        );
+    final result = await ReceiptPrinterService.printOrder(
+      orderId: (order['id'] ?? _newOrderTempId).toString(),
+      items: items,
+      totalAmount: total,
+      paymentMethod:
+          details?.method ?? (order['paymentMethod'] ?? 'cash').toString(),
+      amountReceived: details?.amountReceived ??
+          (order['amountReceived'] as num?)?.toDouble(),
+      change: details?.change ?? (order['change'] as num?)?.toDouble(),
+      referenceNumber: details?.referenceNumber ??
+          (order['referenceNumber'] ?? '').toString(),
+      paymentStatus: details?.paymentStatus ??
+          (order['paymentStatus'] ?? 'paid').toString(),
+      createdAt: _orderCreatedAt(order),
+      cashierName: (order['createdByName'] ?? '').toString(),
+    );
+    if (!mounted) return;
+    final error = result.error ?? 'Unknown error';
+    final message = result.printed
+        ? 'Receipt printed.'
+        : 'Order saved, but the receipt did not print: $error';
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
+  }
+
+  DateTime _orderCreatedAt(Map<String, dynamic> order) {
+    final raw = order['createdAt'];
+    if (raw is Timestamp) return raw.toDate();
+    if (raw is DateTime) return raw;
+    if (raw is String) return DateTime.tryParse(raw) ?? DateTime.now();
+    return DateTime.now();
+  }
+
   List<Map<String, dynamic>> _processMenuItems(
     List<Map<String, dynamic>> menuItems,
     List<Map<String, dynamic>> inventoryItems,
   ) {
-    final inventoryById = <String, Map<String, dynamic>>{
-      for (final inv in inventoryItems) (inv['id'] ?? '').toString(): inv,
-    };
-
-    return menuItems.map((item) {
-      if (item['price'] is String) {
-        item['price'] = double.tryParse(item['price']) ?? 0.0;
-      }
-
-      final invId = (item['inventoryItemId'] ?? '').toString().trim();
-      if (invId.isNotEmpty) {
-        final inv = inventoryById[invId];
-        if (inv != null) {
-          final stockRaw = inv['currentStock'];
-          final stock = stockRaw is num
-              ? stockRaw.toInt()
-              : int.tryParse((stockRaw ?? '').toString()) ?? 0;
-          item['availableServings'] = stock;
-          final manual = item['isAvailable'];
-          final manualOff = manual is bool && manual == false;
-          item['isAvailable'] = stock > 0 && !manualOff;
-        }
-      }
-      return item;
-    }).toList();
+    return _enrichMenuItems(menuItems, inventoryItems);
   }
 
   @override
@@ -1131,12 +1279,12 @@ class _POSScreenState extends State<POSScreen> {
                             ? 3
                             : 2;
                 final childAspectRatio = width < 520
-                    ? (isShortHeight ? 0.68 : 0.72)
+                    ? (isShortHeight ? 0.60 : 0.64)
                     : crossAxisCount == 2
-                        ? (isShortHeight ? 0.72 : 0.76)
+                        ? (isShortHeight ? 0.64 : 0.68)
                         : crossAxisCount == 3
-                            ? (isShortHeight ? 0.78 : 0.82)
-                            : (isShortHeight ? 0.86 : 0.90);
+                            ? (isShortHeight ? 0.70 : 0.74)
+                            : (isShortHeight ? 0.78 : 0.82);
 
                 final filteredMenuItems = _selectedCategory == 'All'
                     ? _menuItems
@@ -1152,7 +1300,14 @@ class _POSScreenState extends State<POSScreen> {
 
                 return Scaffold(
                   appBar: widget.showAppBar
-                      ? AppBar(
+                      ? SmartEatHeader(
+                          leading: Navigator.of(context).canPop()
+                              ? IconButton(
+                                  icon: const Icon(Icons.arrow_back),
+                                  onPressed: () =>
+                                      Navigator.of(context).maybePop(),
+                                )
+                              : null,
                           title: Text(
                             _addToExistingOrder &&
                                     _targetPendingOrderId.trim().isNotEmpty
@@ -1162,6 +1317,7 @@ class _POSScreenState extends State<POSScreen> {
                             overflow: TextOverflow.ellipsis,
                           ),
                           actions: [
+                            const SageHeaderButton(),
                             if (isCompact)
                               IconButton(
                                 tooltip: _addToExistingOrder
@@ -1250,7 +1406,9 @@ class _POSScreenState extends State<POSScreen> {
                             decoration: BoxDecoration(
                               color: Theme.of(context).colorScheme.surface,
                               border: Border(
-                                top: BorderSide(color: Theme.of(context).colorScheme.outline),
+                                top: BorderSide(
+                                    color:
+                                        Theme.of(context).colorScheme.outline),
                               ),
                             ),
                             child: Row(
@@ -1295,12 +1453,14 @@ class _POSScreenState extends State<POSScreen> {
                                     // Always opens the cart sheet, which owns
                                     // the pending/complete choice. Submitting
                                     // from here would bypass that decision.
-                                    onPressed: _isLoading ? null : _openCartSheet,
+                                    onPressed:
+                                        _isLoading ? null : _openCartSheet,
                                     style: FilledButton.styleFrom(
                                       backgroundColor:
                                           Theme.of(context).colorScheme.primary,
-                                      foregroundColor:
-                                          Theme.of(context).colorScheme.onPrimary,
+                                      foregroundColor: Theme.of(context)
+                                          .colorScheme
+                                          .onPrimary,
                                       minimumSize: const Size(0, 36),
                                       padding: const EdgeInsets.symmetric(
                                         horizontal: 12,
@@ -1448,6 +1608,12 @@ class _POSScreenState extends State<POSScreen> {
                                       : _newOrderTempId,
                                   isNewOrder: !_addToExistingOrder,
                                   baselineQtyByMenuId: _baselineQtyByMenuId,
+                                  showReceiptToggle: _showReceiptToggle,
+                                  printerAvailable:
+                                      _printerAvailability.available,
+                                  printerMessage: _printerAvailability.message,
+                                  printReceipt: _printReceipt,
+                                  onPrintReceiptChanged: _setPrintReceipt,
                                   onQuantityChanged: (index, qty) =>
                                       _updateQuantity(index, qty),
                                   onRemove: (index) => _removeFromCart(index),
@@ -1483,6 +1649,11 @@ class _CartPanel extends StatelessWidget {
     required this.orderId,
     required this.isNewOrder,
     required this.baselineQtyByMenuId,
+    this.showReceiptToggle = false,
+    required this.printerAvailable,
+    required this.printerMessage,
+    this.printReceipt = true,
+    this.onPrintReceiptChanged,
     required this.onQuantityChanged,
     required this.onRemove,
     required this.onCreateOrder,
@@ -1501,6 +1672,11 @@ class _CartPanel extends StatelessWidget {
   final String orderId;
   final bool isNewOrder;
   final Map<String, int> baselineQtyByMenuId;
+  final bool showReceiptToggle;
+  final bool printerAvailable;
+  final String printerMessage;
+  final bool printReceipt;
+  final ValueChanged<bool>? onPrintReceiptChanged;
   final void Function(int index, int quantity) onQuantityChanged;
   final void Function(int index) onRemove;
 
@@ -1847,6 +2023,26 @@ class _CartPanel extends StatelessWidget {
                 ),
               ),
             ),
+          if (showReceiptToggle && !printerAvailable)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
+              child: ReceiptPrinterHint(message: printerMessage),
+            ),
+          if (showReceiptToggle)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(8, 4, 8, 0),
+              child: SwitchListTile(
+                dense: true,
+                contentPadding: const EdgeInsets.symmetric(horizontal: 4),
+                title: const Text('Print receipt'),
+                subtitle: const Text('Print after this order is completed.'),
+                secondary: const Icon(Icons.receipt_long_outlined),
+                value: printReceipt,
+                onChanged: isLoading || !printerAvailable
+                    ? null
+                    : onPrintReceiptChanged,
+              ),
+            ),
           Padding(
             padding: const EdgeInsets.all(12),
             child: isAddToExistingOrder
@@ -1934,8 +2130,8 @@ class _CartPanel extends StatelessWidget {
                               ? null
                               : (isLoading ? null : onCompleteOrder),
                           style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFF16A34A),
-                            foregroundColor: Colors.white,
+                            backgroundColor: AppTheme.sageSuccess,
+                            foregroundColor: AppTheme.sageNavy,
                             padding: const EdgeInsets.symmetric(vertical: 14),
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(12),
@@ -1946,7 +2142,7 @@ class _CartPanel extends StatelessWidget {
                                   width: 18,
                                   height: 18,
                                   child: CircularProgressIndicator(
-                                    color: Colors.white,
+                                    color: AppTheme.sageNavy,
                                     strokeWidth: 2,
                                   ),
                                 )
@@ -1954,13 +2150,13 @@ class _CartPanel extends StatelessWidget {
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
                                     Icon(Icons.check_circle,
-                                        size: 20, color: Colors.white),
+                                        size: 20, color: AppTheme.sageNavy),
                                     const SizedBox(width: 8),
                                     Text(
                                       'Complete',
                                       style:
                                           theme.textTheme.labelLarge?.copyWith(
-                                        color: Colors.white,
+                                        color: AppTheme.sageNavy,
                                         fontWeight: FontWeight.w700,
                                       ),
                                     ),
@@ -2036,24 +2232,33 @@ class _MenuItemCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final isShortHeight = MediaQuery.of(context).size.height < 420;
     final inventoryItemId = (item['inventoryItemId'] ?? '').toString().trim();
-    final isInventoryLinked = inventoryItemId.isNotEmpty;
-    final servingsRaw = item['servings'] ?? item['availableServings'] ?? 0;
+    final recipeId = (item['recipeId'] ?? '').toString().trim();
+    final isLinked = inventoryItemId.isNotEmpty || recipeId.isNotEmpty;
+    final servingsRaw = item['availableServings'];
     final servings = servingsRaw is num
         ? servingsRaw.toInt()
         : int.tryParse((servingsRaw ?? '').toString()) ?? 0;
-    final isUnlimited = servings == -1 || !isInventoryLinked;
     final manualAvailability = item['isAvailable'];
-    final isAvailable = manualAvailability is bool
-        ? manualAvailability
-        : (isUnlimited || servings > 0);
-    final canAdd = isAvailable && (isUnlimited || servings > 0);
+    final manualOn = manualAvailability is bool ? manualAvailability : true;
+    final rawIssues = item['stockIssues'];
+    final hasStockIssues = rawIssues is List && rawIssues.isNotEmpty;
+    final issueSummary = (item['stockIssueSummary'] ?? '').toString().trim();
+    final stockOut = isLinked && (servings <= 0 || hasStockIssues);
+    final isAvailable = manualOn && !stockOut;
+    final canAdd = isAvailable;
+    final statusText = !manualOn
+        ? 'Unavailable'
+        : (stockOut
+            ? (issueSummary.isEmpty
+                ? 'Out of stock'
+                : 'Out of stock: $issueSummary')
+            : 'Available');
 
     final priceRaw = item['price'] ?? 0;
     final price = priceRaw is num
         ? priceRaw.toDouble()
         : double.tryParse(priceRaw.toString()) ?? 0.0;
 
-    final category = (item['category'] ?? '').toString();
     final imageUrl = (item['imageUrl'] ?? '').toString().trim();
     final rawImageAlignmentX = item['imageAlignmentX'] is num
         ? (item['imageAlignmentX'] as num).toDouble()
@@ -2071,9 +2276,9 @@ class _MenuItemCard extends StatelessWidget {
         : rawImageAlignmentY > 1.0
             ? 1.0
             : rawImageAlignmentY;
-    final name = (item['name'] ?? '').toString();
+    final fullName = (item['name'] ?? '').toString();
     final theme = Theme.of(context);
-    final initials = _getInitials(name);
+    final initials = _getInitials(fullName);
 
     return Card(
       elevation: 0,
@@ -2103,8 +2308,10 @@ class _MenuItemCard extends StatelessWidget {
                           Image.network(
                             imageUrl,
                             fit: BoxFit.cover,
-                            alignment: Alignment(imageAlignmentX, imageAlignmentY),
-                            errorBuilder: (context, error, stackTrace) => Container(
+                            alignment:
+                                Alignment(imageAlignmentX, imageAlignmentY),
+                            errorBuilder: (context, error, stackTrace) =>
+                                Container(
                               color: theme.colorScheme.surfaceVariant,
                               alignment: Alignment.center,
                               child: Text(
@@ -2131,8 +2338,8 @@ class _MenuItemCard extends StatelessWidget {
                           decoration: BoxDecoration(
                             gradient: LinearGradient(
                               colors: [
-                                Theme.of(context).colorScheme.onSurface.withOpacity(0.0),
-                                Theme.of(context).colorScheme.onSurface.withOpacity(0.55),
+                                Colors.black.withValues(alpha: 0.0),
+                                AppTheme.sageNavy.withValues(alpha: 0.72),
                               ],
                               begin: Alignment.topCenter,
                               end: Alignment.bottomCenter,
@@ -2145,7 +2352,8 @@ class _MenuItemCard extends StatelessWidget {
                           child: Container(
                             padding: const EdgeInsets.all(6),
                             decoration: BoxDecoration(
-                              color: theme.colorScheme.onSurface.withOpacity(0.6),
+                              color: theme.colorScheme.onSurface
+                                  .withValues(alpha: 0.6),
                               borderRadius: BorderRadius.circular(12),
                             ),
                             child: Container(
@@ -2165,13 +2373,13 @@ class _MenuItemCard extends StatelessWidget {
                           right: 0,
                           bottom: 0,
                           child: Container(
-                            height: isShortHeight ? 44 : 52,
+                            height: isShortHeight ? 60 : 72,
                             padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
                             decoration: BoxDecoration(
                               gradient: LinearGradient(
                                 colors: [
-                                  theme.colorScheme.onSurface.withOpacity(0.08),
-                                  theme.colorScheme.onSurface.withOpacity(0.75),
+                                  AppTheme.sageNavy.withValues(alpha: 0.72),
+                                  Colors.black.withValues(alpha: 0.94),
                                 ],
                                 begin: Alignment.topCenter,
                                 end: Alignment.bottomCenter,
@@ -2182,21 +2390,22 @@ class _MenuItemCard extends StatelessWidget {
                               crossAxisAlignment: CrossAxisAlignment.center,
                               children: [
                                 Expanded(
-                                  child: SizedBox(
-                                    height: double.infinity,
-                                    child: Align(
-                                      alignment: Alignment.centerLeft,
-                                      child: _MarqueeText(
-                                        text: name,
-                                        style: theme.textTheme.bodyLarge?.copyWith(
-                                          color: theme.colorScheme.onPrimary,
-                                          fontWeight: FontWeight.w800,
-                                        ) ?? TextStyle(
-                                          color: theme.colorScheme.onPrimary,
-                                          fontSize: 14,
-                                          fontWeight: FontWeight.w800,
-                                        ),
-                                      ),
+                                  child: Tooltip(
+                                    message: fullName,
+                                    child: Text(
+                                      fullName,
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                      style:
+                                          theme.textTheme.bodyLarge?.copyWith(
+                                                color: Colors.white,
+                                                fontWeight: FontWeight.w800,
+                                              ) ??
+                                              const TextStyle(
+                                                color: Colors.white,
+                                                fontSize: 14,
+                                                fontWeight: FontWeight.w800,
+                                              ),
                                     ),
                                   ),
                                 ),
@@ -2204,7 +2413,7 @@ class _MenuItemCard extends StatelessWidget {
                                 Text(
                                   '₱${price.toStringAsFixed(2)}',
                                   style: theme.textTheme.bodyLarge?.copyWith(
-                                    color: theme.colorScheme.secondary,
+                                    color: AppTheme.sageCyan,
                                     fontWeight: FontWeight.w900,
                                   ),
                                 ),
@@ -2262,7 +2471,8 @@ class _MenuItemCard extends StatelessWidget {
                               backgroundColor: theme.colorScheme.primary,
                               foregroundColor: theme.colorScheme.onPrimary,
                               minimumSize: Size.zero,
-                              padding: const EdgeInsets.symmetric(horizontal: 10),
+                              padding:
+                                  const EdgeInsets.symmetric(horizontal: 10),
                               tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                               visualDensity: VisualDensity.compact,
                             ),
@@ -2278,18 +2488,26 @@ class _MenuItemCard extends StatelessWidget {
                       : Container(
                           height: isShortHeight ? 28 : 30,
                           decoration: BoxDecoration(
-                            color: theme.colorScheme.onSurface.withOpacity(0.08),
+                            color: theme.colorScheme.onSurface
+                                .withValues(alpha: 0.08),
                             borderRadius: BorderRadius.circular(999),
                             border: Border.all(
-                              color: theme.colorScheme.onSurface.withOpacity(0.16),
+                              color: theme.colorScheme.onSurface
+                                  .withValues(alpha: 0.16),
                             ),
                           ),
                           alignment: Alignment.center,
-                          child: Text(
-                            'Unavailable',
-                            style: theme.textTheme.labelSmall?.copyWith(
-                              color: theme.colorScheme.onSurfaceVariant,
-                              fontWeight: FontWeight.w800,
+                          child: Tooltip(
+                            message: statusText,
+                            child: Text(
+                              statusText,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              textAlign: TextAlign.center,
+                              style: theme.textTheme.labelSmall?.copyWith(
+                                color: theme.colorScheme.onSurfaceVariant,
+                                fontWeight: FontWeight.w800,
+                              ),
                             ),
                           ),
                         ),
@@ -2297,166 +2515,6 @@ class _MenuItemCard extends StatelessWidget {
           ],
         ),
       ),
-    );
-  }
-}
-
-class _MarqueeText extends StatefulWidget {
-  final String text;
-  final TextStyle style;
-  final double velocity;
-  final double gap;
-
-  const _MarqueeText({
-    Key? key,
-    required this.text,
-    required this.style,
-    this.velocity = 40,
-    this.gap = 24,
-  }) : super(key: key);
-
-  @override
-  State<_MarqueeText> createState() => _MarqueeTextState();
-}
-
-class _MarqueeTextState extends State<_MarqueeText>
-    with SingleTickerProviderStateMixin {
-  late AnimationController _controller;
-  double _scrollWidth = 0;
-  bool _needsScroll = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = AnimationController(vsync: this);
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  void _updateScroll(double textWidth, double maxWidth) {
-    final needsScroll = textWidth > maxWidth;
-    if (!needsScroll) {
-      if (_controller.isAnimating) {
-        _controller.stop();
-      }
-      if (_needsScroll) {
-        setState(() {
-          _needsScroll = false;
-        });
-      }
-      return;
-    }
-
-    final targetWidth = textWidth + widget.gap;
-    if (_scrollWidth == targetWidth && _needsScroll) return;
-
-    _scrollWidth = targetWidth;
-    _needsScroll = true;
-    _controller.duration = Duration(
-      milliseconds:
-          (_scrollWidth / widget.velocity * 1000).clamp(2500, 15000).toInt(),
-    );
-    _controller.repeat();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final textPainter = TextPainter(
-          text: TextSpan(text: widget.text, style: widget.style),
-          maxLines: 1,
-          textDirection: TextDirection.ltr,
-        )..layout();
-
-        final needsScroll = textPainter.width > constraints.maxWidth;
-        final textWidth = textPainter.width;
-        final targetWidth = textWidth + widget.gap;
-
-        if (needsScroll) {
-          if (_scrollWidth != targetWidth || !_needsScroll) {
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              if (!mounted) return;
-              setState(() {
-                _scrollWidth = targetWidth;
-                _needsScroll = true;
-                _controller.duration = Duration(
-                  milliseconds:
-                      (_scrollWidth / widget.velocity * 1000).clamp(2500, 15000).toInt(),
-                );
-                _controller.repeat();
-              });
-            });
-          }
-        } else if (_needsScroll) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (!mounted) return;
-            setState(() {
-              _needsScroll = false;
-              _controller.stop();
-            });
-          });
-        }
-
-        if (!needsScroll) {
-          return Text(
-            widget.text,
-            style: widget.style,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          );
-        }
-
-        return ClipRect(
-          child: SizedBox(
-            width: constraints.maxWidth,
-            child: OverflowBox(
-              maxWidth: double.infinity,
-              alignment: Alignment.centerLeft,
-              child: AnimatedBuilder(
-                animation: _controller,
-                builder: (context, child) {
-                  final offset = _controller.value * targetWidth;
-                  return Transform.translate(
-                    offset: Offset(-offset, 0),
-                    child: child,
-                  );
-                },
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    SizedBox(
-                      width: textWidth,
-                      child: Text(
-                        widget.text,
-                        style: widget.style,
-                        maxLines: 1,
-                        softWrap: false,
-                        overflow: TextOverflow.visible,
-                      ),
-                    ),
-                    SizedBox(width: widget.gap),
-                    SizedBox(
-                      width: textWidth,
-                      child: Text(
-                        widget.text,
-                        style: widget.style,
-                        maxLines: 1,
-                        softWrap: false,
-                        overflow: TextOverflow.visible,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        );
-      },
     );
   }
 }

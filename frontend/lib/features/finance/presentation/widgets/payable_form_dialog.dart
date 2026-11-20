@@ -176,8 +176,9 @@ class _PayableFormDialogState extends State<PayableFormDialog> {
     _yearlyDueDay = initial['dueDay'] is int ? initial['dueDay'] as int : null;
 
     _reminderEnabled = initial['reminderEnabled'] == true;
-    _reminderDaysBefore =
-        initial['reminderDaysBefore'] is int ? initial['reminderDaysBefore'] as int : 3;
+    _reminderDaysBefore = initial['reminderDaysBefore'] is int
+        ? initial['reminderDaysBefore'] as int
+        : 3;
     final time = (initial['reminderTime'] ?? '').toString();
     final parts = time.split(':');
     if (parts.length == 2) {
@@ -245,9 +246,12 @@ class _PayableFormDialogState extends State<PayableFormDialog> {
   void _onFrequencyChanged(String freq) {
     setState(() {
       _frequency = freq;
-      _monthlyDueDay = freq == 'monthly' ? (_monthlyDueDay ?? DateTime.now().day) : _monthlyDueDay;
+      _monthlyDueDay = freq == 'monthly'
+          ? (_monthlyDueDay ?? DateTime.now().day)
+          : _monthlyDueDay;
       if (freq == 'monthly') {
-        _dueDate = _defaultDueDateFor('monthly', _monthlyDueDay ?? DateTime.now().day);
+        _dueDate =
+            _defaultDueDateFor('monthly', _monthlyDueDay ?? DateTime.now().day);
       } else {
         _dueDate = _defaultDueDateFor(freq, 1);
       }
@@ -261,7 +265,8 @@ class _PayableFormDialogState extends State<PayableFormDialog> {
     final estimate =
         estimateText.isEmpty ? null : double.tryParse(estimateText);
 
-    final categoryError = _category.isEmpty ? 'Bill category is required' : null;
+    final categoryError =
+        _category.isEmpty ? 'Bill category is required' : null;
 
     // Fixed bills require a positive amount; variable bills may carry an
     // optional estimate but the actual is captured at payment time.
@@ -270,8 +275,7 @@ class _PayableFormDialogState extends State<PayableFormDialog> {
       if (amount == null || amount <= 0) {
         amountError = 'Enter the bill amount';
       }
-    } else if (estimateText.isNotEmpty &&
-        (estimate == null || estimate <= 0)) {
+    } else if (estimateText.isNotEmpty && (estimate == null || estimate <= 0)) {
       amountError = 'Enter a valid estimated amount or leave empty';
     }
 
@@ -503,7 +507,7 @@ class _PayableFormDialogState extends State<PayableFormDialog> {
         return Container(
           padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
-            border: Border.all(color: scheme.outlineVariant),
+            border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
             borderRadius: BorderRadius.circular(16),
           ),
           child: Column(
@@ -526,8 +530,7 @@ class _PayableFormDialogState extends State<PayableFormDialog> {
                 runSpacing: 8,
                 children: [1, 7, 14, 15, 21, 28, 30].map((day) {
                   final isSelected = _biWeeklyDueDays.contains(day);
-                  final atLimit =
-                      !isSelected && _biWeeklyDueDays.length >= 2;
+                  final atLimit = !isSelected && _biWeeklyDueDays.length >= 2;
                   return FilterChip(
                     label: Text('$day'),
                     selected: isSelected,
@@ -664,9 +667,9 @@ class _PayableFormDialogState extends State<PayableFormDialog> {
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: scheme.surfaceContainerHighest.withValues(alpha: 0.4),
+        color: Colors.white.withValues(alpha: 0.06),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: scheme.outlineVariant),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -720,7 +723,7 @@ class _PayableFormDialogState extends State<PayableFormDialog> {
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: scheme.surfaceContainerHighest.withValues(alpha: 0.4),
+        color: Colors.white.withValues(alpha: 0.06),
         borderRadius: BorderRadius.circular(16),
       ),
       child: Row(
@@ -788,9 +791,9 @@ class _PayableFormDialogState extends State<PayableFormDialog> {
       margin: const EdgeInsets.only(bottom: 20),
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: scheme.surfaceContainerHighest.withValues(alpha: 0.4),
+        color: Colors.white.withValues(alpha: 0.06),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: scheme.outlineVariant),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,

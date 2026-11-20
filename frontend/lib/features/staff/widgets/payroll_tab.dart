@@ -85,8 +85,7 @@ class _PayrollTabState extends State<_PayrollTab> {
     final endKey = _fmtDate(weekEnd);
 
     final profilesStream = _profilesFor(widget.eateryId);
-    final attendanceStream =
-        _attendanceFor(widget.eateryId, startKey, endKey);
+    final attendanceStream = _attendanceFor(widget.eateryId, startKey, endKey);
     final payoutsStream = _payoutsFor(widget.eateryId, startKey);
 
     return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
@@ -211,10 +210,12 @@ class _PayrollTabState extends State<_PayrollTab> {
                   children: [
                     Card(
                       elevation: 0,
-                      color: Colors.white,
+                      color: AppTheme.sagePanel,
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(12),
-                        side: BorderSide(color: Colors.grey.shade200),
+                        side: BorderSide(
+                          color: Colors.white.withValues(alpha: 0.1),
+                        ),
                       ),
                       child: Padding(
                         padding: const EdgeInsets.all(12),
@@ -224,7 +225,7 @@ class _PayrollTabState extends State<_PayrollTab> {
                               child: Text(
                                 'Weekly total',
                                 style: TextStyle(
-                                  color: Colors.grey.shade700,
+                                  color: Colors.white.withValues(alpha: 0.7),
                                   fontWeight: FontWeight.w700,
                                 ),
                               ),
@@ -254,10 +255,12 @@ class _PayrollTabState extends State<_PayrollTab> {
 
                       return Card(
                         elevation: 0,
-                        color: Colors.white,
+                        color: AppTheme.sagePanel,
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(12),
-                          side: BorderSide(color: Colors.grey.shade200),
+                          side: BorderSide(
+                            color: Colors.white.withValues(alpha: 0.1),
+                          ),
                         ),
                         child: ListTile(
                           title: Text(
@@ -358,4 +361,3 @@ class _PayrollTabState extends State<_PayrollTab> {
     );
   }
 }
-

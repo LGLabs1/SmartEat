@@ -1,10 +1,17 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart' hide AuthProvider;
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
 import '../services/api_service.dart';
 import '../services/auth_provider.dart';
+import '../theme.dart';
+import '../utils/notification_visibility.dart';
+import '../widgets/sage_header_button.dart';
+import '../widgets/smart_eat_header.dart';
 import 'staff_management_screen.dart';
 
 class NotificationsScreen extends StatefulWidget {
@@ -21,80 +28,148 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     'Inventory',
     'Bills',
     'Orders',
+    'Attendance',
     'Push',
   ];
 
-  bool _isLoading = true;
+  bool _isProfileLoading = true;
   bool _isWorking = false;
   String? _error;
-  bool _isIndexError = false;
   String _filter = 'All';
-  String? _uid;
-  String _role = '';
-  List<NotificationItem> _notifications = [];
+  String _eateryId = '';
+  String _uid = '';
+  bool _isAdmin = false;
+  Stream<List<NotificationItem>>? _notificationStream;
 
   @override
   void initState() {
     super.initState();
-    _loadNotifications();
+    _loadIdentity();
   }
 
-  bool get _canDelete => _role == 'admin';
+  bool get _canDelete => _isAdmin;
 
-  Future<void> _loadNotifications() async {
+  Future<void> _loadIdentity() async {
     setState(() {
-      _isLoading = true;
+      _isProfileLoading = true;
       _error = null;
-      _isIndexError = false;
     });
-
     try {
       final profile =
           await context.read<AuthProvider>().getCurrentUserProfile();
       final eateryId = (profile?['eateryId'] ?? '').toString().trim();
-      final uid = (profile?['uid'] ?? '').toString().trim();
+      final uid = (profile?['uid'] ??
+              profile?['id'] ??
+              FirebaseAuth.instance.currentUser?.uid ??
+              '')
+          .toString()
+          .trim();
       final role = (profile?['role'] ?? '').toString().trim().toLowerCase();
-
       if (eateryId.isEmpty) {
+        if (!mounted) return;
         setState(() {
           _error = 'No eatery associated with this account';
-          _isLoading = false;
+          _isProfileLoading = false;
         });
         return;
       }
 
-      _uid = uid;
-      _role = role;
-
-      await Future.wait([
-        _syncInventoryAlerts(eateryId),
-        _syncPayableAlerts(eateryId),
-      ]);
-
-      final isAdmin = role == 'admin' || profile?['isAdmin'] == true;
-      final notifications = (await _fetchStoredNotifications(eateryId, uid))
-          .where((n) => isAdmin || n.type != 'staff_approval')
-          .toList();
-      notifications.sort((a, b) => b.createdAt.compareTo(a.createdAt));
-
+      final isAdmin = role == 'admin' ||
+          profile?['isAdmin'] == true ||
+          profile?['isAdmin'] == 'true' ||
+          profile?['isAdmin'] == 1;
       if (!mounted) return;
       setState(() {
-        _notifications = notifications;
-        _isLoading = false;
+        _eateryId = eateryId;
+        _uid = uid;
+        _isAdmin = isAdmin;
+        _isProfileLoading = false;
       });
+      _resetStream();
+      if (isAdmin) _runAdminSync(eateryId);
     } catch (e) {
       if (!mounted) return;
-      final errorStr = e.toString();
-      final isIndexError = errorStr.contains('failed-precondition') &&
-          errorStr.contains('index');
       setState(() {
-        _error = isIndexError
-            ? 'Database index required. Please create a composite index for eateryId + createdAt in Firebase Console.'
-            : 'Failed to load notifications: $e';
-        _isLoading = false;
-        _isIndexError = isIndexError;
+        _error = 'Failed to load notifications: $e';
+        _isProfileLoading = false;
       });
     }
+  }
+
+  void _runAdminSync(String eateryId) {
+    Future.wait([
+      _syncInventoryAlerts(eateryId),
+      _syncPayableAlerts(eateryId),
+    ]).then((_) {}, onError: (_) {});
+  }
+
+  void _resetStream() {
+    if (_eateryId.isEmpty) return;
+    _notificationStream = _watchStoredNotifications();
+  }
+
+  bool _isIndexError(dynamic error) {
+    final text = error.toString();
+    return text.contains('failed-precondition') || text.contains('index');
+  }
+
+  Query<Map<String, dynamic>> _notificationQuery({required bool ordered}) {
+    Query<Map<String, dynamic>> query = FirebaseFirestore.instance
+        .collection('notifications')
+        .where('eateryId', isEqualTo: _eateryId);
+    if (ordered) {
+      query = query.orderBy('createdAt', descending: true).limit(200);
+    } else {
+      query = query.limit(250);
+    }
+    return query;
+  }
+
+  Stream<List<NotificationItem>> _watchStoredNotifications() async* {
+    try {
+      await for (final snapshot
+          in _notificationQuery(ordered: true).snapshots()) {
+        yield _mapSnapshot(snapshot);
+      }
+    } catch (e) {
+      if (!_isIndexError(e)) rethrow;
+      await for (final snapshot
+          in _notificationQuery(ordered: false).snapshots()) {
+        yield _mapSnapshot(snapshot);
+      }
+    }
+  }
+
+  List<NotificationItem> _mapSnapshot(
+      QuerySnapshot<Map<String, dynamic>> snapshot) {
+    final items = snapshot.docs.map((doc) {
+      final data = Map<String, dynamic>.from(doc.data());
+      final readByRaw = data['readBy'];
+      final readBy = readByRaw is Map
+          ? readByRaw.map((k, v) => MapEntry(k.toString(), v))
+          : <String, dynamic>{};
+      final legacyRead = data['isRead'] == true;
+      final isRead = _uid.isNotEmpty
+          ? (readBy.containsKey(_uid) || (readBy.isEmpty && legacyRead))
+          : legacyRead;
+      final createdAt = (data['createdAt'] as Timestamp?)?.toDate() ??
+          (data['updatedAt'] as Timestamp?)?.toDate() ??
+          (data['resolvedAt'] as Timestamp?)?.toDate() ??
+          DateTime.now();
+      return NotificationItem(
+        id: doc.id,
+        title: (data['title'] ?? 'Notification').toString(),
+        body: (data['body'] ?? '').toString(),
+        type: (data['type'] ?? 'general').toString(),
+        source:
+            (data['source'] ?? data['data']?['source'] ?? 'system').toString(),
+        isRead: isRead,
+        createdAt: createdAt,
+        data: data,
+      );
+    }).toList();
+    items.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    return items;
   }
 
   String _safeDocId(String raw) {
@@ -111,6 +186,8 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     required String type,
     required String source,
     required String dedupeKey,
+    String audience = 'admin',
+    List<String> targetUids = const <String>[],
     Map<String, dynamic>? data,
     DateTime? createdAt,
   }) async {
@@ -123,6 +200,8 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       'body': body,
       'type': type,
       'source': source,
+      'audience': audience,
+      'targetUids': targetUids,
       'dedupeKey': dedupeKey,
       'data': data ?? <String, dynamic>{},
       'updatedAt': FieldValue.serverTimestamp(),
@@ -135,6 +214,8 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
           : Timestamp.fromDate(createdAt);
       payload['readBy'] = <String, dynamic>{};
       payload['isRead'] = false;
+    } else if (existing.data()?['readBy'] is! Map) {
+      payload['readBy'] = <String, dynamic>{};
     }
     await ref.set(payload, SetOptions(merge: true));
   }
@@ -307,117 +388,56 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     } catch (_) {}
   }
 
-  Future<List<NotificationItem>> _fetchStoredNotifications(
-      String eateryId, String uid) async {
-    QuerySnapshot snapshot;
-    try {
-      snapshot = await FirebaseFirestore.instance
-          .collection('notifications')
-          .where('eateryId', isEqualTo: eateryId)
-          .orderBy('createdAt', descending: true)
-          .limit(200)
-          .get();
-    } catch (e) {
-      if (e.toString().contains('failed-precondition') ||
-          e.toString().contains('index')) {
-        snapshot = await FirebaseFirestore.instance
-            .collection('notifications')
-            .where('eateryId', isEqualTo: eateryId)
-            .limit(250)
-            .get();
-      } else {
-        rethrow;
-      }
-    }
-
-    final items = snapshot.docs.map((doc) {
-      final data = Map<String, dynamic>.from(doc.data() as Map);
-      final readByRaw = data['readBy'];
-      final readBy = readByRaw is Map
-          ? readByRaw.map((k, v) => MapEntry(k.toString(), v))
-          : <String, dynamic>{};
-      final legacyRead = data['isRead'] == true;
-      final isRead =
-          uid.isNotEmpty ? (readBy.containsKey(uid) || legacyRead) : legacyRead;
-      final createdAt = (data['createdAt'] as Timestamp?)?.toDate() ??
-          (data['updatedAt'] as Timestamp?)?.toDate() ??
-          (data['resolvedAt'] as Timestamp?)?.toDate() ??
-          DateTime.now();
-      return NotificationItem(
-        id: doc.id,
-        title: (data['title'] ?? 'Notification').toString(),
-        body: (data['body'] ?? '').toString(),
-        type: (data['type'] ?? 'general').toString(),
-        source:
-            (data['source'] ?? data['data']?['source'] ?? 'system').toString(),
-        isRead: isRead,
-        createdAt: createdAt,
-        data: data,
-      );
-    }).toList();
-    items.sort((a, b) => b.createdAt.compareTo(a.createdAt));
-    return items;
+  Future<void> _refresh() async {
+    if (_eateryId.isEmpty) return;
+    if (_isAdmin) _runAdminSync(_eateryId);
+    if (!mounted) return;
+    setState(() {
+      _error = null;
+      _resetStream();
+    });
+    await Future<void>.delayed(const Duration(milliseconds: 250));
   }
 
   Future<void> _markAsRead(NotificationItem notification) async {
-    if (_uid == null || _uid!.isEmpty || notification.isRead) return;
+    if (_uid.isEmpty || notification.isRead) return;
     try {
       await FirebaseFirestore.instance
           .collection('notifications')
           .doc(notification.id)
           .set({
-        'readBy': {_uid!: FieldValue.serverTimestamp()},
-        'isRead': true,
+        'readBy': {_uid: FieldValue.serverTimestamp()},
         'readAt': FieldValue.serverTimestamp(),
         'updatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
-
-      if (!mounted) return;
-      setState(() {
-        _notifications = _notifications
-            .map((n) => n.id == notification.id ? n.copyWith(isRead: true) : n)
-            .toList();
-      });
     } catch (_) {}
   }
 
-  Future<void> _markAllAsRead() async {
-    if (_uid == null || _uid!.isEmpty) return;
-    final unread = _notifications.where((n) => !n.isRead).toList();
-    if (unread.isEmpty) return;
+  Future<void> _markAllAsRead(List<NotificationItem> unread) async {
+    if (_uid.isEmpty || unread.isEmpty) return;
     setState(() => _isWorking = true);
     try {
-      final chunks = <List<NotificationItem>>[];
       for (var i = 0; i < unread.length; i += 400) {
-        chunks.add(unread.sublist(i, (i + 400).clamp(0, unread.length)));
-      }
-      for (final chunk in chunks) {
+        final chunk = unread.sublist(i, (i + 400).clamp(0, unread.length));
         final batch = FirebaseFirestore.instance.batch();
         for (final n in chunk) {
-          final ref =
-              FirebaseFirestore.instance.collection('notifications').doc(n.id);
           batch.set(
-              ref,
-              {
-                'readBy': {_uid!: FieldValue.serverTimestamp()},
-                'isRead': true,
-                'readAt': FieldValue.serverTimestamp(),
-                'updatedAt': FieldValue.serverTimestamp(),
-              },
-              SetOptions(merge: true));
+            FirebaseFirestore.instance.collection('notifications').doc(n.id),
+            {
+              'readBy': {_uid: FieldValue.serverTimestamp()},
+              'readAt': FieldValue.serverTimestamp(),
+              'updatedAt': FieldValue.serverTimestamp(),
+            },
+            SetOptions(merge: true),
+          );
         }
         await batch.commit();
       }
-      if (!mounted) return;
-      setState(() {
-        _notifications =
-            _notifications.map((n) => n.copyWith(isRead: true)).toList();
-      });
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Failed to mark all as read: $e')));
-      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to mark all as read: $e')),
+      );
     } finally {
       if (mounted) setState(() => _isWorking = false);
     }
@@ -429,20 +449,15 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
           .collection('notifications')
           .doc(notification.id)
           .delete();
-      if (!mounted) return;
-      setState(() {
-        _notifications.removeWhere((n) => n.id == notification.id);
-      });
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text('Failed to delete: $e')));
-      await _loadNotifications();
     }
   }
 
-  List<NotificationItem> get _filteredNotifications {
-    final items = _notifications.where((n) {
+  List<NotificationItem> _applyFilter(List<NotificationItem> items) {
+    final filtered = items.where((n) {
       switch (_filter) {
         case 'Unread':
           return !n.isRead;
@@ -458,6 +473,8 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
               n.type == 'payable';
         case 'Orders':
           return n.type == 'order' || n.source == 'orders';
+        case 'Attendance':
+          return n.type == 'attendance' || n.source == 'attendance';
         case 'Push':
           return n.source == 'push' || n.type == 'push';
         case 'All':
@@ -465,11 +482,9 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
           return true;
       }
     }).toList();
-    items.sort((a, b) => b.createdAt.compareTo(a.createdAt));
-    return items;
+    filtered.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    return filtered;
   }
-
-  int get _unreadCount => _notifications.where((n) => !n.isRead).length;
 
   IconData _getIconForType(String type, String source) {
     switch (type.toLowerCase()) {
@@ -486,6 +501,8 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         return Icons.receipt_long_outlined;
       case 'order':
         return Icons.receipt_outlined;
+      case 'attendance':
+        return Icons.access_time;
       case 'staff':
         return Icons.person_outline;
       case 'finance':
@@ -502,25 +519,27 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     switch (type.toLowerCase()) {
       case 'out_of_stock':
       case 'bill_overdue':
-        return Colors.red;
+        return AppTheme.error;
       case 'low_stock':
       case 'inventory':
       case 'bill_due_soon':
-        return Colors.orange;
+        return AppTheme.warning;
       case 'bill':
       case 'payable':
-        return Colors.blue;
+        return AppTheme.sageBlue;
       case 'order':
-        return Colors.green;
+        return AppTheme.sageSuccess;
+      case 'attendance':
+        return AppTheme.sageCyan;
       case 'staff':
-        return Colors.purple;
+        return AppTheme.sageAccent;
       case 'finance':
-        return Colors.teal;
+        return AppTheme.sageCyan;
       case 'push':
-        return Colors.indigo;
+        return AppTheme.sageBlue;
       default:
-        if (source == 'push') return Colors.indigo;
-        return Colors.grey;
+        if (source == 'push') return AppTheme.sageBlue;
+        return AppTheme.sageAccent;
     }
   }
 
@@ -537,65 +556,99 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final filtered = _filteredNotifications;
-    return Scaffold(
-      appBar: AppBar(
-        leading: Navigator.of(context).canPop()
-            ? IconButton(
-                icon: const Icon(Icons.arrow_back),
-                onPressed: () => Navigator.of(context).maybePop())
-            : null,
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('Notifications'),
-            Text(
-              _unreadCount > 0
-                  ? '$_unreadCount unread'
-                  : 'System and push alerts',
-              style: const TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.normal,
-                  color: Colors.white70),
+    return Theme(
+      data: AppTheme.dashboardTheme,
+      child: StreamBuilder<List<NotificationItem>>(
+        stream: _notificationStream,
+        builder: (context, snapshot) {
+          final visible = (snapshot.data ?? <NotificationItem>[])
+              .where((n) => notificationVisibleToUser(
+                    data: n.data,
+                    uid: _uid,
+                    isAdmin: _isAdmin,
+                  ))
+              .toList();
+          final unread = visible.where((n) => !n.isRead).toList();
+          final filtered = _applyFilter(visible);
+          return Scaffold(
+            backgroundColor: AppTheme.sageNavy,
+            appBar: _buildAppBar(unread),
+            body: Column(
+              children: [
+                _buildFilterBar(unread.length),
+                if (_isWorking)
+                  const LinearProgressIndicator(
+                    minHeight: 2,
+                    color: AppTheme.sageAccent,
+                  ),
+                Expanded(
+                  child: _isProfileLoading
+                      ? const Center(child: CircularProgressIndicator())
+                      : _error != null
+                          ? _buildErrorState(_error)
+                          : (snapshot.hasError && !snapshot.hasData)
+                              ? _buildErrorState(snapshot.error)
+                              : !snapshot.hasData
+                                  ? const Center(
+                                      child: CircularProgressIndicator())
+                                  : filtered.isEmpty
+                                      ? _buildEmptyState(
+                                          filteredBy: _filter,
+                                          hasAny: visible.isNotEmpty,
+                                        )
+                                      : _buildNotificationList(filtered),
+                ),
+              ],
             ),
-          ],
-        ),
-        actions: [
-          if (_unreadCount > 0)
-            TextButton(
-              onPressed: _isWorking ? null : _markAllAsRead,
-              child: const Text('Mark all read',
-                  style: TextStyle(color: Colors.white)),
-            ),
-          IconButton(
-              icon: const Icon(Icons.refresh),
-              onPressed: _isLoading ? null : _loadNotifications,
-              tooltip: 'Refresh'),
-        ],
-      ),
-      body: Column(
-        children: [
-          _buildFilterBar(),
-          if (_isWorking) const LinearProgressIndicator(minHeight: 2),
-          Expanded(
-            child: _isLoading
-                ? const Center(child: CircularProgressIndicator())
-                : _error != null
-                    ? _buildErrorState()
-                    : filtered.isEmpty
-                        ? _buildEmptyState(filteredBy: _filter)
-                        : _buildNotificationList(filtered),
-          ),
-        ],
+          );
+        },
       ),
     );
   }
 
-  Widget _buildFilterBar() {
+  PreferredSizeWidget _buildAppBar(List<NotificationItem> unread) {
+    final unreadCount = unread.length;
+    return SmartEatHeader(
+      leading: Navigator.of(context).canPop()
+          ? IconButton(
+              icon: const Icon(Icons.arrow_back),
+              onPressed: () => Navigator.of(context).maybePop())
+          : null,
+      title: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('Notifications'),
+          Text(
+            unreadCount > 0 ? '$unreadCount unread' : 'System and push alerts',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.normal,
+              color: Colors.white.withValues(alpha: 0.7),
+            ),
+          ),
+        ],
+      ),
+      actions: [
+        const SageHeaderButton(),
+        if (unreadCount > 0)
+          TextButton(
+            onPressed: _isWorking ? null : () => _markAllAsRead(unread),
+            child: const Text('Mark all read'),
+          ),
+        IconButton(
+          icon: const Icon(Icons.refresh),
+          onPressed: _isProfileLoading ? null : _refresh,
+          tooltip: 'Refresh',
+        ),
+      ],
+    );
+  }
+
+  Widget _buildFilterBar(int unreadCount) {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.fromLTRB(12, 10, 12, 6),
-      color: Colors.white,
+      color: AppTheme.sageNavy,
       child: SingleChildScrollView(
         scrollDirection: Axis.horizontal,
         child: Row(
@@ -604,7 +657,12 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
             return Padding(
               padding: const EdgeInsets.only(right: 8),
               child: ChoiceChip(
-                label: Text(filter),
+                label: filter == 'Unread' && unreadCount > 0
+                    ? Badge(
+                        label: Text('$unreadCount'),
+                        child: const Text('Unread'),
+                      )
+                    : Text(filter),
                 selected: selected,
                 onSelected: (_) => setState(() => _filter = filter),
               ),
@@ -617,66 +675,95 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
 
   Widget _buildNotificationList(List<NotificationItem> items) {
     return RefreshIndicator(
-      onRefresh: _loadNotifications,
+      color: AppTheme.sageAccent,
+      backgroundColor: AppTheme.sagePanel,
+      onRefresh: _refresh,
       child: ListView.separated(
-        padding: const EdgeInsets.symmetric(vertical: 8),
+        padding: const EdgeInsets.fromLTRB(
+          AppTheme.pagePadding,
+          8,
+          AppTheme.pagePadding,
+          24,
+        ),
         itemCount: items.length,
-        separatorBuilder: (_, __) => const Divider(height: 1),
+        separatorBuilder: (_, __) => const SizedBox(height: 10),
         itemBuilder: (context, index) => _buildNotificationTile(items[index]),
       ),
     );
   }
 
   Widget _buildNotificationTile(NotificationItem notification) {
+    final scheme = Theme.of(context).colorScheme;
     final icon = _getIconForType(notification.type, notification.source);
     final color = _getColorForType(notification.type, notification.source);
-    final tile = ListTile(
-      tileColor:
-          notification.isRead ? Colors.white : color.withValues(alpha: 0.04),
-      leading: Container(
-        width: 44,
-        height: 44,
-        decoration: BoxDecoration(
-            color: color.withValues(alpha: 0.12),
-            borderRadius: BorderRadius.circular(12)),
-        child: Icon(icon, color: color),
-      ),
-      title: Text(
-        notification.title,
-        style: TextStyle(
-            fontWeight:
-                notification.isRead ? FontWeight.w500 : FontWeight.w700),
-      ),
-      subtitle: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const SizedBox(height: 2),
-          Text(
-            notification.body,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-                color: notification.isRead
-                    ? Colors.grey.shade700
-                    : Colors.black87),
+    final tile = Material(
+      color:
+          notification.isRead ? scheme.surface : color.withValues(alpha: 0.1),
+      borderRadius: BorderRadius.circular(AppTheme.cardRadius),
+      child: ListTile(
+        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppTheme.cardRadius),
+          side: BorderSide(
+            color: notification.isRead
+                ? scheme.outline.withValues(alpha: 0.2)
+                : color.withValues(alpha: 0.35),
           ),
-          const SizedBox(height: 4),
-          Text(_formatTime(notification.createdAt),
-              style: TextStyle(fontSize: 12, color: Colors.grey.shade500)),
-        ],
+        ),
+        leading: Container(
+          width: 44,
+          height: 44,
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.16),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Icon(icon, color: color),
+        ),
+        title: Text(
+          notification.title,
+          style: TextStyle(
+            fontWeight: notification.isRead ? FontWeight.w600 : FontWeight.w800,
+            color: scheme.onSurface,
+          ),
+        ),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const SizedBox(height: 3),
+            Text(
+              notification.body,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: scheme.onSurface.withValues(alpha: 0.7),
+              ),
+            ),
+            const SizedBox(height: 5),
+            Text(
+              _formatTime(notification.createdAt),
+              style: TextStyle(
+                fontSize: 12,
+                color: scheme.onSurface.withValues(alpha: 0.5),
+              ),
+            ),
+          ],
+        ),
+        trailing: notification.isRead
+            ? null
+            : Container(
+                width: 9,
+                height: 9,
+                decoration: BoxDecoration(
+                  color: AppTheme.sageAccent,
+                  borderRadius: BorderRadius.circular(5),
+                ),
+              ),
+        onTap: () async {
+          await _markAsRead(notification);
+          if (mounted)
+            _showNotificationDetail(notification.copyWith(isRead: true));
+        },
       ),
-      trailing: notification.isRead
-          ? null
-          : Container(
-              width: 9,
-              height: 9,
-              decoration: BoxDecoration(
-                  color: Colors.blue, borderRadius: BorderRadius.circular(5))),
-      onTap: () async {
-        await _markAsRead(notification);
-        if (mounted)
-          _showNotificationDetail(notification.copyWith(isRead: true));
-      },
     );
 
     if (!_canDelete) return tile;
@@ -684,18 +771,18 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       key: Key(notification.id),
       direction: DismissDirection.endToStart,
       background: Container(
-        color: Colors.red,
+        color: AppTheme.error.withValues(alpha: 0.85),
         alignment: Alignment.centerRight,
         padding: const EdgeInsets.only(right: 16),
-        child: const Icon(Icons.delete, color: Colors.white),
+        child: Icon(Icons.delete, color: scheme.onError),
       ),
-      confirmDismiss: (_) async => true,
       onDismissed: (_) => _deleteNotification(notification),
       child: tile,
     );
   }
 
   void _showNotificationDetail(NotificationItem notification) {
+    final scheme = Theme.of(context).colorScheme;
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -705,9 +792,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                 color:
                     _getColorForType(notification.type, notification.source)),
             const SizedBox(width: 12),
-            Expanded(
-                child: Text(notification.title,
-                    style: const TextStyle(fontSize: 18))),
+            Expanded(child: Text(notification.title)),
           ],
         ),
         content: Column(
@@ -717,15 +802,24 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
             Text(notification.body),
             const SizedBox(height: 16),
             Text(
-                'Received: ${DateFormat('MMM d, yyyy h:mm a').format(notification.createdAt)}',
-                style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
+              'Received: ${DateFormat('MMM d, yyyy h:mm a').format(notification.createdAt)}',
+              style: TextStyle(
+                fontSize: 12,
+                color: scheme.onSurface.withValues(alpha: 0.6),
+              ),
+            ),
             const SizedBox(height: 6),
-            Text('Source: ${notification.source}',
-                style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
+            Text(
+              'Source: ${notification.source}',
+              style: TextStyle(
+                fontSize: 12,
+                color: scheme.onSurface.withValues(alpha: 0.6),
+              ),
+            ),
           ],
         ),
         actions: [
-          if (notification.type == 'staff_approval' && _role == 'admin')
+          if (notification.type == 'staff_approval' && _isAdmin)
             FilledButton(
               onPressed: () {
                 final navigator = Navigator.of(context);
@@ -746,8 +840,11 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     );
   }
 
-  Widget _buildErrorState() {
-    final isIndexError = _isIndexError || (_error?.contains('index') ?? false);
+  Widget _buildErrorState(Object? error) {
+    final scheme = Theme.of(context).colorScheme;
+    final isIndexError = error != null
+        ? _isIndexError(error)
+        : (_error?.contains('index') ?? false);
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(24),
@@ -756,33 +853,43 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
           children: [
             Icon(isIndexError ? Icons.build_outlined : Icons.error_outline,
                 size: 64,
-                color: isIndexError
-                    ? Colors.orange.shade400
-                    : Colors.grey.shade400),
+                color: isIndexError ? AppTheme.warning : scheme.error),
             const SizedBox(height: 16),
             Text(
-                isIndexError
-                    ? 'Database Setup Required'
-                    : 'Error Loading Notifications',
-                style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.grey.shade700)),
+              isIndexError
+                  ? 'Notifications are getting set up'
+                  : "We couldn't load notifications",
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w700,
+                color: scheme.onSurface,
+              ),
+            ),
             const SizedBox(height: 8),
-            Text(_error!,
-                textAlign: TextAlign.center,
-                style: TextStyle(color: Colors.grey.shade600)),
+            Text(
+              isIndexError
+                  ? 'Please try again in a moment. This usually settles right after setup.'
+                  : 'Please check your connection and try again.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: scheme.onSurface.withValues(alpha: 0.7),
+              ),
+            ),
             const SizedBox(height: 16),
-            ElevatedButton(
-                onPressed: _loadNotifications, child: const Text('Retry')),
+            FilledButton.icon(
+              onPressed: _loadIdentity,
+              icon: const Icon(Icons.refresh),
+              label: const Text('Retry'),
+            ),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildEmptyState({required String filteredBy}) {
-    final isFiltered = filteredBy != 'All';
+  Widget _buildEmptyState({required String filteredBy, required bool hasAny}) {
+    final scheme = Theme.of(context).colorScheme;
+    final isFiltered = filteredBy != 'All' || hasAny;
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(24),
@@ -790,23 +897,27 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(Icons.notifications_none_outlined,
-                size: 64, color: Colors.grey.shade400),
+                size: 64, color: scheme.onSurface.withValues(alpha: 0.35)),
             const SizedBox(height: 16),
             Text(
-                isFiltered
-                    ? 'No $filteredBy notifications'
-                    : 'No notifications yet',
-                style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.grey.shade600)),
+              isFiltered
+                  ? 'No $filteredBy notifications'
+                  : 'No notifications yet',
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w700,
+                color: scheme.onSurface,
+              ),
+            ),
             const SizedBox(height: 8),
             Text(
               isFiltered
                   ? 'Try another filter or pull to refresh.'
-                  : 'System alerts and push notifications will appear here when important events occur.',
+                  : "Updates for your eatery will appear here as things happen.",
               textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.grey.shade600),
+              style: TextStyle(
+                color: scheme.onSurface.withValues(alpha: 0.65),
+              ),
             ),
           ],
         ),

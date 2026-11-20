@@ -2,7 +2,7 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../services/ai_assistant_provider.dart';
-import 'floating_ai_button.dart';
+import 'sage_avatar.dart';
 import 'sage_markdown.dart';
 import 'sage_shared_views.dart';
 
@@ -120,34 +120,42 @@ class _AISidePanelState extends State<AISidePanel> {
                           // Sage chat tab: SelectionArea lets the whole
                           // conversation be drag-selected in one gesture.
                           SelectionArea(
-                            child: ListView(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 16, vertical: 8),
-                              cacheExtent: 4000,
-                              children: [
-                                Padding(
-                                  padding: const EdgeInsets.only(bottom: 8),
-                                  child: Row(
-                                    children: [
-                                      Icon(
-                                        Icons.assistant_outlined,
-                                        color: Colors.blueAccent.shade100,
-                                        size: 16,
-                                      ),
-                                      const SizedBox(width: 6),
-                                      const Text(
-                                        'Sage Business Assistant',
-                                        style: TextStyle(
-                                          color: Colors.white70,
-                                          fontSize: 13,
-                                          fontWeight: FontWeight.bold,
+                            child: Scrollbar(
+                              controller: _chatScrollController,
+                              thumbVisibility: true,
+                              interactive: true,
+                              thickness: 4,
+                              radius: const Radius.circular(6),
+                              child: ListView(
+                                controller: _chatScrollController,
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 16, vertical: 8),
+                                cacheExtent: 4000,
+                                children: [
+                                  Padding(
+                                    padding: const EdgeInsets.only(bottom: 8),
+                                    child: Row(
+                                      children: [
+                                        Icon(
+                                          Icons.assistant_outlined,
+                                          color: Colors.blueAccent.shade100,
+                                          size: 16,
                                         ),
-                                      ),
-                                    ],
+                                        const SizedBox(width: 6),
+                                        const Text(
+                                          'Sage Business Assistant',
+                                          style: TextStyle(
+                                            color: Colors.white70,
+                                            fontSize: 13,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
                                   ),
-                                ),
-                                _buildChatHistory(provider),
-                              ],
+                                  _buildChatHistory(provider),
+                                ],
+                              ),
                             ),
                           ),
                           // Summary tab: latest briefing report + metrics.
@@ -224,8 +232,8 @@ class _AISidePanelState extends State<AISidePanel> {
           ),
           IconButton(
             onPressed: () => provider.setFullScreen(true),
-            icon: const Icon(Icons.open_in_full,
-                color: Colors.white70, size: 20),
+            icon:
+                const Icon(Icons.open_in_full, color: Colors.white70, size: 20),
             tooltip: 'Expand to full screen',
           ),
           IconButton(
@@ -253,7 +261,8 @@ class _AISidePanelState extends State<AISidePanel> {
         ),
         child: Column(
           children: [
-            Icon(Icons.chat_bubble_outline_rounded, color: Colors.white30, size: 32),
+            Icon(Icons.chat_bubble_outline_rounded,
+                color: Colors.white30, size: 32),
             const SizedBox(height: 10),
             const Text(
               'No messages yet — I\'m all ears! 🌿 Ask me how sales are '
@@ -277,8 +286,7 @@ class _AISidePanelState extends State<AISidePanel> {
     final streamingHasContent = lastMsg != null &&
         lastMsg['role'] == 'assistant' &&
         (lastMsg['content'] as String? ?? '').isNotEmpty;
-    final showThinking =
-        provider.isGeneratingResponse && !streamingHasContent;
+    final showThinking = provider.isGeneratingResponse && !streamingHasContent;
 
     return ListView.builder(
       shrinkWrap: true,
@@ -431,7 +439,8 @@ class _AISidePanelState extends State<AISidePanel> {
                   ),
                   filled: true,
                   fillColor: Colors.white.withValues(alpha: 0.05),
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                  contentPadding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(20),
                     borderSide: BorderSide.none,
@@ -444,16 +453,22 @@ class _AISidePanelState extends State<AISidePanel> {
                     ),
                   ),
                 ),
-                onSubmitted: provider.isGeneratingResponse ? null : (v) => _handleSend(provider),
+                onSubmitted: provider.isGeneratingResponse
+                    ? null
+                    : (v) => _handleSend(provider),
               ),
             ),
           ),
           const SizedBox(width: 8),
           IconButton(
-            onPressed: provider.isGeneratingResponse ? null : () => _handleSend(provider),
+            onPressed: provider.isGeneratingResponse
+                ? null
+                : () => _handleSend(provider),
             icon: Icon(
               Icons.send_rounded,
-              color: provider.isGeneratingResponse ? Colors.white30 : Colors.blueAccent.shade100,
+              color: provider.isGeneratingResponse
+                  ? Colors.white30
+                  : Colors.blueAccent.shade100,
             ),
             style: IconButton.styleFrom(
               backgroundColor: Colors.white.withValues(alpha: 0.05),

@@ -1,13 +1,45 @@
 import 'dart:async';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
-// Background message handler must be a top-level function
 @pragma('vm:entry-point')
-Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {}
+Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  try {
+    if (Firebase.apps.isEmpty) {
+      await Firebase.initializeApp();
+    }
+    final notification = message.notification;
+    final title = (notification?.title ?? message.data['title'] ?? 'Smart Eat')
+        .toString();
+    final body = (notification?.body ?? message.data['body'] ?? '').toString();
+    final type = (message.data['type'] ?? 'push').toString();
+    final messageId = message.messageId;
+    final service = NotificationService();
+    final payloadEateryId = (message.data['eateryId'] ?? '').toString().trim();
+    await service.persistFeedNotification(
+      title: title,
+      body: body,
+      type: type,
+      source: (message.data['source'] ?? 'push').toString(),
+      audience: (message.data['audience'] ?? 'all').toString(),
+      targetUids: service._stringList(message.data['targetUids']),
+      eateryId: payloadEateryId.isEmpty ? null : payloadEateryId,
+      dedupeKey: messageId != null && messageId.isNotEmpty
+          ? 'push_$messageId'
+          : 'push_${DateTime.now().millisecondsSinceEpoch}',
+      data: {
+        ...message.data,
+        if (messageId != null) 'messageId': messageId,
+        'target': message.data['target'] ?? message.data['route'],
+        'background': true,
+      },
+    );
+  } catch (_) {}
+}
 
 class NotificationService {
   static final NotificationService _instance = NotificationService._internal();
@@ -19,6 +51,7 @@ class NotificationService {
       FlutterLocalNotificationsPlugin();
 
   String? _fcmToken;
+  String? _preferencesUid;
   StreamSubscription<RemoteMessage>? _onMessageSubscription;
   StreamSubscription<RemoteMessage>? _onMessageOpenedAppSubscription;
 
@@ -27,6 +60,7 @@ class NotificationService {
   bool _lowStockEnabled = true;
   bool _billRemindersEnabled = true;
   bool _orderAlertsEnabled = true;
+  bool _attendanceRemindersEnabled = true;
   int _billReminderDays = 3; // Days before due date to remind
 
   // Getters
@@ -35,6 +69,7 @@ class NotificationService {
   bool get lowStockEnabled => _lowStockEnabled;
   bool get billRemindersEnabled => _billRemindersEnabled;
   bool get orderAlertsEnabled => _orderAlertsEnabled;
+  bool get attendanceRemindersEnabled => _attendanceRemindersEnabled;
   int get billReminderDays => _billReminderDays;
 
   /// Initialize the notification service
@@ -77,8 +112,7 @@ class NotificationService {
       _onMessageOpenedAppSubscription =
           FirebaseMessaging.onMessageOpenedApp.listen(_handleMessageOpenedApp);
 
-      // Load user preferences
-      await _loadPreferences();
+      await loadPreferences(force: true);
     } catch (e) {
       // Don't rethrow - notifications are not critical to app function
     }
@@ -135,6 +169,8 @@ class NotificationService {
       body: body,
       type: type,
       source: 'push',
+      audience: (message.data['audience'] ?? 'all').toString(),
+      targetUids: _stringList(message.data['targetUids']),
       dedupeKey: messageId != null && messageId.isNotEmpty
           ? 'push_$messageId'
           : 'push_${DateTime.now().millisecondsSinceEpoch}',
@@ -170,6 +206,8 @@ class NotificationService {
       body: body,
       type: type,
       source: 'push',
+      audience: (message.data['audience'] ?? 'all').toString(),
+      targetUids: _stringList(message.data['targetUids']),
       dedupeKey: messageId != null && messageId.isNotEmpty
           ? 'push_$messageId'
           : 'push_opened_${DateTime.now().millisecondsSinceEpoch}',
@@ -193,6 +231,17 @@ class NotificationService {
     return safe.length > 180 ? safe.substring(0, 180) : safe;
   }
 
+  List<String> _stringList(dynamic value) {
+    if (value is List) {
+      return value
+          .map((item) => item.toString().trim())
+          .where((item) => item.isNotEmpty)
+          .toList();
+    }
+    final single = (value ?? '').toString().trim();
+    return single.isEmpty ? const <String>[] : <String>[single];
+  }
+
   Future<String?> _resolveEateryId() async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return null;
@@ -208,15 +257,13 @@ class NotificationService {
     }
   }
 
-  /// Writes a notification into the in-app feed.
-  ///
-  /// When [preserveReadState] is true the notification is only created if it
-  /// does not already exist, so read state is never reset on repeat checks.
   Future<void> persistFeedNotification({
     required String title,
     required String body,
     required String type,
     String source = 'system',
+    String audience = 'all',
+    List<String> targetUids = const <String>[],
     String? dedupeKey,
     String? eateryId,
     Map<String, dynamic>? data,
@@ -228,25 +275,31 @@ class NotificationService {
       final effectiveDedupeKey = (dedupeKey != null && dedupeKey.isNotEmpty)
           ? dedupeKey
           : '${source}_${type}_${DateTime.now().millisecondsSinceEpoch}';
-      final docId = _safeDocId(effectiveDedupeKey);
+      final docId = _safeDocId('${resolvedEateryId}_$effectiveDedupeKey');
       final ref =
           FirebaseFirestore.instance.collection('notifications').doc(docId);
+      final existing = await ref.get();
+      if (existing.exists && preserveReadState) return;
       final payload = <String, dynamic>{
         'eateryId': resolvedEateryId,
         'title': title,
         'body': body,
         'type': type,
         'source': source,
+        'audience': audience.trim().isEmpty ? 'all' : audience.trim(),
+        'targetUids': targetUids,
         'dedupeKey': effectiveDedupeKey,
         'data': data ?? <String, dynamic>{},
-        'isRead': false,
-        'readBy': <String, dynamic>{},
+        'active': true,
+        'resolvedAt': FieldValue.delete(),
         'updatedAt': FieldValue.serverTimestamp(),
       };
-      final existing = await ref.get();
-      if (existing.exists && preserveReadState) return;
       if (!existing.exists) {
         payload['createdAt'] = FieldValue.serverTimestamp();
+        payload['readBy'] = <String, dynamic>{};
+        payload['isRead'] = false;
+      } else if (existing.data()?['readBy'] is! Map) {
+        payload['readBy'] = <String, dynamic>{};
       }
       await ref.set(payload, SetOptions(merge: true));
     } catch (_) {}
@@ -290,7 +343,11 @@ class NotificationService {
     String? payload,
     String type = 'general',
     String source = 'local',
+    String audience = 'all',
+    List<String> targetUids = const <String>[],
     String? dedupeKey,
+    bool preserveReadState = false,
+    Map<String, dynamic>? data,
     bool persist = true,
   }) async {
     if (persist) {
@@ -299,8 +356,11 @@ class NotificationService {
         body: body,
         type: type,
         source: source,
+        audience: audience,
+        targetUids: targetUids,
         dedupeKey: dedupeKey,
-        data: payload == null ? null : {'payload': payload},
+        preserveReadState: preserveReadState,
+        data: data ?? (payload == null ? null : {'payload': payload}),
       );
     }
 
@@ -314,41 +374,38 @@ class NotificationService {
     );
   }
 
-  /// Load user preferences from Firestore
+  Future<void> loadPreferences({bool force = false}) async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+    if (!force && _preferencesUid == user.uid) return;
+    await _loadPreferences();
+    _preferencesUid = user.uid;
+  }
+
   Future<void> _loadPreferences() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+    _notificationsEnabled = true;
+    _lowStockEnabled = true;
+    _billRemindersEnabled = true;
+    _orderAlertsEnabled = true;
+    _attendanceRemindersEnabled = true;
+    _billReminderDays = 3;
     try {
-      final user = FirebaseAuth.instance.currentUser;
-      if (user == null) return;
-
-      print('===== FIRESTORE REQUEST =====');
-      print('Collection: user_preferences');
-      print('Document: ${user.uid}');
-      print('Operation: get');
-      print('Current UID: ${user.uid}');
-      print('Current eateryId: N/A');
-      print('============================');
-
       final doc = await FirebaseFirestore.instance
           .collection('user_preferences')
           .doc(user.uid)
           .get();
-
-      if (doc.exists) {
-        final data = doc.data() ?? {};
-        _notificationsEnabled = data['notificationsEnabled'] ?? true;
-        _lowStockEnabled = data['lowStockEnabled'] ?? true;
-        _billRemindersEnabled = data['billRemindersEnabled'] ?? true;
-        _orderAlertsEnabled = data['orderAlertsEnabled'] ?? true;
-        _billReminderDays = data['billReminderDays'] ?? 3;
-      }
-    } catch (e, stackTrace) {
-      print('===== FIRESTORE ERROR =====');
-      print('Code: ${e is FirebaseException ? e.code : 'N/A'}');
-      print(
-          'Message: ${e is FirebaseException ? e.message ?? 'N/A' : e.toString()}');
-      print('Stack: $stackTrace');
-      print('==========================');
-    }
+      if (!doc.exists) return;
+      final data = doc.data() ?? {};
+      _notificationsEnabled = data['notificationsEnabled'] ?? true;
+      _lowStockEnabled = data['lowStockEnabled'] ?? true;
+      _billRemindersEnabled = data['billRemindersEnabled'] ?? true;
+      _orderAlertsEnabled = data['orderAlertsEnabled'] ?? true;
+      _attendanceRemindersEnabled =
+          data['attendanceRemindersEnabled'] ?? true;
+      _billReminderDays = data['billReminderDays'] ?? 3;
+    } catch (_) {}
   }
 
   /// Save user preferences to Firestore
@@ -365,6 +422,7 @@ class NotificationService {
         'lowStockEnabled': _lowStockEnabled,
         'billRemindersEnabled': _billRemindersEnabled,
         'orderAlertsEnabled': _orderAlertsEnabled,
+        'attendanceRemindersEnabled': _attendanceRemindersEnabled,
         'billReminderDays': _billReminderDays,
         'updatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
@@ -389,6 +447,11 @@ class NotificationService {
 
   Future<void> setOrderAlertsEnabled(bool enabled) async {
     _orderAlertsEnabled = enabled;
+    await savePreferences();
+  }
+
+  Future<void> setAttendanceRemindersEnabled(bool enabled) async {
+    _attendanceRemindersEnabled = enabled;
     await savePreferences();
   }
 
@@ -423,11 +486,13 @@ class NotificationService {
 
     final delay = scheduledDate.difference(now);
     Timer(delay, () {
-      _showLocalNotification(
-        id: id,
+      showNotification(
         title: title,
         body: body,
         payload: payload,
+        type: 'reminder',
+        source: 'system',
+        dedupeKey: 'scheduled_${id}_${scheduledDate.millisecondsSinceEpoch}',
       );
     });
   }
@@ -448,7 +513,7 @@ class NotificationService {
     required double currentStock,
     required double minStock,
     String? itemId,
-    bool persist = false,
+    bool persist = true,
   }) async {
     final title = 'Low Stock Alert';
     final body =
@@ -459,6 +524,7 @@ class NotificationService {
         body: body,
         type: 'low_stock',
         source: 'inventory',
+        audience: 'admin',
         dedupeKey: itemId != null && itemId.isNotEmpty
             ? 'low_stock_$itemId'
             : 'low_stock_$itemName',
@@ -488,7 +554,7 @@ class NotificationService {
     required String creatorName,
     required double total,
     required int itemCount,
-    bool persist = false,
+    bool persist = true,
   }) async {
     final title = 'New Order Created';
     final shortId = orderId.length > 6 ? orderId.substring(0, 6) : orderId;
@@ -500,6 +566,7 @@ class NotificationService {
         body: body,
         type: 'order',
         source: 'orders',
+        audience: 'admin',
         dedupeKey: 'order_created_$orderId',
         data: {
           'orderId': orderId,

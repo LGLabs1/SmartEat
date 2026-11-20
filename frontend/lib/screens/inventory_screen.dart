@@ -1,5 +1,6 @@
 ﻿import 'package:flutter/material.dart';
 import '../features/inventory/inventory_module.dart';
+import '../widgets/dashboard/dashboard_back_handler.dart';
 
 class InventoryScreen extends StatefulWidget {
   final ValueNotifier<String>? globalSearchQuery;
@@ -8,6 +9,7 @@ class InventoryScreen extends StatefulWidget {
   final VoidCallback? onBackNeeded;
   final bool isInDetailView;
   final Function(VoidCallback resetFn)? onResetRequest;
+  final DashboardBackHandlerChanged? onBackHandlerChanged;
 
   const InventoryScreen({
     Key? key,
@@ -17,6 +19,7 @@ class InventoryScreen extends StatefulWidget {
     this.onBackNeeded,
     this.isInDetailView = false,
     this.onResetRequest,
+    this.onBackHandlerChanged,
   }) : super(key: key);
 
   @override
@@ -26,6 +29,8 @@ class InventoryScreen extends StatefulWidget {
 class InventoryScreenState extends State<InventoryScreen> {
   @override
   Widget build(BuildContext context) {
-    return const InventoryModule();
+    return InventoryModule(
+      onBackHandlerChanged: widget.onBackHandlerChanged,
+    );
   }
 }

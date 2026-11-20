@@ -66,7 +66,8 @@ class FinanceFormShell extends StatelessWidget {
     );
   }
 
-  Widget _header(BuildContext context, ColorScheme scheme, MediaQueryData media) {
+  Widget _header(
+      BuildContext context, ColorScheme scheme, MediaQueryData media) {
     final compact = media.size.width < 380;
     return Container(
       width: double.infinity,
@@ -81,7 +82,7 @@ class FinanceFormShell extends StatelessWidget {
           end: Alignment.centerRight,
         ),
         border: Border(
-          bottom: BorderSide(color: scheme.outlineVariant),
+          bottom: BorderSide(color: Colors.white.withValues(alpha: 0.1)),
         ),
       ),
       child: Row(
@@ -136,7 +137,8 @@ class FinanceFormShell extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
       decoration: BoxDecoration(
         color: scheme.surface,
-        border: Border(top: BorderSide(color: scheme.outlineVariant)),
+        border:
+            Border(top: BorderSide(color: Colors.white.withValues(alpha: 0.1))),
       ),
       child: Row(
         children: [

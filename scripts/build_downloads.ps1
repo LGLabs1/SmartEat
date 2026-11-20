@@ -1,4 +1,5 @@
 param(
+    [switch]$SkipWeb,
     [switch]$SkipAndroid,
     [switch]$SkipWindows,
     [switch]$SkipDeploy,
@@ -101,13 +102,13 @@ function Publish-GitHubRelease {
     }
 
     $assets = @()
-    if (Test-Path -LiteralPath $apkPath) {
+    if (-not $SkipAndroid -and (Test-Path -LiteralPath $apkPath)) {
         $assets += @{
             Name = 'smarteat-android.apk'
             Type = 'application/vnd.android.package-archive'
         }
     }
-    if (Test-Path -LiteralPath $zipPath) {
+    if (-not $SkipWindows -and (Test-Path -LiteralPath $zipPath)) {
         $assets += @{
             Name = 'smarteat-windows.zip'
             Type = 'application/zip'
@@ -136,8 +137,10 @@ function Publish-GitHubRelease {
 
 Push-Location $frontend
 try {
-    Write-Host 'Building web...'
-    Invoke-Native 'flutter build web' 'flutter' @('build', 'web', '--release')
+    if (-not $SkipWeb) {
+        Write-Host 'Building web...'
+        Invoke-Native 'flutter build web' 'flutter' @('build', 'web', '--release')
+    }
 
     New-Item -ItemType Directory -Force -Path $downloads | Out-Null
 

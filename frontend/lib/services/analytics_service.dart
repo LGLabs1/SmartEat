@@ -34,8 +34,18 @@ class AnalyticsService {
 
   static String _monthName(int month) {
     const n = [
-      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
     ];
     return n[(month - 1).clamp(0, 11)];
   }
@@ -130,11 +140,11 @@ class AnalyticsService {
 
   static Future<DashboardModel> _computeDashboardModel(String eateryId) async {
     final now = DateTime.now();
-    final todayStart     = _startOfDay(now);
+    final todayStart = _startOfDay(now);
     final yesterdayStart = todayStart.subtract(const Duration(days: 1));
-    final weekStart      = todayStart.subtract(const Duration(days: 7));
-    final monthStart     = DateTime(now.year, now.month, 1);
-    final last30Start    = todayStart.subtract(const Duration(days: 30));
+    final weekStart = todayStart.subtract(const Duration(days: 7));
+    final monthStart = DateTime(now.year, now.month, 1);
+    final last30Start = todayStart.subtract(const Duration(days: 30));
 
     // Single-field queries (createdAt only) — no composite index needed.
     final orderSnaps = await Future.wait([
@@ -166,24 +176,31 @@ class AnalyticsService {
           .get(),
     ]);
 
-    final invDocs  = await _fetchCombinedDocs(eateryId, FirebaseService.inventoryCollection);
-    final menuDocs = await _fetchCombinedDocs(eateryId, FirebaseService.menuCollection);
+    final invDocs =
+        await _fetchCombinedDocs(eateryId, FirebaseService.inventoryCollection);
+    final menuDocs =
+        await _fetchCombinedDocs(eateryId, FirebaseService.menuCollection);
 
-    final todayDocs   = orderSnaps[0].docs.map((d) => {'id': d.id, ...d.data()}).toList();
-    final yestDocs    = orderSnaps[1].docs.map((d) => {'id': d.id, ...d.data()}).toList();
-    final weekDocs    = orderSnaps[2].docs.map((d) => {'id': d.id, ...d.data()}).toList();
-    final monthDocs   = orderSnaps[3].docs.map((d) => {'id': d.id, ...d.data()}).toList();
-    final last30Docs  = orderSnaps[4].docs.map((d) => {'id': d.id, ...d.data()}).toList();
+    final todayDocs =
+        orderSnaps[0].docs.map((d) => {'id': d.id, ...d.data()}).toList();
+    final yestDocs =
+        orderSnaps[1].docs.map((d) => {'id': d.id, ...d.data()}).toList();
+    final weekDocs =
+        orderSnaps[2].docs.map((d) => {'id': d.id, ...d.data()}).toList();
+    final monthDocs =
+        orderSnaps[3].docs.map((d) => {'id': d.id, ...d.data()}).toList();
+    final last30Docs =
+        orderSnaps[4].docs.map((d) => {'id': d.id, ...d.data()}).toList();
 
     return DashboardModel._compute(
       eateryId: eateryId,
-      todayDocs:  todayDocs,
-      yestDocs:   yestDocs,
-      weekDocs:   weekDocs,
-      monthDocs:  monthDocs,
+      todayDocs: todayDocs,
+      yestDocs: yestDocs,
+      weekDocs: weekDocs,
+      monthDocs: monthDocs,
       last30Docs: last30Docs,
-      invDocs:    invDocs,
-      menuDocs:   menuDocs,
+      invDocs: invDocs,
+      menuDocs: menuDocs,
     );
   }
 
@@ -199,14 +216,14 @@ class AnalyticsService {
           ? (m.todayRevenue > 0 ? 100.0 : 0.0)
           : ((m.todayRevenue - m.yesterdayRevenue) / m.yesterdayRevenue) * 100;
       return {
-        'todayRevenue':     m.todayRevenue,
+        'todayRevenue': m.todayRevenue,
         'yesterdayRevenue': m.yesterdayRevenue,
-        'weekRevenue':      m.weekRevenue,
-        'monthRevenue':     m.monthRevenue,
+        'weekRevenue': m.weekRevenue,
+        'monthRevenue': m.monthRevenue,
         'dayChangePercent': double.parse(dayChange.toStringAsFixed(1)),
-        'todayOrderCount':  m.todayCompletedCount,
-        'weekOrderCount':   m.weekCompletedCount,
-        'monthOrderCount':  m.monthCompletedCount,
+        'todayOrderCount': m.todayCompletedCount,
+        'weekOrderCount': m.weekCompletedCount,
+        'monthOrderCount': m.monthCompletedCount,
       };
     } catch (e) {
       debugPrint('getRevenueSummary error: $e');
@@ -214,12 +231,13 @@ class AnalyticsService {
     }
   }
 
-  static Future<Map<String, dynamic>> getTodayBestSeller(String eateryId) async {
+  static Future<Map<String, dynamic>> getTodayBestSeller(
+      String eateryId) async {
     try {
       final m = await getDashboardModel(eateryId);
       return {
         'bestSeller': m.todayBestSellerName,
-        'quantity':   m.todayBestSellerQty,
+        'quantity': m.todayBestSellerQty,
       };
     } catch (e) {
       debugPrint('getTodayBestSeller error: $e');
@@ -227,14 +245,15 @@ class AnalyticsService {
     }
   }
 
-  static Future<Map<String, dynamic>> getOverallBestSeller(String eateryId) async {
+  static Future<Map<String, dynamic>> getOverallBestSeller(
+      String eateryId) async {
     try {
       final m = await getDashboardModel(eateryId);
       return {
         'bestSeller': m.overallBestSellerName,
-        'quantity':   m.overallBestSellerQty,
-        'revenue':    m.overallBestSellerRevenue,
-        'topFive':    m.topFiveItems,
+        'quantity': m.overallBestSellerQty,
+        'revenue': m.overallBestSellerRevenue,
+        'topFive': m.topFiveItems,
       };
     } catch (e) {
       debugPrint('getOverallBestSeller error: $e');
@@ -246,8 +265,8 @@ class AnalyticsService {
     try {
       final m = await getDashboardModel(eateryId);
       return {
-        'todayItemCounts':    m.todayItemCounts,
-        'weekItemCounts':     m.weekItemCounts,
+        'todayItemCounts': m.todayItemCounts,
+        'weekItemCounts': m.weekItemCounts,
         'todayTotalItemsSold': m.todayTotalItemsSold,
         'weekTotalItemsSold': m.weekTotalItemsSold,
       };
@@ -257,11 +276,12 @@ class AnalyticsService {
     }
   }
 
-  static Future<Map<String, dynamic>> getWorstSellingItems(String eateryId) async {
+  static Future<Map<String, dynamic>> getWorstSellingItems(
+      String eateryId) async {
     try {
       final m = await getDashboardModel(eateryId);
       return {
-        'worstItems':     m.worstItems,
+        'worstItems': m.worstItems,
         'zeroSalesCount': m.zeroSalesItemCount,
       };
     } catch (e) {
@@ -270,14 +290,15 @@ class AnalyticsService {
     }
   }
 
-  static Future<Map<String, dynamic>> getInventorySummary(String eateryId) async {
+  static Future<Map<String, dynamic>> getInventorySummary(
+      String eateryId) async {
     try {
       final m = await getDashboardModel(eateryId);
       return {
-        'totalItems':          m.totalInventoryItems,
-        'healthyCount':        m.healthyStockCount,
-        'lowStockCount':       m.lowStockCount,
-        'criticalCount':       m.criticalStockCount,
+        'totalItems': m.totalInventoryItems,
+        'healthyCount': m.healthyStockCount,
+        'lowStockCount': m.lowStockCount,
+        'criticalCount': m.criticalStockCount,
         'totalInventoryValue': m.totalInventoryValue,
       };
     } catch (e) {
@@ -300,7 +321,7 @@ class AnalyticsService {
     try {
       final m = await getDashboardModel(eateryId);
       return {
-        'count':             m.pendingOrderCount,
+        'count': m.pendingOrderCount,
         'totalPendingValue': m.pendingOrderValue,
       };
     } catch (e) {
@@ -309,16 +330,17 @@ class AnalyticsService {
     }
   }
 
-  static Future<Map<String, dynamic>> getCancelledOrders(String eateryId) async {
+  static Future<Map<String, dynamic>> getCancelledOrders(
+      String eateryId) async {
     try {
       final m = await getDashboardModel(eateryId);
       final rate = m.weekTotalOrders == 0
           ? 0.0
           : (m.weekCancelledCount / m.weekTotalOrders) * 100;
       return {
-        'cancelledLast7Days':       m.weekCancelledCount,
-        'totalLast7Days':           m.weekTotalOrders,
-        'cancellationRatePercent':  double.parse(rate.toStringAsFixed(1)),
+        'cancelledLast7Days': m.weekCancelledCount,
+        'totalLast7Days': m.weekTotalOrders,
+        'cancellationRatePercent': double.parse(rate.toStringAsFixed(1)),
       };
     } catch (e) {
       debugPrint('getCancelledOrders error: $e');
@@ -326,13 +348,14 @@ class AnalyticsService {
     }
   }
 
-  static Future<Map<String, dynamic>> getAverageOrderValue(String eateryId) async {
+  static Future<Map<String, dynamic>> getAverageOrderValue(
+      String eateryId) async {
     try {
       final m = await getDashboardModel(eateryId);
       return {
         'averageOrderValue': m.averageOrderValue,
-        'sampleSize':        m.monthCompletedCount,
-        'totalRevenue':      m.monthRevenue,
+        'sampleSize': m.monthCompletedCount,
+        'totalRevenue': m.monthRevenue,
       };
     } catch (e) {
       debugPrint('getAverageOrderValue error: $e');
@@ -340,12 +363,13 @@ class AnalyticsService {
     }
   }
 
-  static Future<Map<String, dynamic>> getMenuPerformance(String eateryId) async {
+  static Future<Map<String, dynamic>> getMenuPerformance(
+      String eateryId) async {
     try {
       final m = await getDashboardModel(eateryId);
       return {
-        'items':           m.menuPerformance,
-        'totalMenuItems':  m.totalMenuItems,
+        'items': m.menuPerformance,
+        'totalMenuItems': m.totalMenuItems,
         'itemsWithNoSales': m.menuItemsWithNoSales,
       };
     } catch (e) {
@@ -354,12 +378,13 @@ class AnalyticsService {
     }
   }
 
-  static Future<Map<String, dynamic>> getCategoryPerformance(String eateryId) async {
+  static Future<Map<String, dynamic>> getCategoryPerformance(
+      String eateryId) async {
     try {
       final m = await getDashboardModel(eateryId);
       return {
         'categoryBreakdown': m.categoryBreakdown,
-        'topCategory':       m.topCategory,
+        'topCategory': m.topCategory,
       };
     } catch (e) {
       debugPrint('getCategoryPerformance error: $e');
@@ -369,11 +394,12 @@ class AnalyticsService {
 
   // ── Standalone queries (don't need DashboardModel data) ───────────────
 
-  static Future<Map<String, dynamic>> getExpiringIngredients(
-      String eateryId, {int withinDays = 5}) async {
+  static Future<Map<String, dynamic>> getExpiringIngredients(String eateryId,
+      {int withinDays = 5}) async {
     try {
       final cutoff = DateTime.now().add(Duration(days: withinDays));
-      final snap = await _col(eateryId, FirebaseService.inventoryCollection).get();
+      final snap =
+          await _col(eateryId, FirebaseService.inventoryCollection).get();
       final expiring = <Map<String, dynamic>>[];
       for (final doc in snap.docs) {
         final d = doc.data();
@@ -387,11 +413,11 @@ class AnalyticsService {
         }
         if (expDate != null && expDate.isBefore(cutoff)) {
           expiring.add({
-            'name':            (d['name'] ?? '').toString(),
-            'expirationDate':  expDate.toIso8601String().split('T')[0],
+            'name': (d['name'] ?? '').toString(),
+            'expirationDate': expDate.toIso8601String().split('T')[0],
             'daysUntilExpiry': expDate.difference(DateTime.now()).inDays,
-            'currentStock':    (d['currentStock'] as num?)?.toDouble() ?? 0.0,
-            'unit':            (d['unit'] ?? '').toString(),
+            'currentStock': (d['currentStock'] as num?)?.toDouble() ?? 0.0,
+            'unit': (d['unit'] ?? '').toString(),
           });
         }
       }
@@ -404,20 +430,21 @@ class AnalyticsService {
     }
   }
 
-  static Future<Map<String, dynamic>> getSuggestedRestocks(String eateryId) async {
+  static Future<Map<String, dynamic>> getSuggestedRestocks(
+      String eateryId) async {
     try {
       final lowResult = await getLowStockItems(eateryId);
       final items = lowResult['lowStockItems'] as List<dynamic>? ?? [];
       final suggestions = items.map((item) {
-        final deficit  = (item['deficit'] as double? ?? 0.0);
-        final min      = (item['minStock'] as double? ?? 0.0);
+        final deficit = (item['deficit'] as double? ?? 0.0);
+        final min = (item['minStock'] as double? ?? 0.0);
         final suggested = deficit <= 0 ? min * 2 : deficit * 2;
         return {
-          'name':             item['name'],
-          'currentStock':     item['currentStock'],
-          'unit':             item['unit'],
+          'name': item['name'],
+          'currentStock': item['currentStock'],
+          'unit': item['unit'],
           'suggestedOrderQty': double.parse(suggested.toStringAsFixed(1)),
-          'priority':         item['isCritical'] == true ? 'CRITICAL' : 'HIGH',
+          'priority': item['isCritical'] == true ? 'CRITICAL' : 'HIGH',
         };
       }).toList();
       return {'suggestions': suggestions};
@@ -427,7 +454,8 @@ class AnalyticsService {
     }
   }
 
-  static Future<Map<String, dynamic>> getReturningCustomerRate(String eateryId) async {
+  static Future<Map<String, dynamic>> getReturningCustomerRate(
+      String eateryId) async {
     try {
       final since = DateTime.now().subtract(const Duration(days: 30));
       final snap = await _col(eateryId, FirebaseService.ordersCollection)
@@ -437,8 +465,10 @@ class AnalyticsService {
       for (final doc in snap.docs) {
         final d = doc.data();
         if (!_isCompleted(d)) continue;
-        final key = (d['customerName'] ?? d['customerId'] ?? d['tableNumber'] ?? '')
-            .toString().trim();
+        final key =
+            (d['customerName'] ?? d['customerId'] ?? d['tableNumber'] ?? '')
+                .toString()
+                .trim();
         if (key.isNotEmpty) counts[key] = (counts[key] ?? 0) + 1;
       }
       final returning = counts.values.where((v) => v > 1).length;
@@ -461,7 +491,7 @@ class AnalyticsService {
       final snap = await _col(eateryId, FirebaseService.ordersCollection)
           .where('createdAt', isGreaterThanOrEqualTo: Timestamp.fromDate(since))
           .get();
-      final hourCounts  = <int, int>{};
+      final hourCounts = <int, int>{};
       final hourRevenue = <int, double>{};
       for (final doc in snap.docs) {
         final d = doc.data();
@@ -469,9 +499,9 @@ class AnalyticsService {
         final dt = _parseTs(d['createdAt']);
         if (dt == null) continue;
         final h = dt.hour;
-        hourCounts[h]  = (hourCounts[h] ?? 0) + 1;
-        hourRevenue[h] = (hourRevenue[h] ?? 0.0)
-            + ((d['totalAmount'] as num?)?.toDouble() ?? 0.0);
+        hourCounts[h] = (hourCounts[h] ?? 0) + 1;
+        hourRevenue[h] = (hourRevenue[h] ?? 0.0) +
+            ((d['totalAmount'] as num?)?.toDouble() ?? 0.0);
       }
       if (hourCounts.isEmpty) return {'peakHour': 'N/A', 'hourlyBreakdown': []};
       final sorted = hourCounts.entries.toList()
@@ -479,14 +509,18 @@ class AnalyticsService {
       String fmt(int h) =>
           '${h == 0 ? 12 : h > 12 ? h - 12 : h}:00 ${h < 12 ? 'AM' : 'PM'}';
       return {
-        'peakHour':           fmt(sorted.first.key),
+        'peakHour': fmt(sorted.first.key),
         'peakHourOrderCount': sorted.first.value,
-        'slowestHour':        fmt(sorted.last.key),
-        'hourlyBreakdown': sorted.take(6).map((e) => {
-          'hour':    fmt(e.key),
-          'orders':  e.value,
-          'revenue': double.parse((hourRevenue[e.key] ?? 0.0).toStringAsFixed(2)),
-        }).toList(),
+        'slowestHour': fmt(sorted.last.key),
+        'hourlyBreakdown': sorted
+            .take(6)
+            .map((e) => {
+                  'hour': fmt(e.key),
+                  'orders': e.value,
+                  'revenue': double.parse(
+                      (hourRevenue[e.key] ?? 0.0).toStringAsFixed(2)),
+                })
+            .toList(),
       };
     } catch (e) {
       debugPrint('getPeakHours error: $e');
@@ -494,11 +528,12 @@ class AnalyticsService {
     }
   }
 
-  static Future<Map<String, dynamic>> getSalesTrend(
-      String eateryId, {int days = 14}) async {
+  static Future<Map<String, dynamic>> getSalesTrend(String eateryId,
+      {int days = 14}) async {
     try {
-      final since = _startOfDay(DateTime.now()).subtract(Duration(days: days - 1));
-      final snap  = await _col(eateryId, FirebaseService.ordersCollection)
+      final since =
+          _startOfDay(DateTime.now()).subtract(Duration(days: days - 1));
+      final snap = await _col(eateryId, FirebaseService.ordersCollection)
           .where('createdAt', isGreaterThanOrEqualTo: Timestamp.fromDate(since))
           .get();
       final daily = <String, double>{};
@@ -507,27 +542,35 @@ class AnalyticsService {
         daily[d.toIso8601String().split('T')[0]] = 0.0;
       }
       for (final doc in snap.docs) {
-        final d  = doc.data();
+        final d = doc.data();
         if (!_isCompleted(d)) continue;
         final dt = _parseTs(d['createdAt']);
         if (dt == null) continue;
         final key = dt.toIso8601String().split('T')[0];
-        daily[key] = (daily[key] ?? 0.0)
-            + ((d['totalAmount'] as num?)?.toDouble() ?? 0.0);
+        daily[key] = (daily[key] ?? 0.0) +
+            ((d['totalAmount'] as num?)?.toDouble() ?? 0.0);
       }
       final trendList = daily.entries
-          .map((e) => {'date': e.key, 'revenue': double.parse(e.value.toStringAsFixed(2))})
+          .map((e) => {
+                'date': e.key,
+                'revenue': double.parse(e.value.toStringAsFixed(2))
+              })
           .toList();
       final mid = trendList.length ~/ 2;
-      final firstHalf  = trendList.take(mid).fold(0.0, (t, e) => t + (e['revenue'] as double));
-      final secondHalf = trendList.skip(mid).fold(0.0, (t, e) => t + (e['revenue'] as double));
-      final trend = secondHalf > firstHalf ? 'improving'
-          : secondHalf < firstHalf ? 'declining' : 'stable';
+      final firstHalf =
+          trendList.take(mid).fold(0.0, (t, e) => t + (e['revenue'] as double));
+      final secondHalf =
+          trendList.skip(mid).fold(0.0, (t, e) => t + (e['revenue'] as double));
+      final trend = secondHalf > firstHalf
+          ? 'improving'
+          : secondHalf < firstHalf
+              ? 'declining'
+              : 'stable';
       return {
-        'dailyTrend':    trendList,
+        'dailyTrend': trendList,
         'trendDirection': trend,
-        'periodDays':    days,
-        'totalRevenue':  double.parse(
+        'periodDays': days,
+        'totalRevenue': double.parse(
             daily.values.fold(0.0, (a, b) => a + b).toStringAsFixed(2)),
       };
     } catch (e) {
@@ -539,34 +582,43 @@ class AnalyticsService {
   static Future<Map<String, dynamic>> getWeeklyTrend(String eateryId) async {
     try {
       final since = DateTime.now().subtract(const Duration(days: 28));
-      final snap  = await _col(eateryId, FirebaseService.ordersCollection)
+      final snap = await _col(eateryId, FirebaseService.ordersCollection)
           .where('createdAt', isGreaterThanOrEqualTo: Timestamp.fromDate(since))
           .get();
       final dayRevenue = <int, double>{for (int i = 1; i <= 7; i++) i: 0.0};
-      final dayOrders  = <int, int>{for (int i = 1; i <= 7; i++) i: 0};
+      final dayOrders = <int, int>{for (int i = 1; i <= 7; i++) i: 0};
       for (final doc in snap.docs) {
-        final d  = doc.data();
+        final d = doc.data();
         if (!_isCompleted(d)) continue;
         final dt = _parseTs(d['createdAt']);
         if (dt == null) continue;
-        dayRevenue[dt.weekday] = (dayRevenue[dt.weekday] ?? 0.0)
-            + ((d['totalAmount'] as num?)?.toDouble() ?? 0.0);
+        dayRevenue[dt.weekday] = (dayRevenue[dt.weekday] ?? 0.0) +
+            ((d['totalAmount'] as num?)?.toDouble() ?? 0.0);
         dayOrders[dt.weekday] = (dayOrders[dt.weekday] ?? 0) + 1;
       }
       final breakdown = List.generate(7, (i) {
         final wd = i + 1;
         return {
-          'day':     _dayName(wd),
+          'day': _dayName(wd),
           'revenue': double.parse((dayRevenue[wd] ?? 0.0).toStringAsFixed(2)),
-          'orders':  dayOrders[wd] ?? 0,
+          'orders': dayOrders[wd] ?? 0,
         };
       });
-      final best = breakdown.reduce(
-          (a, b) => (a['revenue'] as double) >= (b['revenue'] as double) ? a : b);
+      final totalRevenue =
+          dayRevenue.values.fold<double>(0.0, (sum, value) => sum + value);
+      if (totalRevenue <= 0) {
+        return {
+          'weeklyBreakdown': breakdown,
+          'bestDay': 'N/A',
+          'bestDayRevenue': 0.0,
+        };
+      }
+      final best = breakdown.reduce((a, b) =>
+          (a['revenue'] as double) >= (b['revenue'] as double) ? a : b);
       return {
         'weeklyBreakdown': breakdown,
-        'bestDay':         best['day'],
-        'bestDayRevenue':  best['revenue'],
+        'bestDay': best['day'],
+        'bestDayRevenue': best['revenue'],
       };
     } catch (e) {
       debugPrint('getWeeklyTrend error: $e');
@@ -576,34 +628,40 @@ class AnalyticsService {
 
   static Future<Map<String, dynamic>> getMonthlyGrowth(String eateryId) async {
     try {
-      final now            = DateTime.now();
+      final now = DateTime.now();
       final thisMonthStart = DateTime(now.year, now.month, 1);
       final lastMonthStart = DateTime(now.year, now.month - 1, 1);
       final snaps = await Future.wait([
         _col(eateryId, FirebaseService.ordersCollection)
-            .where('createdAt', isGreaterThanOrEqualTo: Timestamp.fromDate(thisMonthStart))
+            .where('createdAt',
+                isGreaterThanOrEqualTo: Timestamp.fromDate(thisMonthStart))
             .get(),
         _col(eateryId, FirebaseService.ordersCollection)
-            .where('createdAt', isGreaterThanOrEqualTo: Timestamp.fromDate(lastMonthStart))
+            .where('createdAt',
+                isGreaterThanOrEqualTo: Timestamp.fromDate(lastMonthStart))
             .where('createdAt', isLessThan: Timestamp.fromDate(thisMonthStart))
             .get(),
       ]);
-      double rev(QuerySnapshot<Map<String, dynamic>> s) => s.docs
-          .where((d) => _isCompleted(d.data()))
-          .fold(0.0, (t, d) => t + ((d.data()['totalAmount'] as num?) ?? 0).toDouble());
+      double rev(QuerySnapshot<Map<String, dynamic>> s) =>
+          s.docs.where((d) => _isCompleted(d.data())).fold(
+              0.0,
+              (t, d) =>
+                  t + ((d.data()['totalAmount'] as num?) ?? 0).toDouble());
       final thisRev = rev(snaps[0]);
       final lastRev = rev(snaps[1]);
-      final growth  = lastRev == 0
+      final growth = lastRev == 0
           ? (thisRev > 0 ? 100.0 : 0.0)
           : ((thisRev - lastRev) / lastRev) * 100;
       return {
-        'thisMonthRevenue':    thisRev,
-        'lastMonthRevenue':    lastRev,
+        'thisMonthRevenue': thisRev,
+        'lastMonthRevenue': lastRev,
         'monthlyGrowthPercent': double.parse(growth.toStringAsFixed(1)),
-        'thisMonthOrders':     snaps[0].docs.where((d) => _isCompleted(d.data())).length,
-        'lastMonthOrders':     snaps[1].docs.where((d) => _isCompleted(d.data())).length,
-        'thisMonth':           _monthName(now.month),
-        'lastMonth':           _monthName(now.month == 1 ? 12 : now.month - 1),
+        'thisMonthOrders':
+            snaps[0].docs.where((d) => _isCompleted(d.data())).length,
+        'lastMonthOrders':
+            snaps[1].docs.where((d) => _isCompleted(d.data())).length,
+        'thisMonth': _monthName(now.month),
+        'lastMonth': _monthName(now.month == 1 ? 12 : now.month - 1),
       };
     } catch (e) {
       debugPrint('getMonthlyGrowth error: $e');
@@ -611,7 +669,8 @@ class AnalyticsService {
     }
   }
 
-  static Future<Map<String, dynamic>> getBusinessHealthScore(String eateryId) async {
+  static Future<Map<String, dynamic>> getBusinessHealthScore(
+      String eateryId) async {
     try {
       final m = await getDashboardModel(eateryId);
       final dayChange = m.yesterdayRevenue == 0
@@ -620,52 +679,75 @@ class AnalyticsService {
       final cancelRate = m.weekTotalOrders == 0
           ? 0.0
           : (m.weekCancelledCount / m.weekTotalOrders) * 100;
-      final revScore    = (dayChange >= 10 ? 30.0 : dayChange >= 0 ? 20.0 + dayChange : (20.0 + dayChange)).clamp(0.0, 30.0);
-      final stockScore  = (25.0 - m.lowStockCount * 3.0).clamp(0.0, 25.0);
+      final revScore = (dayChange >= 10
+              ? 30.0
+              : dayChange >= 0
+                  ? 20.0 + dayChange
+                  : (20.0 + dayChange))
+          .clamp(0.0, 30.0);
+      final stockScore = (25.0 - m.lowStockCount * 3.0).clamp(0.0, 25.0);
       final cancelScore = (20.0 - cancelRate * 2).clamp(0.0, 20.0);
-      final menuScore   = (15.0 - m.zeroSalesItemCount.toDouble()).clamp(0.0, 15.0);
-      final total       = revScore + stockScore + cancelScore + menuScore;
-      final clamped     = total.clamp(0.0, 100.0);
-      final label       = clamped >= 80 ? 'Excellent'
-          : clamped >= 60 ? 'Good' : clamped >= 40 ? 'Fair' : 'Needs Attention';
-      return {'score': double.parse(clamped.toStringAsFixed(1)), 'label': label};
+      final menuScore =
+          (15.0 - m.zeroSalesItemCount.toDouble()).clamp(0.0, 15.0);
+      final total = revScore + stockScore + cancelScore + menuScore;
+      final clamped = total.clamp(0.0, 100.0);
+      final label = clamped >= 80
+          ? 'Excellent'
+          : clamped >= 60
+              ? 'Good'
+              : clamped >= 40
+                  ? 'Fair'
+                  : 'Needs Attention';
+      return {
+        'score': double.parse(clamped.toStringAsFixed(1)),
+        'label': label
+      };
     } catch (e) {
       debugPrint('getBusinessHealthScore error: $e');
       return {'score': 0.0, 'label': 'Unknown'};
     }
   }
 
-  static Future<Map<String, dynamic>> getSalesForecast(
-      String eateryId, {int forecastDays = 7}) async {
+  static Future<Map<String, dynamic>> getSalesForecast(String eateryId,
+      {int forecastDays = 7}) async {
     try {
       final since = DateTime.now().subtract(const Duration(days: 56));
-      final snap  = await _col(eateryId, FirebaseService.ordersCollection)
+      final snap = await _col(eateryId, FirebaseService.ordersCollection)
           .where('createdAt', isGreaterThanOrEqualTo: Timestamp.fromDate(since))
           .get();
-      final dayRevenues = <int, List<double>>{for (int i = 1; i <= 7; i++) i: []};
+      final dayRevenues = <int, List<double>>{
+        for (int i = 1; i <= 7; i++) i: []
+      };
       for (final doc in snap.docs) {
-        final d  = doc.data();
+        final d = doc.data();
         if (!_isCompleted(d)) continue;
         final dt = _parseTs(d['createdAt']);
         if (dt == null) continue;
-        dayRevenues[dt.weekday]!.add((d['totalAmount'] as num?)?.toDouble() ?? 0.0);
+        dayRevenues[dt.weekday]!
+            .add((d['totalAmount'] as num?)?.toDouble() ?? 0.0);
       }
       final avgs = <int, double>{};
       for (int i = 1; i <= 7; i++) {
         final list = dayRevenues[i]!;
-        avgs[i] = list.isEmpty ? 0.0 : list.reduce((a, b) => a + b) / list.length;
+        avgs[i] =
+            list.isEmpty ? 0.0 : list.reduce((a, b) => a + b) / list.length;
       }
       final forecast = <Map<String, dynamic>>[];
       for (int i = 1; i <= forecastDays; i++) {
         final date = DateTime.now().add(Duration(days: i));
         forecast.add({
-          'date':             date.toIso8601String().split('T')[0],
-          'dayName':          _dayName(date.weekday),
-          'predictedRevenue': double.parse((avgs[date.weekday] ?? 0.0).toStringAsFixed(2)),
-          'isWeekend':        date.weekday == 6 || date.weekday == 7,
+          'date': date.toIso8601String().split('T')[0],
+          'dayName': _dayName(date.weekday),
+          'predictedRevenue':
+              double.parse((avgs[date.weekday] ?? 0.0).toStringAsFixed(2)),
+          'isWeekend': date.weekday == 6 || date.weekday == 7,
         });
       }
-      return {'forecast': forecast, 'basisDays': 56, 'method': 'day_of_week_average'};
+      return {
+        'forecast': forecast,
+        'basisDays': 56,
+        'method': 'day_of_week_average'
+      };
     } catch (e) {
       debugPrint('getSalesForecast error: $e');
       return {'forecast': []};
@@ -687,67 +769,70 @@ class DashboardModel {
 
   // ── Today revenue / orders ────────────────────────────────────────────
   final double todayRevenue;
-  final int    todayCompletedCount;
-  final int    todayPendingCount;
-  final int    todayCancelledCount;
-  final int    todayTotalOrders;     // all statuses (matches dashboard's "Orders Today")
+  final int todayCompletedCount;
+  final int todayPendingCount;
+  final int todayCancelledCount;
+  final int
+      todayTotalOrders; // all statuses (matches dashboard's "Orders Today")
 
   // ── Yesterday ─────────────────────────────────────────────────────────
   final double yesterdayRevenue;
-  final int    yesterdayCompletedCount;
+  final int yesterdayCompletedCount;
 
   // ── Week (last 7 days) ─────────────────────────────────────────────────
   final double weekRevenue;
-  final int    weekCompletedCount;
-  final int    weekCancelledCount;
-  final int    weekTotalOrders;
+  final int weekCompletedCount;
+  final int weekCancelledCount;
+  final int weekTotalOrders;
 
   // ── Month ──────────────────────────────────────────────────────────────
   final double monthRevenue;
-  final int    monthCompletedCount;
+  final int monthCompletedCount;
   final double averageOrderValue;
 
   // ── Best sellers — TODAY ───────────────────────────────────────────────
   final String todayBestSellerName;
-  final int    todayBestSellerQty;
+  final int todayBestSellerQty;
   final double todayBestSellerRevenue;
-  final double todayBestSellerPct;    // % of today's total items sold
+  final double todayBestSellerPct; // % of today's total items sold
   /// Full ranked list: {name, qty, revenue, pct}
   final List<Map<String, dynamic>> todayTopItems;
 
   // ── Item counts ────────────────────────────────────────────────────────
   final Map<String, int> todayItemCounts;
-  final int              todayTotalItemsSold;
+  final int todayTotalItemsSold;
   final Map<String, int> weekItemCounts;
-  final int              weekTotalItemsSold;
+  final int weekTotalItemsSold;
 
   // ── Best sellers — OVERALL (last 30 days) ─────────────────────────────
   final String overallBestSellerName;
-  final int    overallBestSellerQty;
+  final int overallBestSellerQty;
   final double overallBestSellerRevenue;
-  final List<Map<String, dynamic>> topFiveItems;    // {name, qty, revenue}
+  final List<Map<String, dynamic>> topFiveItems; // {name, qty, revenue}
 
   // ── Worst sellers ─────────────────────────────────────────────────────
-  final List<Map<String, dynamic>> worstItems;     // {name, soldLast30Days}
+  final List<Map<String, dynamic>> worstItems; // {name, soldLast30Days}
   final int zeroSalesItemCount;
 
   // ── Menu ──────────────────────────────────────────────────────────────
   final int totalMenuItems;
   final int menuItemsWithNoSales;
-  final List<Map<String, dynamic>> menuPerformance;  // {name, category, price, soldLast30Days, revenueLast30Days, status}
+  final List<Map<String, dynamic>>
+      menuPerformance; // {name, category, price, soldLast30Days, revenueLast30Days, status}
   final String topCategory;
   final List<Map<String, dynamic>> categoryBreakdown;
 
   // ── Inventory ─────────────────────────────────────────────────────────
-  final int    totalInventoryItems;
-  final int    healthyStockCount;
-  final int    lowStockCount;
-  final int    criticalStockCount;
+  final int totalInventoryItems;
+  final int healthyStockCount;
+  final int lowStockCount;
+  final int criticalStockCount;
   final double totalInventoryValue;
-  final List<Map<String, dynamic>> lowStockItems;   // {name, currentStock, minStock, unit, isCritical, deficit}
+  final List<Map<String, dynamic>>
+      lowStockItems; // {name, currentStock, minStock, unit, isCritical, deficit}
 
   // ── Pending / voided ──────────────────────────────────────────────────
-  final int    pendingOrderCount;
+  final int pendingOrderCount;
   final double pendingOrderValue;
 
   const DashboardModel._({
@@ -828,36 +913,36 @@ class DashboardModel {
       final s = (d['status'] ?? '').toString().trim().toLowerCase();
       return s == 'voided' || s == 'cancelled';
     }
+
     bool isPending(Map d) =>
         (d['status'] ?? '').toString().trim().toLowerCase() == 'pending';
 
-    double sumRevenue(List<Map<String, dynamic>> docs) => docs
-        .where(isCompleted)
-        .fold(0.0, (t, d) => t + ((d['totalAmount'] as num?)?.toDouble() ?? 0.0));
+    double sumRevenue(List<Map<String, dynamic>> docs) =>
+        docs.where(isCompleted).fold(
+            0.0, (t, d) => t + ((d['totalAmount'] as num?)?.toDouble() ?? 0.0));
 
     // ── Today ──────────────────────────────────────────────────────────
-    final todayRevenue         = sumRevenue(todayDocs);
-    final todayCompletedCount  = todayDocs.where(isCompleted).length;
-    final todayPendingCount    = todayDocs.where(isPending).length;
-    final todayCancelledCount  = todayDocs.where(isVoided).length;
-    final todayTotalOrders     = todayDocs.length;
+    final todayRevenue = sumRevenue(todayDocs);
+    final todayCompletedCount = todayDocs.where(isCompleted).length;
+    final todayPendingCount = todayDocs.where(isPending).length;
+    final todayCancelledCount = todayDocs.where(isVoided).length;
+    final todayTotalOrders = todayDocs.length;
 
     // ── Yesterday ──────────────────────────────────────────────────────
-    final yesterdayRevenue        = sumRevenue(yestDocs);
+    final yesterdayRevenue = sumRevenue(yestDocs);
     final yesterdayCompletedCount = yestDocs.where(isCompleted).length;
 
     // ── Week ──────────────────────────────────────────────────────────
-    final weekRevenue       = sumRevenue(weekDocs);
+    final weekRevenue = sumRevenue(weekDocs);
     final weekCompletedCount = weekDocs.where(isCompleted).length;
     final weekCancelledCount = weekDocs.where(isVoided).length;
-    final weekTotalOrders    = weekDocs.length;
+    final weekTotalOrders = weekDocs.length;
 
     // ── Month ─────────────────────────────────────────────────────────
-    final monthRevenue        = sumRevenue(monthDocs);
+    final monthRevenue = sumRevenue(monthDocs);
     final monthCompletedCount = monthDocs.where(isCompleted).length;
-    final aov = monthCompletedCount == 0
-        ? 0.0
-        : monthRevenue / monthCompletedCount;
+    final aov =
+        monthCompletedCount == 0 ? 0.0 : monthRevenue / monthCompletedCount;
 
     // ── Pending ───────────────────────────────────────────────────────
     // Count pending across ALL today's docs (not just completed)
@@ -868,20 +953,19 @@ class DashboardModel {
 
     // ── Today item tallies ─────────────────────────────────────────────
     // Count items from ALL today's orders (all statuses — matches dashboard)
-    final todayItemCounts  = <String, int>{};
+    final todayItemCounts = <String, int>{};
     final todayItemRevenue = <String, double>{};
     for (final d in todayDocs) {
       for (final raw in (d['items'] as List? ?? [])) {
         if (raw is! Map) continue;
-        final name  = (raw['name'] ?? 'Unknown').toString();
-        final qty   = (raw['quantity'] as num?)?.toInt() ?? 1;
+        final name = (raw['name'] ?? 'Unknown').toString();
+        final qty = (raw['quantity'] as num?)?.toInt() ?? 1;
         final price = (raw['price'] as num?)?.toDouble() ?? 0.0;
-        todayItemCounts[name]  = (todayItemCounts[name] ?? 0) + qty;
+        todayItemCounts[name] = (todayItemCounts[name] ?? 0) + qty;
         todayItemRevenue[name] = (todayItemRevenue[name] ?? 0.0) + price * qty;
       }
     }
-    final todayTotalItemsSold =
-        todayItemCounts.values.fold(0, (a, b) => a + b);
+    final todayTotalItemsSold = todayItemCounts.values.fold(0, (a, b) => a + b);
 
     // Today top items ranked by qty
     final todayRanked = todayItemCounts.entries.toList()
@@ -891,17 +975,19 @@ class DashboardModel {
           ? 0.0
           : (e.value / todayTotalItemsSold) * 100;
       return {
-        'name':    e.key,
-        'qty':     e.value,
+        'name': e.key,
+        'qty': e.value,
         'revenue': todayItemRevenue[e.key] ?? 0.0,
-        'pct':     double.parse(pct.toStringAsFixed(1)),
+        'pct': double.parse(pct.toStringAsFixed(1)),
       };
     }).toList();
 
-    final todayBestSellerName    = todayRanked.isEmpty ? 'None' : todayRanked.first.key;
-    final todayBestSellerQty     = todayRanked.isEmpty ? 0 : todayRanked.first.value;
+    final todayBestSellerName =
+        todayRanked.isEmpty ? 'None' : todayRanked.first.key;
+    final todayBestSellerQty =
+        todayRanked.isEmpty ? 0 : todayRanked.first.value;
     final todayBestSellerRevenue = todayItemRevenue[todayBestSellerName] ?? 0.0;
-    final todayBestSellerPct     = todayTotalItemsSold == 0
+    final todayBestSellerPct = todayTotalItemsSold == 0
         ? 0.0
         : double.parse((todayBestSellerQty / todayTotalItemsSold * 100)
             .toStringAsFixed(1));
@@ -913,36 +999,42 @@ class DashboardModel {
       for (final raw in (d['items'] as List? ?? [])) {
         if (raw is! Map) continue;
         final name = (raw['name'] ?? 'Unknown').toString();
-        final qty  = (raw['quantity'] as num?)?.toInt() ?? 1;
+        final qty = (raw['quantity'] as num?)?.toInt() ?? 1;
         weekItemCounts[name] = (weekItemCounts[name] ?? 0) + qty;
       }
     }
     final weekTotalItemsSold = weekItemCounts.values.fold(0, (a, b) => a + b);
 
     // ── Overall best seller (last 30 days) ─────────────────────────────
-    final overallCounts  = <String, int>{};
+    final overallCounts = <String, int>{};
     final overallRevenue = <String, double>{};
     for (final d in last30Docs) {
       if (!isCompleted(d)) continue;
       for (final raw in (d['items'] as List? ?? [])) {
         if (raw is! Map) continue;
-        final name  = (raw['name'] ?? 'Unknown').toString();
-        final qty   = (raw['quantity'] as num?)?.toInt() ?? 1;
+        final name = (raw['name'] ?? 'Unknown').toString();
+        final qty = (raw['quantity'] as num?)?.toInt() ?? 1;
         final price = (raw['price'] as num?)?.toDouble() ?? 0.0;
-        overallCounts[name]  = (overallCounts[name] ?? 0) + qty;
+        overallCounts[name] = (overallCounts[name] ?? 0) + qty;
         overallRevenue[name] = (overallRevenue[name] ?? 0.0) + price * qty;
       }
     }
     final overallRanked = overallCounts.entries.toList()
       ..sort((a, b) => b.value.compareTo(a.value));
-    final overallBestSellerName    = overallRanked.isEmpty ? 'None' : overallRanked.first.key;
-    final overallBestSellerQty     = overallRanked.isEmpty ? 0 : overallRanked.first.value;
-    final overallBestSellerRevenue = overallRevenue[overallBestSellerName] ?? 0.0;
-    final topFiveItems = overallRanked.take(5).map((e) => {
-      'name':    e.key,
-      'qty':     e.value,
-      'revenue': overallRevenue[e.key] ?? 0.0,
-    }).toList();
+    final overallBestSellerName =
+        overallRanked.isEmpty ? 'None' : overallRanked.first.key;
+    final overallBestSellerQty =
+        overallRanked.isEmpty ? 0 : overallRanked.first.value;
+    final overallBestSellerRevenue =
+        overallRevenue[overallBestSellerName] ?? 0.0;
+    final topFiveItems = overallRanked
+        .take(5)
+        .map((e) => {
+              'name': e.key,
+              'qty': e.value,
+              'revenue': overallRevenue[e.key] ?? 0.0,
+            })
+        .toList();
 
     // ── Worst sellers ──────────────────────────────────────────────────
     final worstItems = <Map<String, dynamic>>[];
@@ -962,41 +1054,47 @@ class DashboardModel {
       final name = (doc['name'] ?? '').toString();
       final sold = overallCounts[name] ?? 0;
       return {
-        'name':              name,
-        'category':          (doc['category'] ?? '').toString(),
-        'price':             (doc['price'] as num?)?.toDouble() ?? 0.0,
-        'soldLast30Days':    sold,
-        'revenueLast30Days': double.parse(
-            (overallRevenue[name] ?? 0.0).toStringAsFixed(2)),
+        'name': name,
+        'category': (doc['category'] ?? '').toString(),
+        'price': (doc['price'] as num?)?.toDouble() ?? 0.0,
+        'soldLast30Days': sold,
+        'revenueLast30Days':
+            double.parse((overallRevenue[name] ?? 0.0).toStringAsFixed(2)),
         'status': sold == 0
             ? 'no_sales'
-            : sold < 5 ? 'low' : sold < 20 ? 'moderate' : 'high',
+            : sold < 5
+                ? 'low'
+                : sold < 20
+                    ? 'moderate'
+                    : 'high',
       };
     }).toList()
       ..sort((a, b) =>
           (b['soldLast30Days'] as int).compareTo(a['soldLast30Days'] as int));
 
-    final totalMenuItems     = menuDocs.length;
-    final menuItemsWithNoSales = menuPerformance
-        .where((i) => i['status'] == 'no_sales').length;
+    final totalMenuItems = menuDocs.length;
+    final menuItemsWithNoSales =
+        menuPerformance.where((i) => i['status'] == 'no_sales').length;
 
     // ── Category breakdown ─────────────────────────────────────────────
     final catRevenue = <String, double>{};
-    final catSold    = <String, int>{};
+    final catSold = <String, int>{};
     for (final item in menuPerformance) {
       final cat = (item['category'] as String? ?? 'Uncategorised');
-      catRevenue[cat] = (catRevenue[cat] ?? 0.0)
-          + (item['revenueLast30Days'] as double? ?? 0.0);
-      catSold[cat] = (catSold[cat] ?? 0)
-          + (item['soldLast30Days'] as int? ?? 0);
+      catRevenue[cat] = (catRevenue[cat] ?? 0.0) +
+          (item['revenueLast30Days'] as double? ?? 0.0);
+      catSold[cat] =
+          (catSold[cat] ?? 0) + (item['soldLast30Days'] as int? ?? 0);
     }
-    final categoryBreakdown = catRevenue.entries.map((e) => {
-      'category': e.key,
-      'revenue':  double.parse(e.value.toStringAsFixed(2)),
-      'unitsSold': catSold[e.key] ?? 0,
-    }).toList()
-      ..sort((a, b) =>
-          (b['revenue'] as double).compareTo(a['revenue'] as double));
+    final categoryBreakdown = catRevenue.entries
+        .map((e) => {
+              'category': e.key,
+              'revenue': double.parse(e.value.toStringAsFixed(2)),
+              'unitsSold': catSold[e.key] ?? 0,
+            })
+        .toList()
+      ..sort(
+          (a, b) => (b['revenue'] as double).compareTo(a['revenue'] as double));
     final topCategory = categoryBreakdown.isEmpty
         ? 'N/A'
         : categoryBreakdown.first['category'] as String;
@@ -1006,8 +1104,8 @@ class DashboardModel {
     double totalInvValue = 0.0;
     final lowStockItems = <Map<String, dynamic>>[];
     for (final doc in invDocs) {
-      final current  = (doc['currentStock'] as num?)?.toDouble() ?? 0.0;
-      final min      = (doc['minStock'] as num?)?.toDouble() ?? 0.0;
+      final current = (doc['currentStock'] as num?)?.toDouble() ?? 0.0;
+      final min = (doc['minStock'] as num?)?.toDouble() ?? 0.0;
       final unitCost = (doc['unitCost'] as num?)?.toDouble() ?? 0.0;
       totalInv++;
       totalInvValue += current * unitCost;
@@ -1015,22 +1113,22 @@ class DashboardModel {
         critical++;
         lowStock++;
         lowStockItems.add({
-          'name':         (doc['name'] ?? '').toString(),
+          'name': (doc['name'] ?? '').toString(),
           'currentStock': current,
-          'minStock':     min,
-          'unit':         (doc['unit'] ?? '').toString(),
-          'isCritical':   true,
-          'deficit':      min.clamp(0.0, double.infinity),
+          'minStock': min,
+          'unit': (doc['unit'] ?? '').toString(),
+          'isCritical': true,
+          'deficit': min.clamp(0.0, double.infinity),
         });
       } else if (current <= min) {
         lowStock++;
         lowStockItems.add({
-          'name':         (doc['name'] ?? '').toString(),
+          'name': (doc['name'] ?? '').toString(),
           'currentStock': current,
-          'minStock':     min,
-          'unit':         (doc['unit'] ?? '').toString(),
-          'isCritical':   false,
-          'deficit':      (min - current).clamp(0.0, double.infinity),
+          'minStock': min,
+          'unit': (doc['unit'] ?? '').toString(),
+          'isCritical': false,
+          'deficit': (min - current).clamp(0.0, double.infinity),
         });
       } else {
         healthy++;
@@ -1055,50 +1153,51 @@ class DashboardModel {
     debugPrint('════════════════════════════════════════════════');
 
     return DashboardModel._(
-      eateryId:                eateryId,
-      generatedAt:             DateTime.now(),
-      todayRevenue:            todayRevenue,
-      todayCompletedCount:     todayCompletedCount,
-      todayPendingCount:       todayPendingCount,
-      todayCancelledCount:     todayCancelledCount,
-      todayTotalOrders:        todayTotalOrders,
-      yesterdayRevenue:        yesterdayRevenue,
+      eateryId: eateryId,
+      generatedAt: DateTime.now(),
+      todayRevenue: todayRevenue,
+      todayCompletedCount: todayCompletedCount,
+      todayPendingCount: todayPendingCount,
+      todayCancelledCount: todayCancelledCount,
+      todayTotalOrders: todayTotalOrders,
+      yesterdayRevenue: yesterdayRevenue,
       yesterdayCompletedCount: yesterdayCompletedCount,
-      weekRevenue:             weekRevenue,
-      weekCompletedCount:      weekCompletedCount,
-      weekCancelledCount:      weekCancelledCount,
-      weekTotalOrders:         weekTotalOrders,
-      monthRevenue:            monthRevenue,
-      monthCompletedCount:     monthCompletedCount,
-      averageOrderValue:       double.parse(aov.toStringAsFixed(2)),
-      todayBestSellerName:     todayBestSellerName,
-      todayBestSellerQty:      todayBestSellerQty,
-      todayBestSellerRevenue:  todayBestSellerRevenue,
-      todayBestSellerPct:      todayBestSellerPct,
-      todayTopItems:           List<Map<String, dynamic>>.from(todayTopItems),
-      todayItemCounts:         todayItemCounts,
-      todayTotalItemsSold:     todayTotalItemsSold,
-      weekItemCounts:          weekItemCounts,
-      weekTotalItemsSold:      weekTotalItemsSold,
-      overallBestSellerName:   overallBestSellerName,
-      overallBestSellerQty:    overallBestSellerQty,
+      weekRevenue: weekRevenue,
+      weekCompletedCount: weekCompletedCount,
+      weekCancelledCount: weekCancelledCount,
+      weekTotalOrders: weekTotalOrders,
+      monthRevenue: monthRevenue,
+      monthCompletedCount: monthCompletedCount,
+      averageOrderValue: double.parse(aov.toStringAsFixed(2)),
+      todayBestSellerName: todayBestSellerName,
+      todayBestSellerQty: todayBestSellerQty,
+      todayBestSellerRevenue: todayBestSellerRevenue,
+      todayBestSellerPct: todayBestSellerPct,
+      todayTopItems: List<Map<String, dynamic>>.from(todayTopItems),
+      todayItemCounts: todayItemCounts,
+      todayTotalItemsSold: todayTotalItemsSold,
+      weekItemCounts: weekItemCounts,
+      weekTotalItemsSold: weekTotalItemsSold,
+      overallBestSellerName: overallBestSellerName,
+      overallBestSellerQty: overallBestSellerQty,
       overallBestSellerRevenue: overallBestSellerRevenue,
-      topFiveItems:            List<Map<String, dynamic>>.from(topFiveItems),
-      worstItems:              List<Map<String, dynamic>>.from(worstItems.take(10).toList()),
-      zeroSalesItemCount:      zeroSalesItemCount,
-      totalMenuItems:          totalMenuItems,
-      menuItemsWithNoSales:    menuItemsWithNoSales,
-      menuPerformance:         List<Map<String, dynamic>>.from(menuPerformance.take(15).toList()),
-      topCategory:             topCategory,
-      categoryBreakdown:       List<Map<String, dynamic>>.from(categoryBreakdown),
-      totalInventoryItems:     totalInv,
-      healthyStockCount:       healthy,
-      lowStockCount:           lowStock,
-      criticalStockCount:      critical,
-      totalInventoryValue:     double.parse(totalInvValue.toStringAsFixed(2)),
-      lowStockItems:           lowStockItems,
-      pendingOrderCount:       pendingOrderCount,
-      pendingOrderValue:       double.parse(pendingOrderValue.toStringAsFixed(2)),
+      topFiveItems: List<Map<String, dynamic>>.from(topFiveItems),
+      worstItems: List<Map<String, dynamic>>.from(worstItems.take(10).toList()),
+      zeroSalesItemCount: zeroSalesItemCount,
+      totalMenuItems: totalMenuItems,
+      menuItemsWithNoSales: menuItemsWithNoSales,
+      menuPerformance:
+          List<Map<String, dynamic>>.from(menuPerformance.take(15).toList()),
+      topCategory: topCategory,
+      categoryBreakdown: List<Map<String, dynamic>>.from(categoryBreakdown),
+      totalInventoryItems: totalInv,
+      healthyStockCount: healthy,
+      lowStockCount: lowStock,
+      criticalStockCount: critical,
+      totalInventoryValue: double.parse(totalInvValue.toStringAsFixed(2)),
+      lowStockItems: lowStockItems,
+      pendingOrderCount: pendingOrderCount,
+      pendingOrderValue: double.parse(pendingOrderValue.toStringAsFixed(2)),
     );
   }
 }

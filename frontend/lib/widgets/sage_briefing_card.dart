@@ -4,6 +4,7 @@ import '../models/business_context.dart';
 
 class SageBriefingContent {
   final String id;
+  final String eateryId;
   final String title;
   final String summary;
   final String periodLabel;
@@ -15,6 +16,7 @@ class SageBriefingContent {
 
   const SageBriefingContent({
     required this.id,
+    this.eateryId = '',
     required this.title,
     required this.summary,
     required this.periodLabel,
@@ -28,10 +30,12 @@ class SageBriefingContent {
   factory SageBriefingContent.fromJson(Map<String, dynamic> json) {
     return SageBriefingContent(
       id: (json['id'] ?? '').toString(),
+      eateryId: (json['eateryId'] ?? '').toString(),
       title: (json['title'] ?? '').toString(),
       summary: (json['summary'] ?? '').toString(),
       periodLabel: (json['periodLabel'] ?? '').toString(),
-      generatedAt: DateTime.tryParse(json['generatedAt']?.toString() ?? '') ?? DateTime.now(),
+      generatedAt: DateTime.tryParse(json['generatedAt']?.toString() ?? '') ??
+          DateTime.now(),
       recommendation: (json['recommendation'] ?? '').toString(),
       businessHealth: (json['businessHealth'] ?? '').toString(),
       detailText: (json['detailText'] ?? '').toString(),
@@ -41,6 +45,7 @@ class SageBriefingContent {
 
   Map<String, dynamic> toJson() => {
         'id': id,
+        'eateryId': eateryId,
         'title': title,
         'summary': summary,
         'periodLabel': periodLabel,
@@ -79,13 +84,16 @@ class SageBriefingCard extends StatelessWidget {
             'evening' => 'Good evening',
             _ => 'Hello',
           };
-    final restaurantName = ctx.eateryName.isNotEmpty ? ctx.eateryName : 'your restaurant';
+    final restaurantName =
+        ctx.eateryName.isNotEmpty ? ctx.eateryName : 'your restaurant';
 
-    final yesterdayRevenue = NumberFormat.currency(symbol: '₱', decimalDigits: 2)
-        .format(ctx.yesterdayRevenue);
+    final yesterdayRevenue =
+        NumberFormat.currency(symbol: '₱', decimalDigits: 2)
+            .format(ctx.yesterdayRevenue);
     final todayRevenue = NumberFormat.currency(symbol: '₱', decimalDigits: 2)
         .format(ctx.todayRevenue);
-    final bestSeller = ctx.todayBestSeller == 'None' || ctx.todayBestSellerQty == 0
+    final bestSeller = ctx.todayBestSeller == 'None' ||
+            ctx.todayBestSellerQty == 0
         ? 'No sales have been recorded yet today. I\'ll continue monitoring your business throughout the day.'
         : '${ctx.todayBestSeller} is leading today with ${ctx.todayBestSellerQty} sold.';
 
@@ -125,12 +133,14 @@ class SageBriefingCard extends StatelessWidget {
 
     return SageBriefingContent(
       id: '${period}_${DateTime.now().millisecondsSinceEpoch}',
+      eateryId: ctx.eateryId,
       title: '$greeting, $restaurantName',
       summary: summary,
       periodLabel: _periodLabel(period),
       generatedAt: DateTime.now(),
       recommendation: recommendation,
-      businessHealth: '${ctx.healthLabel} (${ctx.healthScore.toStringAsFixed(0)}/100)',
+      businessHealth:
+          '${ctx.healthLabel} (${ctx.healthScore.toStringAsFixed(0)}/100)',
       detailText: detailText,
       period: period,
     );
@@ -209,7 +219,8 @@ class SageBriefingCard extends StatelessWidget {
                     color: const Color(0xFFDBEAFE),
                     borderRadius: BorderRadius.circular(14),
                   ),
-                  child: const Icon(Icons.auto_awesome_rounded, color: Color(0xFF2563EB)),
+                  child: const Icon(Icons.auto_awesome_rounded,
+                      color: Color(0xFF2563EB)),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
@@ -265,7 +276,8 @@ class SageBriefingCard extends StatelessWidget {
                 Expanded(
                   child: ElevatedButton.icon(
                     onPressed: onAskSage,
-                    icon: const Icon(Icons.chat_bubble_outline_rounded, size: 18),
+                    icon:
+                        const Icon(Icons.chat_bubble_outline_rounded, size: 18),
                     label: const Text('Ask Sage'),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: const Color(0xFF2563EB),

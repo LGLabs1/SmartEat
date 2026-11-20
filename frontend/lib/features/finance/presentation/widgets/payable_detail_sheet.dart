@@ -125,9 +125,10 @@ class PayableDetailSheet extends StatelessWidget {
               const Divider(height: 28),
               FinanceDetailRow('Due Date',
                   due == null ? 'Not set' : FinanceFormat.date(due)),
-              FinanceDetailRow('Frequency',
-                  frequency.isEmpty ? 'Not set' : frequency),
-              FinanceDetailRow('Amount Type', isVariable ? 'Variable' : 'Fixed'),
+              FinanceDetailRow(
+                  'Frequency', frequency.isEmpty ? 'Not set' : frequency),
+              FinanceDetailRow(
+                  'Amount Type', isVariable ? 'Variable' : 'Fixed'),
               if (vendor.isNotEmpty) FinanceDetailRow('Vendor', vendor),
               if (notes.isNotEmpty) FinanceDetailRow('Notes', notes),
               if (history.isNotEmpty) ...[
@@ -182,11 +183,14 @@ class PayableDetailSheet extends StatelessWidget {
                           child: OutlinedButton.icon(
                             onPressed: onTogglePaid,
                             style: OutlinedButton.styleFrom(
-                              foregroundColor:
-                                  isPaid ? scheme.onSurfaceVariant : AppTheme.success,
+                              foregroundColor: isPaid
+                                  ? scheme.onSurfaceVariant
+                                  : AppTheme.sageSuccess,
                             ),
                             icon: Icon(
-                              isPaid ? Icons.undo_outlined : Icons.check_outlined,
+                              isPaid
+                                  ? Icons.undo_outlined
+                                  : Icons.check_outlined,
                             ),
                             label: Text(isPaid ? 'Mark Unpaid' : 'Mark Paid'),
                           ),
@@ -207,7 +211,7 @@ class PayableDetailSheet extends StatelessWidget {
                       child: TextButton.icon(
                         onPressed: onDelete,
                         style: TextButton.styleFrom(
-                          foregroundColor: AppTheme.error,
+                          foregroundColor: scheme.error,
                         ),
                         icon: const Icon(Icons.delete_outline),
                         label: const Text('Delete Payable'),

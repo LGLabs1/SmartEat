@@ -48,8 +48,9 @@ class FinanceExpensesTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final categories = <String>{for (final e in expenses) (e['category'] ?? '').toString()}
-      ..removeWhere((c) => c.trim().isEmpty);
+    final categories = <String>{
+      for (final e in expenses) (e['category'] ?? '').toString()
+    }..removeWhere((c) => c.trim().isEmpty);
 
     var filtered = expenses.where((e) {
       // Source filter
@@ -148,7 +149,8 @@ class FinanceExpensesTab extends StatelessWidget {
                           '${filtered.length} expenses',
                           style: TextStyle(
                             fontSize: 12,
-                            color: Theme.of(context).colorScheme.onSurfaceVariant,
+                            color:
+                                Theme.of(context).colorScheme.onSurfaceVariant,
                           ),
                         ),
                       ],
@@ -194,8 +196,7 @@ class FinanceExpensesTab extends StatelessWidget {
                       context,
                       label: 'Inventory ($linkedCount)',
                       icon: Icons.inventory_2_outlined,
-                      selected:
-                          sourceFilter == FinanceMetrics.inventorySource,
+                      selected: sourceFilter == FinanceMetrics.inventorySource,
                       onTap: () =>
                           onSourceFilterChanged(FinanceMetrics.inventorySource),
                     ),
@@ -239,8 +240,7 @@ class FinanceExpensesTab extends StatelessWidget {
                   padding: const EdgeInsets.all(16),
                   itemCount: filtered.length,
                   separatorBuilder: (_, __) => const SizedBox(height: 10),
-                  itemBuilder: (context, index) =>
-                      _ExpenseCard(
+                  itemBuilder: (context, index) => _ExpenseCard(
                     expense: filtered[index],
                     fmt: fmt,
                     isAdmin: isAdmin,
@@ -310,7 +310,6 @@ class FinanceExpensesTab extends StatelessWidget {
         decoration: const InputDecoration(
           isDense: true,
           prefixIcon: Icon(Icons.category_outlined),
-          border: OutlineInputBorder(),
         ),
         hint: const Text('Category'),
         items: [
@@ -356,7 +355,8 @@ class _ExpenseCard extends StatelessWidget {
     final method = (expense['paymentMethod'] ?? '').toString().trim();
     final linked = FinanceMetrics.isLinkedPurchase(expense);
     final bill = FinanceMetrics.isPayablePayment(expense);
-    final accent = bill ? FinanceStatus.billPayment : financeCategoryColor(category);
+    final accent =
+        bill ? FinanceStatus.billPayment : financeCategoryColor(category);
 
     final details = <String>[
       if (date != null) FinanceFormat.date(date),
@@ -370,7 +370,7 @@ class _ExpenseCard extends StatelessWidget {
       margin: EdgeInsets.zero,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(AppTheme.cardRadius),
-        side: BorderSide(color: scheme.outlineVariant),
+        side: BorderSide(color: Colors.white.withValues(alpha: 0.1)),
       ),
       child: InkWell(
         onTap: onOpen,
@@ -453,7 +453,8 @@ class _ExpenseCard extends StatelessWidget {
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
                           fontSize: 11.5,
-                          color: scheme.onSurfaceVariant.withValues(alpha: 0.85),
+                          color:
+                              scheme.onSurfaceVariant.withValues(alpha: 0.85),
                         ),
                       ),
                     ],

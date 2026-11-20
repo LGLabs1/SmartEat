@@ -75,6 +75,7 @@ class BriefingHistoryService {
 
     return SageBriefingContent(
       id: id,
+      eateryId: (data['eateryId'] ?? '').toString(),
       title: (data['title'] ?? '').toString(),
       summary: (data['summary'] ?? '').toString(),
       periodLabel: (periodLabel == null || periodLabel.isEmpty)
@@ -99,9 +100,7 @@ class BriefingHistoryService {
     final col = _col(eateryId);
     if (col == null) return;
     try {
-      await col
-          .doc(docId(briefing))
-          .set(toFirestore(eateryId!, briefing));
+      await col.doc(docId(briefing)).set(toFirestore(eateryId!, briefing));
     } catch (e) {
       debugPrint('BriefingHistoryService.save failed: $e');
     }
@@ -114,13 +113,9 @@ class BriefingHistoryService {
     final col = _col(eateryId);
     if (col == null) return const [];
     try {
-      final snap = await col
-          .orderBy('generatedAt', descending: true)
-          .limit(limit)
-          .get();
-      return snap.docs
-          .map((doc) => fromFirestore(doc.id, doc.data()))
-          .toList();
+      final snap =
+          await col.orderBy('generatedAt', descending: true).limit(limit).get();
+      return snap.docs.map((doc) => fromFirestore(doc.id, doc.data())).toList();
     } catch (e) {
       debugPrint('BriefingHistoryService.fetch failed: $e');
       return const [];

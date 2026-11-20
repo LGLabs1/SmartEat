@@ -3,6 +3,9 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'notification_service.dart';
 import '../services/api_service.dart';
+import '../utils/attendance_utils.dart';
+import 'attendance_settings_service.dart';
+import 'firebase_service.dart';
 import 'sms_service.dart';
 
 /// Handles periodic notification checks for various system events
@@ -48,12 +51,22 @@ class NotificationTriggerManager {
 
   /// Run all notification checks
   Future<void> _runAllChecks() async {
+    final profile = await _loadCurrentProfile();
+    final isAdmin = _profileIsAdmin(profile);
+
     if (_notificationService.notificationsEnabled) {
       await Future.wait([
-        _checkLowStock(),
-        _checkUpcomingBills(),
         _checkPendingOrders(),
+        if (isAdmin) _checkLowStock(),
+        if (isAdmin) _checkUpcomingBills(),
       ]);
+    }
+    // Attendance reminders persist to the in-app feed even when local
+    // notifications are muted; the dedicated setting controls them.
+    if (_notificationService.attendanceRemindersEnabled) {
+      try {
+        await _checkAttendanceReminders(profile);
+      } catch (_) {}
     }
     // SMS app-open catch-up (independent of local notification settings)
     try {
@@ -64,6 +77,30 @@ class NotificationTriggerManager {
       await _checkPendingStaffApprovals();
     } catch (_) {}
   }
+
+  Future<Map<String, dynamic>?> _loadCurrentProfile() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return null;
+    try {
+      final snap = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .get();
+      return snap.data();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  bool _profileIsAdmin(Map<String, dynamic>? profile) {
+    final role = (profile?['role'] ?? '').toString().toLowerCase();
+    return profile?['isAdmin'] == true ||
+        profile?['isAdmin'] == 'true' ||
+        profile?['isAdmin'] == 1 ||
+        role == 'admin';
+  }
+
+  String _dateKey(DateTime date) => attendanceYmd(date);
 
   /// Create one in-app notification per unapproved staff member in the
   /// admin's eatery. Existing notifications keep their read state.
@@ -76,9 +113,7 @@ class NotificationTriggerManager {
           .doc(user.uid)
           .get();
       final profile = userSnap.data();
-      final role = (profile?['role'] ?? '').toString().toLowerCase();
-      final isAdmin = profile?['isAdmin'] == true || role == 'admin';
-      if (!isAdmin) return;
+      if (!_profileIsAdmin(profile)) return;
       final eateryId = (profile?['eateryId'] ?? '').toString().trim();
       if (eateryId.isEmpty) return;
 
@@ -89,15 +124,14 @@ class NotificationTriggerManager {
 
       for (final doc in pendingSnap.docs) {
         final data = doc.data();
-        final staffRole = (data['role'] ?? '').toString().toLowerCase();
-        final staffIsAdmin = data['isAdmin'] == true || staffRole == 'admin';
-        if (staffIsAdmin || data['approved'] != false) continue;
+        if (_profileIsAdmin(data) || data['approved'] != false) continue;
         final name = _displayName(data);
         await _notificationService.persistFeedNotification(
           title: 'New staff awaiting approval',
           body: '$name has joined your eatery and needs approval.',
           type: 'staff_approval',
           source: 'staff',
+          audience: 'admin',
           eateryId: eateryId,
           dedupeKey: 'pending_staff_${doc.id}',
           preserveReadState: true,
@@ -107,6 +141,91 @@ class NotificationTriggerManager {
             'target': 'staff',
           },
         );
+      }
+    } catch (_) {}
+  }
+
+  /// Reminds the signed-in user to time in at their scheduled start and to
+  /// time out after a full shift. Each reminder is deduped per user per day.
+  Future<void> _checkAttendanceReminders([
+    Map<String, dynamic>? profile,
+  ]) async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+    final data = profile ?? await _loadCurrentProfile();
+    if (data == null) return;
+    final eateryId = (data['eateryId'] ?? '').toString().trim();
+    if (eateryId.isEmpty) return;
+
+    try {
+      final settings = await AttendanceSettingsService.loadForEatery(eateryId);
+      final attendance = await FirebaseService.getTodayAttendance(
+        eateryId: eateryId,
+        uid: user.uid,
+      );
+      final now = DateTime.now();
+      final dateKey = _dateKey(now);
+      final timeIn = attendance?['timeIn'];
+      final timeOut = attendance?['timeOut'];
+      final workUnit = attendance?['workUnit'];
+      final encodedWithoutClock = timeIn == null &&
+          attendance != null &&
+          (attendance['present'] == true || (workUnit is num && workUnit > 0));
+
+      final scheduledStart =
+          attendanceScheduledStartFor(now, settings.scheduledStart);
+      if (timeIn == null && !encodedWithoutClock && scheduledStart != null) {
+        final due = scheduledStart.add(
+          Duration(minutes: settings.graceMinutes),
+        );
+        if (!now.isBefore(due)) {
+          await _notificationService.showNotification(
+            title: 'Time In Reminder',
+            body:
+                'Your shift was scheduled to start at ${formatAttendanceClock(scheduledStart)}. Tap Time In when you begin.',
+            payload: 'attendance',
+            type: 'attendance',
+            source: 'attendance',
+            audience: 'staff',
+            targetUids: <String>[user.uid],
+            dedupeKey: 'attendance_start_${user.uid}_$dateKey',
+            preserveReadState: true,
+            data: {
+              'target': 'profile',
+              'attendanceUid': user.uid,
+              'date': dateKey,
+            },
+          );
+        }
+      }
+
+      if (timeIn != null && timeOut == null) {
+        final startedAt = attendanceAsDateTime(timeIn);
+        if (startedAt != null) {
+          final elapsed = now.difference(startedAt);
+          final fullShift = Duration(
+            minutes: (settings.fullDayHours * 60).round(),
+          );
+          if (!elapsed.isNegative && elapsed >= fullShift) {
+            await _notificationService.showNotification(
+              title: 'Time Out Reminder',
+              body:
+                  'You have been on shift for ${formatAttendanceDuration(elapsed)}. Remember to Time Out when you finish.',
+              payload: 'attendance',
+              type: 'attendance',
+              source: 'attendance',
+              audience: 'staff',
+              targetUids: <String>[user.uid],
+              dedupeKey: 'attendance_end_${user.uid}_$dateKey',
+              preserveReadState: true,
+              data: {
+                'target': 'profile',
+                'attendanceUid': user.uid,
+                'date': dateKey,
+              },
+            );
+          }
+        }
       }
     } catch (_) {}
   }
@@ -131,9 +250,7 @@ class NotificationTriggerManager {
           .doc(user.uid)
           .get();
       final profile = userSnap.data();
-      final role = (profile?['role'] ?? '').toString().toLowerCase();
-      final isAdmin = profile?['isAdmin'] == true || role == 'admin';
-      if (!isAdmin) return;
+      if (!_profileIsAdmin(profile)) return;
       final eateryId = (profile?['eateryId'] ?? '').toString().trim();
       if (eateryId.isEmpty) return;
       await SmsService.sendBillReminders(eateryId: eateryId);
@@ -186,6 +303,10 @@ class NotificationTriggerManager {
         title: 'Low Stock Alert',
         body: message,
         payload: 'low_stock',
+        type: 'low_stock',
+        source: 'inventory',
+        audience: 'admin',
+        dedupeKey: 'low_stock_alert_${_dateKey(now)}_${now.hour}',
       );
 
       // Track notified items
@@ -284,6 +405,10 @@ class NotificationTriggerManager {
       title: 'Overdue Bill Alert',
       body: message,
       payload: 'bill_overdue',
+      type: 'bill_overdue',
+      source: 'payable',
+      audience: 'admin',
+      dedupeKey: 'bill_overdue_alert_${_dateKey(now)}',
     );
 
     _lastNotifications[lastCheckKey] = now;
@@ -333,6 +458,10 @@ class NotificationTriggerManager {
       title: 'Bill Due Soon',
       body: message,
       payload: 'bill_due_soon',
+      type: 'bill_due_soon',
+      source: 'payable',
+      audience: 'admin',
+      dedupeKey: 'bill_due_soon_alert_${_dateKey(now)}',
     );
 
     _lastNotifications[lastCheckKey] = now;
@@ -374,6 +503,11 @@ class NotificationTriggerManager {
         title: 'Pending Orders',
         body: message,
         payload: 'pending_orders',
+        type: 'order',
+        source: 'orders',
+        audience: 'all',
+        dedupeKey:
+            'pending_orders_${_dateKey(now)}_${now.hour}_${now.minute ~/ 30}',
       );
 
       _lastNotifications[lastCheckKey] = now;
@@ -406,6 +540,9 @@ class NotificationTriggerManager {
         break;
       case 'pending_staff':
         await _checkPendingStaffApprovals();
+        break;
+      case 'attendance':
+        await _checkAttendanceReminders();
         break;
       default:
         await _runAllChecks();

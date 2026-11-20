@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../../../../services/api_service.dart';
+import '../../../../../theme.dart';
+import '../../../../../widgets/dashboard/dashboard_back_handler.dart';
 import '../../data/models/purchase_receipt.dart';
 import '../../data/models/stock_adjustment.dart';
 import '../../presentation/providers/inventory_notifier.dart';
@@ -15,7 +17,10 @@ import 'purchase_list_screen.dart';
 import 'inventory_overview_screen.dart';
 
 class InventoryFeatureScreen extends StatefulWidget {
-  const InventoryFeatureScreen({Key? key}) : super(key: key);
+  const InventoryFeatureScreen({Key? key, this.onBackHandlerChanged})
+      : super(key: key);
+
+  final DashboardBackHandlerChanged? onBackHandlerChanged;
 
   @override
   State<InventoryFeatureScreen> createState() => _InventoryFeatureScreenState();
@@ -23,6 +28,21 @@ class InventoryFeatureScreen extends StatefulWidget {
 
 class _InventoryFeatureScreenState extends State<InventoryFeatureScreen> {
   int _index = 0;
+  final List<int> _sectionHistory = <int>[0];
+  String? _dismissedError;
+
+  void _goToSection(int index) {
+    if (index == _index) return;
+    setState(() => _index = index);
+    _sectionHistory.add(index);
+  }
+
+  bool _popSection() {
+    if (_sectionHistory.length <= 1) return false;
+    _sectionHistory.removeLast();
+    setState(() => _index = _sectionHistory.last);
+    return true;
+  }
 
   // Ensures the one-off backfill of pre-existing purchase receipts runs at
   // most once per app session, so we do not re-query finance on every visit.
@@ -38,6 +58,18 @@ class _InventoryFeatureScreenState extends State<InventoryFeatureScreen> {
       _autoFinanceSyncRan = true;
       await _syncExistingPurchasesToFinance(reportFailures: false);
     });
+    widget.onBackHandlerChanged?.call(
+      DashboardBackHandler(
+        canUnwind: () => _sectionHistory.length > 1,
+        unwind: _popSection,
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    widget.onBackHandlerChanged?.call(null);
+    super.dispose();
   }
 
   /// Mirrors a recorded inventory purchase (GRN) into the finance ledger as an
@@ -123,17 +155,22 @@ class _InventoryFeatureScreenState extends State<InventoryFeatureScreen> {
     final notifier = context.watch<InventoryNotifier>();
     final state = notifier.state;
     final items = state.items;
+    final error = state.error;
+    final showError = error != null && error != _dismissedError;
 
     final screens = [
       InventoryOverviewScreen(
+        key: const ValueKey('inventory-overview'),
         items: items,
         movements: state.movements,
-        onViewReports: () => setState(() => _index = 5),
-        onViewLowStock: () => setState(() => _index = 1),
-        onViewMovements: () => setState(() => _index = 2),
+        onViewReports: () => _goToSection(5),
+        onViewLowStock: () => _goToSection(1),
+        onViewMovements: () => _goToSection(2),
       ),
       ItemsListScreen(
+        key: const ValueKey('inventory-items'),
         items: items,
+        onRefresh: notifier.load,
         onItemTap: (item) {
           Navigator.push(
             context,
@@ -151,8 +188,13 @@ class _InventoryFeatureScreenState extends State<InventoryFeatureScreen> {
           await notifier.load();
         },
       ),
-      MovementsScreen(movements: state.movements, items: items),
+      MovementsScreen(
+        key: const ValueKey('inventory-movements'),
+        movements: state.movements,
+        items: items,
+      ),
       PurchasesScreen(
+        key: const ValueKey('inventory-purchases'),
         purchases: state.purchases,
         items: items,
         onSyncToFinance: () => _syncExistingPurchasesToFinance(),
@@ -175,25 +217,100 @@ class _InventoryFeatureScreenState extends State<InventoryFeatureScreen> {
           );
         },
       ),
-      AdjustmentsScreen(adjustments: state.adjustments, items: items),
-      ReportsScreen(items: items, movements: state.movements),
+      AdjustmentsScreen(
+        key: const ValueKey('inventory-adjustments'),
+        adjustments: state.adjustments,
+        items: items,
+      ),
+      ReportsScreen(
+        key: const ValueKey('inventory-reports'),
+        items: items,
+        movements: state.movements,
+      ),
     ];
 
     return Scaffold(
-      body: state.loading
-          ? const Center(child: CircularProgressIndicator())
-          : screens[_index],
+      backgroundColor: AppTheme.sageNavy,
+      body: Stack(
+        children: [
+          IndexedStack(index: _index, children: screens),
+          if (state.loading && items.isEmpty)
+            const Center(child: CircularProgressIndicator()),
+          if (state.loading && items.isNotEmpty)
+            const Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: LinearProgressIndicator(minHeight: 2),
+            ),
+          if (showError)
+            Positioned(
+              top: state.loading ? 4 : 0,
+              left: 12,
+              right: 12,
+              child: Material(
+                color: AppTheme.sagePanel,
+                elevation: 4,
+                borderRadius: BorderRadius.circular(12),
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
+                  child: Row(
+                    children: [
+                      const Icon(
+                        Icons.error_outline,
+                        color: Colors.orangeAccent,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          error,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(color: Colors.white70),
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: 'Retry',
+                        onPressed: () {
+                          setState(() => _dismissedError = null);
+                          notifier.load();
+                        },
+                        icon: const Icon(
+                          Icons.refresh,
+                          color: AppTheme.sageAccent,
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: 'Dismiss',
+                        onPressed: () =>
+                            setState(() => _dismissedError = error),
+                        icon: const Icon(Icons.close, color: Colors.white54),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _index,
-        onTap: (i) => setState(() => _index = i),
+        onTap: _goToSection,
         type: BottomNavigationBarType.fixed,
+        backgroundColor: AppTheme.sagePanel,
+        selectedItemColor: AppTheme.sageAccent,
+        unselectedItemColor: Colors.white.withValues(alpha: 0.52),
         items: const [
-          BottomNavigationBarItem(icon: Icon(Icons.dashboard), label: 'Overview'),
+          BottomNavigationBarItem(
+              icon: Icon(Icons.dashboard), label: 'Overview'),
           BottomNavigationBarItem(icon: Icon(Icons.inventory), label: 'Items'),
-          BottomNavigationBarItem(icon: Icon(Icons.history), label: 'Movements'),
-          BottomNavigationBarItem(icon: Icon(Icons.shopping_cart), label: 'Purchases'),
+          BottomNavigationBarItem(
+              icon: Icon(Icons.history), label: 'Movements'),
+          BottomNavigationBarItem(
+              icon: Icon(Icons.shopping_cart), label: 'Purchases'),
           BottomNavigationBarItem(icon: Icon(Icons.tune), label: 'Adjustments'),
-          BottomNavigationBarItem(icon: Icon(Icons.bar_chart), label: 'Reports'),
+          BottomNavigationBarItem(
+              icon: Icon(Icons.bar_chart), label: 'Reports'),
         ],
       ),
     );

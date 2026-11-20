@@ -121,9 +121,6 @@ const setCache = (key, data) => {
 // eateryId resolution
 // ---------------------------------------------------------------------------
 const getEateryId = async (req) => {
-  if (req.body?.eateryId)       return req.body.eateryId;
-  if (req.query?.eateryId)      return req.query.eateryId;
-  if (req.headers?.['x-eatery-id']) return req.headers['x-eatery-id'];
   if (req.user?.eateryId)       return req.user.eateryId;
   if (req.user?.uid) {
     try {
@@ -133,6 +130,9 @@ const getEateryId = async (req) => {
       console.error('Error fetching user eateryId:', e);
     }
   }
+  if (req.body?.eateryId)            return req.body.eateryId;
+  if (req.query?.eateryId)           return req.query.eateryId;
+  if (req.headers?.['x-eatery-id'])  return req.headers['x-eatery-id'];
   return null;
 };
 
@@ -220,6 +220,8 @@ STRICT RULES AGAINST HALLUCINATION:
 5. When recommendations are included, weave them into your answer naturally, like advice from a consultant.
 6. If a term could have multiple meanings, briefly say how you're interpreting it instead of guessing.
 7. For a short or vague question, answer from the most relevant available metrics and mention the period you used.
+8. When the restaurant is still building its history, be encouraging and conversational — like a new friendship getting to know each other. Say plainly that there is not enough history yet, avoid technical terms, and never claim patterns, rankings, best days, or trends from empty or zero data.
+9. These early-stage rules take priority over rule 4: specificity never means inventing a day, number, or trend. Offer one simple, friendly next step instead.
 
 NEVER reveal internal workings: do not mention "snapshot", "intent", "concepts", "confidence", "prompt", or "data provided". Instead say "I can see..." or "looking at your numbers...".
 

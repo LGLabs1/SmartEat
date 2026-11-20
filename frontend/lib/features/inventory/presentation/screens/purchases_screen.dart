@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import '../../../../../models/inventory_item.dart';
+import '../../../../../theme.dart';
 import '../../../../../widgets/dashboard/empty_state.dart';
 import '../../../../../widgets/dashboard/kpi_card.dart';
 import '../../data/models/purchase_receipt.dart';
@@ -62,8 +63,8 @@ class _PurchasesScreenState extends State<PurchasesScreen> {
         return false;
       }
       if (_dateRange != null) {
-        final d = DateTime(
-            p.receivedAt.year, p.receivedAt.month, p.receivedAt.day);
+        final d =
+            DateTime(p.receivedAt.year, p.receivedAt.month, p.receivedAt.day);
         final start = DateTime(_dateRange!.start.year, _dateRange!.start.month,
             _dateRange!.start.day);
         final end = DateTime(
@@ -74,8 +75,8 @@ class _PurchasesScreenState extends State<PurchasesScreen> {
         if (!p.receiptNumber.toLowerCase().contains(q) &&
             !(p.supplierName ?? '').toLowerCase().contains(q) &&
             !(p.notes ?? '').toLowerCase().contains(q) &&
-            !p.items.any(
-                (i) => _itemName(i.itemId).toLowerCase().contains(q))) {
+            !p.items
+                .any((i) => _itemName(i.itemId).toLowerCase().contains(q))) {
           return false;
         }
       }
@@ -95,8 +96,7 @@ class _PurchasesScreenState extends State<PurchasesScreen> {
     final filtered = _filtered;
 
     final totalSpend = filtered.fold<double>(0, (s, p) => s + _total(p));
-    final totalLines =
-        filtered.fold<int>(0, (s, p) => s + p.items.length);
+    final totalLines = filtered.fold<int>(0, (s, p) => s + p.items.length);
     final now = DateTime.now();
     final monthSpend = filtered
         .where((p) =>
@@ -136,7 +136,8 @@ class _PurchasesScreenState extends State<PurchasesScreen> {
                         value: '${filtered.length}',
                         icon: Icons.receipt_long_outlined,
                         color: theme.colorScheme.primary,
-                        description: 'Purchase receipt records in the current filter.',
+                        description:
+                            'Purchase receipt records in the current filter.',
                       ),
                     ),
                     const SizedBox(width: 8),
@@ -145,8 +146,9 @@ class _PurchasesScreenState extends State<PurchasesScreen> {
                         title: 'Total Spend',
                         value: _money(totalSpend),
                         icon: Icons.payments_outlined,
-                        color: const Color(0xFF7C3AED),
-                        description: 'Total amount from purchase receipts in the current filter.',
+                        color: Colors.deepPurpleAccent,
+                        description:
+                            'Total amount from purchase receipts in the current filter.',
                       ),
                     ),
                     const SizedBox(width: 8),
@@ -155,8 +157,9 @@ class _PurchasesScreenState extends State<PurchasesScreen> {
                         title: 'This Month',
                         value: _money(monthSpend),
                         icon: Icons.calendar_month_outlined,
-                        color: const Color(0xFF16A34A),
-                        description: 'Purchase spend for the current month (based on receipt dates).',
+                        color: AppTheme.sageSuccess,
+                        description:
+                            'Purchase spend for the current month (based on receipt dates).',
                       ),
                     ),
                     const SizedBox(width: 8),
@@ -165,8 +168,9 @@ class _PurchasesScreenState extends State<PurchasesScreen> {
                         title: 'Line Items',
                         value: '$totalLines',
                         icon: Icons.list_alt_outlined,
-                        color: const Color(0xFF2563EB),
-                        description: 'Total purchased line items across filtered receipts.',
+                        color: AppTheme.sageAccent,
+                        description:
+                            'Total purchased line items across filtered receipts.',
                       ),
                     ),
                   ],
@@ -229,8 +233,8 @@ class _PurchasesScreenState extends State<PurchasesScreen> {
                       leading: CircleAvatar(
                         backgroundColor:
                             theme.colorScheme.primary.withValues(alpha: 0.12),
-                        child: const Icon(Icons.shopping_basket_outlined,
-                            color: Colors.brown),
+                        child: Icon(Icons.shopping_basket_outlined,
+                            color: theme.colorScheme.secondary),
                       ),
                       title: const Text('Purchase List'),
                       subtitle: listNotifier == null
@@ -439,8 +443,8 @@ class _ReceiptCard extends StatelessWidget {
                                 itemName(item.itemId),
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
-                                style:
-                                    const TextStyle(fontWeight: FontWeight.w600),
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.w600),
                               ),
                             ),
                             Expanded(
@@ -485,16 +489,16 @@ class _ReceiptCard extends StatelessWidget {
                   const SizedBox(height: 4),
                   Text(
                     'Received by: ${receipt.receivedBy}',
-                    style: TextStyle(
-                        fontSize: 12, color: scheme.onSurfaceVariant),
+                    style:
+                        TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
                   ),
                 ],
                 if ((receipt.notes ?? '').trim().isNotEmpty) ...[
                   const SizedBox(height: 4),
                   Text(
                     'Notes: ${receipt.notes}',
-                    style: TextStyle(
-                        fontSize: 12, color: scheme.onSurfaceVariant),
+                    style:
+                        TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
                   ),
                 ],
               ],
@@ -508,8 +512,8 @@ class _ReceiptCard extends StatelessWidget {
   Widget _statusChip(String status) {
     final s = status.toUpperCase();
     final color = s == 'RECEIVED' || s == 'COMPLETED'
-        ? const Color(0xFF16A34A)
-        : const Color(0xFFF59E0B);
+        ? AppTheme.sageSuccess
+        : AppTheme.warning;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
       decoration: BoxDecoration(

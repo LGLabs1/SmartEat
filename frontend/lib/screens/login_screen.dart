@@ -1,7 +1,11 @@
-import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/material.dart';
+import 'package:lottie/lottie.dart';
 import 'package:provider/provider.dart';
+
 import '../services/auth_provider.dart' as app_auth;
+import '../theme.dart';
+import '../widgets/app_logo.dart';
 import 'auth_ui.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -19,43 +23,54 @@ class _LoginScreenState extends State<LoginScreen>
   bool _isLoading = false;
   bool _obscurePassword = true;
 
-  // Focus nodes for text fields
   late FocusNode _emailFocusNode;
   late FocusNode _passwordFocusNode;
   late AnimationController _fadeController;
   late AnimationController _slideController;
   late Animation<double> _fadeAnimation;
-  late Animation<Offset> _slideAnimation;
+  late Animation<double> _cardFadeAnimation;
+  late Animation<Offset> _introSlideAnimation;
+  late Animation<Offset> _cardSlideAnimation;
 
   @override
   void initState() {
     super.initState();
 
-    // Initialize focus nodes
     _emailFocusNode = FocusNode();
     _passwordFocusNode = FocusNode();
 
     _fadeController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 800),
+      duration: const Duration(milliseconds: 900),
     );
     _slideController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 600),
+      duration: const Duration(milliseconds: 750),
     );
 
     _fadeAnimation = CurvedAnimation(
       parent: _fadeController,
-      curve: Curves.easeInOut,
+      curve: Curves.easeOut,
     );
-
-    _slideAnimation = Tween<Offset>(
+    _cardFadeAnimation = CurvedAnimation(
+      parent: _fadeController,
+      curve: const Interval(0.22, 1, curve: Curves.easeOut),
+    );
+    _introSlideAnimation = Tween<Offset>(
+      begin: const Offset(0, 0.06),
+      end: Offset.zero,
+    ).animate(
+      CurvedAnimation(parent: _slideController, curve: Curves.easeOutCubic),
+    );
+    _cardSlideAnimation = Tween<Offset>(
       begin: const Offset(0, 0.1),
       end: Offset.zero,
-    ).animate(CurvedAnimation(
-      parent: _slideController,
-      curve: Curves.easeOutQuart,
-    ));
+    ).animate(
+      CurvedAnimation(
+        parent: _slideController,
+        curve: const Interval(0.15, 1, curve: Curves.easeOutCubic),
+      ),
+    );
 
     _fadeController.forward();
     _slideController.forward();
@@ -67,18 +82,13 @@ class _LoginScreenState extends State<LoginScreen>
     _slideController.dispose();
     _emailController.dispose();
     _passwordController.dispose();
-
-    // Dispose focus nodes
     _emailFocusNode.dispose();
     _passwordFocusNode.dispose();
-
     super.dispose();
   }
 
   void _togglePasswordVisibility() {
-    setState(() {
-      _obscurePassword = !_obscurePassword;
-    });
+    setState(() => _obscurePassword = !_obscurePassword);
   }
 
   void _submit() {
@@ -87,7 +97,15 @@ class _LoginScreenState extends State<LoginScreen>
     }
   }
 
-  // Helper method to build animated text field
+  void _goBackToLanding() {
+    final navigator = Navigator.of(context);
+    if (navigator.canPop()) {
+      navigator.pop();
+    } else {
+      navigator.pushReplacementNamed('/');
+    }
+  }
+
   Widget _buildAnimatedTextField({
     required TextEditingController controller,
     required String label,
@@ -110,6 +128,8 @@ class _LoginScreenState extends State<LoginScreen>
         validator: validator,
         keyboardType: keyboardType,
         maxLines: maxLines,
+        cursorColor: AppTheme.sageAccent,
+        style: const TextStyle(color: Colors.white, fontSize: 15),
         textInputAction:
             isLastField ? TextInputAction.done : TextInputAction.next,
         onFieldSubmitted: (_) {
@@ -122,44 +142,44 @@ class _LoginScreenState extends State<LoginScreen>
         decoration: InputDecoration(
           labelText: label,
           labelStyle: TextStyle(
-            color: Colors.grey.shade600,
+            color: Colors.white.withValues(alpha: 0.48),
             fontWeight: FontWeight.w500,
           ),
-          prefixIcon: Icon(icon, color: primaryColor, size: 20),
+          floatingLabelStyle: const TextStyle(
+            color: AppTheme.sageAccent,
+            fontWeight: FontWeight.w700,
+          ),
+          prefixIcon: Icon(icon, color: AppTheme.sageAccent, size: 20),
           suffixIcon: suffixIcon,
+          filled: true,
+          fillColor: Colors.white.withValues(alpha: 0.05),
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
           border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: BorderSide.none,
+            borderRadius: BorderRadius.circular(16),
+            borderSide: BorderSide(color: Colors.white.withValues(alpha: 0.1)),
           ),
           enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: BorderSide.none,
+            borderRadius: BorderRadius.circular(16),
+            borderSide: BorderSide(color: Colors.white.withValues(alpha: 0.1)),
           ),
           focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: BorderSide(
-              color: primaryColor,
-              width: 2,
-            ),
+            borderRadius: BorderRadius.circular(16),
+            borderSide:
+                const BorderSide(color: AppTheme.sageAccent, width: 1.6),
           ),
           errorBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: BorderSide(
-              color: errorColor,
-              width: 2,
-            ),
+            borderRadius: BorderRadius.circular(16),
+            borderSide: BorderSide(color: errorColor.withValues(alpha: 0.8)),
           ),
           focusedErrorBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: BorderSide(
-              color: errorDarkColor,
-              width: 2,
-            ),
+            borderRadius: BorderRadius.circular(16),
+            borderSide: const BorderSide(color: errorColor, width: 1.6),
           ),
-          filled: true,
-          fillColor: Colors.white,
-          contentPadding:
-              const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+          errorStyle: TextStyle(
+            color: errorColor.withValues(alpha: 0.9),
+            fontWeight: FontWeight.w600,
+          ),
         ),
       ),
     );
@@ -203,385 +223,563 @@ class _LoginScreenState extends State<LoginScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: Container(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [
-              Colors.blue.shade100,
-              Colors.blue.shade300,
-            ],
+      backgroundColor: AppTheme.sageNavy,
+      body: Stack(
+        clipBehavior: Clip.hardEdge,
+        children: [
+          Positioned.fill(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    AppTheme.sageNavy,
+                    AppTheme.sagePanel,
+                    const Color(0xFF070D18),
+                  ],
+                  stops: const [0, 0.52, 1],
+                ),
+              ),
+            ),
           ),
-        ),
-        child: Stack(
-          children: [
-            const Positioned.fill(
-              child: AnimatedGradientShimmer(),
+          Positioned(
+            top: -180,
+            right: -140,
+            child: _SageGlow(
+              size: 460,
+              color: AppTheme.sageBlue.withValues(alpha: 0.22),
             ),
-            // Animated background circles with different timings and scales
-            Positioned(
-              top: -120,
-              right: -120,
-              child: AnimatedCircle(
-                size: 400,
-                color: const Color.fromRGBO(255, 255, 255, 0.08),
-                duration: const Duration(seconds: 12),
-                beginScale: 0.7,
-                endScale: 1.3,
-                offset: const Offset(-10, 10),
-              ),
+          ),
+          Positioned(
+            bottom: -210,
+            left: -160,
+            child: _SageGlow(
+              size: 520,
+              color: AppTheme.sageBlueDeep.withValues(alpha: 0.2),
             ),
-            Positioned(
-              bottom: -80,
-              left: -80,
-              child: AnimatedCircle(
-                size: 300,
-                color: const Color.fromRGBO(63, 81, 181, 0.14),
-                duration: const Duration(seconds: 10),
-                beginScale: 0.8,
-                endScale: 1.4,
-                offset: const Offset(15, -5),
-                curve: Curves.easeInOutCubic,
-              ),
+          ),
+          Positioned(
+            top: 220,
+            left: 90,
+            child: _SageGlow(
+              size: 220,
+              color: AppTheme.sageCyan.withValues(alpha: 0.08),
             ),
-            Positioned(
-              top: 150,
-              left: -50,
-              child: AnimatedCircle(
-                size: 150,
-                color: const Color.fromRGBO(33, 150, 243, 0.10),
-                duration: const Duration(seconds: 14),
-                beginScale: 0.9,
-                endScale: 1.5,
-                offset: const Offset(5, 10),
-              ),
-            ),
-            Positioned(
-              top: 40,
-              left: 120,
-              child: AnimatedCircle(
-                size: 220,
-                color: const Color.fromRGBO(255, 255, 255, 0.06),
-                duration: const Duration(seconds: 18),
-                beginScale: 0.75,
-                endScale: 1.35,
-                offset: const Offset(-12, 6),
-                curve: Curves.easeInOutCubic,
-              ),
-            ),
-            Positioned(
-              bottom: 30,
-              right: -60,
-              child: AnimatedCircle(
-                size: 260,
-                color: const Color.fromRGBO(33, 150, 243, 0.08),
-                duration: const Duration(seconds: 16),
-                beginScale: 0.85,
-                endScale: 1.45,
-                offset: const Offset(10, -12),
-              ),
-            ),
-            // Floating icons with different animations
-            Positioned(
-              top: 120,
-              right: 40,
-              child: FloatingIcon(
-                icon: Icons.restaurant_menu,
-                color: const Color.fromRGBO(255, 255, 255, 0.18),
-                size: 70,
-                duration: const Duration(seconds: 5),
-                offset: const Offset(0, 25),
-                rotate: false,
-              ),
-            ),
-            Positioned(
-              bottom: 120,
-              left: 40,
-              child: FloatingIcon(
-                icon: Icons.coffee,
-                color: const Color.fromRGBO(255, 255, 255, 0.16),
-                size: 60,
-                duration: const Duration(seconds: 6),
-                offset: const Offset(0, -20),
-                rotate: true,
-              ),
-            ),
-            Positioned(
-              top: 200,
-              right: 100,
-              child: FloatingIcon(
-                icon: Icons.local_dining,
-                color: const Color.fromRGBO(255, 255, 255, 0.14),
-                size: 40,
-                duration: const Duration(seconds: 7),
-                offset: const Offset(15, 15),
-                rotate: true,
-              ),
-            ),
-            Positioned(
-              top: 260,
-              left: 18,
-              child: FloatingIcon(
-                icon: Icons.receipt_long,
-                color: const Color.fromRGBO(255, 255, 255, 0.12),
-                size: 46,
-                duration: const Duration(seconds: 8),
-                offset: const Offset(-8, 10),
-                rotate: false,
-              ),
-            ),
-            Positioned(
-              bottom: 190,
-              right: 30,
-              child: FloatingIcon(
-                icon: Icons.storefront,
-                color: const Color.fromRGBO(255, 255, 255, 0.10),
-                size: 52,
-                duration: const Duration(seconds: 9),
-                offset: const Offset(10, -6),
-                rotate: true,
-              ),
-            ),
-            Positioned(
-              bottom: 40,
-              left: 140,
-              child: FloatingIcon(
-                icon: Icons.fastfood,
-                color: const Color.fromRGBO(255, 255, 255, 0.10),
-                size: 44,
-                duration: const Duration(seconds: 10),
-                offset: const Offset(-6, -10),
-                rotate: true,
-              ),
-            ),
-            Positioned(
-              top: 320,
-              right: 10,
-              child: FloatingIcon(
-                icon: Icons.shopping_bag_outlined,
-                color: const Color.fromRGBO(255, 255, 255, 0.09),
-                size: 48,
-                duration: const Duration(seconds: 11),
-                offset: const Offset(8, 12),
-                rotate: false,
-              ),
-            ),
-            Positioned(
-              top: 80,
-              left: 20,
-              child: FloatingIcon(
-                icon: Icons.local_cafe,
-                color: const Color.fromRGBO(255, 255, 255, 0.08),
-                size: 40,
-                duration: const Duration(seconds: 12),
-                offset: const Offset(-10, 6),
-                rotate: true,
-              ),
-            ),
-            // Main content
-            Center(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.all(20.0),
-                child: FadeTransition(
-                  opacity: _fadeAnimation,
-                  child: SlideTransition(
-                    position: _slideAnimation,
-                    child: Card(
-                      elevation: 20,
-                      shadowColor: const Color.fromRGBO(0, 0, 0, 0.3),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                      child: Container(
-                        padding: const EdgeInsets.all(20.0),
-                        constraints: const BoxConstraints(
-                          maxWidth: 400,
-                        ),
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(16),
-                          gradient: LinearGradient(
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                            colors: [
-                              Colors.white,
-                              Colors.grey.shade50,
-                            ],
-                          ),
-                        ),
-                        child: Form(
-                          key: _formKey,
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              // Logo and Title Section
-                              Container(
-                                padding: const EdgeInsets.all(16),
-                                decoration: BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  gradient: LinearGradient(
-                                    colors: [
-                                      Colors.blue.shade400,
-                                      Colors.indigo.shade600,
-                                    ],
-                                  ),
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: const Color.fromRGBO(
-                                          33, 150, 243, 0.08),
-                                      blurRadius: 12,
-                                      spreadRadius: 3,
+          ),
+          SafeArea(
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final wide = constraints.maxWidth >= 900;
+
+                return Center(
+                  child: SingleChildScrollView(
+                    padding: EdgeInsets.symmetric(
+                      horizontal: wide ? 48 : 20,
+                      vertical: wide ? 32 : 20,
+                    ),
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 1120),
+                      child: FadeTransition(
+                        opacity: _fadeAnimation,
+                        child: SlideTransition(
+                          position: _introSlideAnimation,
+                          child: wide
+                              ? Row(
+                                  crossAxisAlignment: CrossAxisAlignment.center,
+                                  children: [
+                                    Expanded(
+                                      flex: 5,
+                                      child: _buildBrandIntro(compact: false),
+                                    ),
+                                    const SizedBox(width: 56),
+                                    Expanded(
+                                      flex: 4,
+                                      child: FadeTransition(
+                                        opacity: _cardFadeAnimation,
+                                        child: SlideTransition(
+                                          position: _cardSlideAnimation,
+                                          child: _buildLoginCard(),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                )
+                              : Column(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.stretch,
+                                  children: [
+                                    _buildBrandIntro(compact: true),
+                                    const SizedBox(height: 26),
+                                    FadeTransition(
+                                      opacity: _cardFadeAnimation,
+                                      child: SlideTransition(
+                                        position: _cardSlideAnimation,
+                                        child: _buildLoginCard(),
+                                      ),
                                     ),
                                   ],
                                 ),
-                                child: const Icon(
-                                  Icons.restaurant,
-                                  size: 48,
-                                  color: Colors.white,
-                                ),
-                              ),
-                              const SizedBox(height: 20),
-                              const Text(
-                                'Smart Eat',
-                                style: TextStyle(
-                                  fontSize: 28,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.blue,
-                                  letterSpacing: 1.2,
-                                ),
-                              ),
-                              const SizedBox(height: 6),
-                              Text(
-                                'Eatery Management System',
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  color: Colors.grey.shade700,
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
-                              const SizedBox(height: 24),
-
-                              _buildAnimatedTextField(
-                                controller: _emailController,
-                                label: 'Email',
-                                icon: Icons.email_outlined,
-                                focusNode: _emailFocusNode,
-                                nextFocus: _passwordFocusNode,
-                                keyboardType: TextInputType.emailAddress,
-                                validator: (value) {
-                                  if (value == null || value.isEmpty) {
-                                    return 'Please enter your email';
-                                  }
-                                  if (!RegExp(
-                                          r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$')
-                                      .hasMatch(value)) {
-                                    return 'Please enter a valid email';
-                                  }
-                                  return null;
-                                },
-                              ),
-                              const SizedBox(height: 8),
-
-                              _buildAnimatedTextField(
-                                controller: _passwordController,
-                                label: 'Password',
-                                icon: Icons.lock_outline,
-                                focusNode: _passwordFocusNode,
-                                isLastField: true,
-                                obscureText: _obscurePassword,
-                                validator: (value) {
-                                  if (value == null || value.isEmpty) {
-                                    return 'Please enter your password';
-                                  }
-                                  if (value.length < 6) {
-                                    return 'Password must be at least 6 characters';
-                                  }
-                                  return null;
-                                },
-                                suffixIcon: IconButton(
-                                  icon: Icon(
-                                    _obscurePassword
-                                        ? Icons.visibility_outlined
-                                        : Icons.visibility_off_outlined,
-                                    color: Colors.grey,
-                                  ),
-                                  onPressed: _togglePasswordVisibility,
-                                ),
-                              ),
-                              const SizedBox(height: 8),
-
-                              SizedBox(
-                                width: double.infinity,
-                                height: 50,
-                                child: ElevatedButton(
-                                  onPressed: _isLoading ? null : _submit,
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: primaryColor,
-                                    foregroundColor: Colors.white,
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(12),
-                                    ),
-                                    elevation: 2,
-                                  ),
-                                  child: _isLoading
-                                      ? const SizedBox(
-                                          width: 20,
-                                          height: 20,
-                                          child: CircularProgressIndicator(
-                                            strokeWidth: 2,
-                                            valueColor:
-                                                AlwaysStoppedAnimation<Color>(
-                                                    Colors.white),
-                                          ),
-                                        )
-                                      : const Text(
-                                          'Sign In',
-                                          style: TextStyle(
-                                            fontSize: 16,
-                                            fontWeight: FontWeight.bold,
-                                            color: Colors.white,
-                                          ),
-                                        ),
-                                ),
-                              ),
-                              const SizedBox(height: 6),
-                              Wrap(
-                                alignment: WrapAlignment.center,
-                                crossAxisAlignment: WrapCrossAlignment.center,
-                                children: [
-                                  Text(
-                                    "Don't have an account? ",
-                                    style: TextStyle(
-                                      color:
-                                          Colors.black.withValues(alpha: 0.6),
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                  InkWell(
-                                    onTap: () {
-                                      Navigator.of(context)
-                                          .pushReplacementNamed('/register');
-                                    },
-                                    child: const Text(
-                                      'Sign Up',
-                                      style: TextStyle(
-                                        color: primaryColor,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ],
-                          ),
                         ),
                       ),
                     ),
                   ),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBrandIntro({required bool compact}) {
+    final alignment =
+        compact ? CrossAxisAlignment.center : CrossAxisAlignment.start;
+    final textAlign = compact ? TextAlign.center : TextAlign.start;
+
+    return Container(
+      key: const Key('login-welcome-panel'),
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        color: const Color(0xFF101A2E).withValues(alpha: 0.96),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF000000).withValues(alpha: 0.28),
+            blurRadius: 30,
+            offset: const Offset(0, 16),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: alignment,
+        children: [
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: compact ? 68 : 82,
+                height: compact ? 68 : 82,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Colors.white.withValues(alpha: 0.05),
+                  border: Border.all(
+                    color: Colors.white.withValues(alpha: 0.12),
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: AppTheme.sageBlue.withValues(alpha: 0.22),
+                      blurRadius: 26,
+                      spreadRadius: 1,
+                    ),
+                  ],
+                ),
+                child: ClipOval(
+                  child: Lottie.asset(
+                    'assets/animations/E V E.json',
+                    fit: BoxFit.cover,
+                    repeat: true,
+                  ),
+                ),
+              ),
+              if (!compact) ...[
+                const SizedBox(width: 16),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'SAGE AI',
+                      style: TextStyle(
+                        color: AppTheme.sageAccent,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 1.4,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Your eatery, understood.',
+                      style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.82),
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ],
+          ),
+          SizedBox(height: compact ? 20 : 28),
+          Text(
+            compact ? 'Welcome back.' : 'Welcome back to\nSmartEat.',
+            textAlign: textAlign,
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: compact ? 32 : 46,
+              height: 1.12,
+              fontWeight: FontWeight.w800,
+              letterSpacing: -0.8,
+            ),
+          ),
+          SizedBox(height: compact ? 12 : 20),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 480),
+            child: Text(
+              'Sign in to run orders, inventory, attendance, and Sage-powered insights from one calm workspace.',
+              textAlign: textAlign,
+              style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.9),
+                fontSize: compact ? 14 : 16,
+                height: 1.55,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
+          if (!compact) ...[
+            const SizedBox(height: 34),
+            _buildBrandBullet(
+              icon: Icons.auto_awesome_rounded,
+              label: 'Sage insights that surface what matters',
+            ),
+            const SizedBox(height: 14),
+            _buildBrandBullet(
+              icon: Icons.groups_rounded,
+              label: 'One workspace for your whole team',
+            ),
+            const SizedBox(height: 14),
+            _buildBrandBullet(
+              icon: Icons.insights_rounded,
+              label: 'Live visibility across every shift',
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBrandBullet({required IconData icon, required String label}) {
+    return Row(
+      children: [
+        Container(
+          width: 32,
+          height: 32,
+          decoration: BoxDecoration(
+            color: AppTheme.sageBlue.withValues(alpha: 0.14),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Icon(icon, size: 16, color: AppTheme.sageAccent),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Text(
+            label,
+            style: TextStyle(
+              color: Colors.white.withValues(alpha: 0.9),
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildLoginCard() {
+    return Container(
+      width: double.infinity,
+      constraints: const BoxConstraints(maxWidth: 460),
+      padding: const EdgeInsets.all(26),
+      decoration: BoxDecoration(
+        color: AppTheme.sagePanel.withValues(alpha: 0.92),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF000000).withValues(alpha: 0.35),
+            blurRadius: 32,
+            offset: const Offset(0, 18),
+          ),
+        ],
+      ),
+      child: Form(
+        key: _formKey,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                IconButton(
+                  key: const Key('login-back-to-home'),
+                  tooltip: 'Back to home',
+                  onPressed: _goBackToLanding,
+                  icon: const Icon(Icons.arrow_back_rounded),
+                  color: Colors.white.withValues(alpha: 0.7),
+                  padding: EdgeInsets.zero,
+                  constraints:
+                      const BoxConstraints.tightFor(width: 36, height: 36),
+                ),
+                const Spacer(),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 6,
+                  ),
+                  decoration: BoxDecoration(
+                    color: AppTheme.sageBlue.withValues(alpha: 0.14),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.lock_outline_rounded,
+                        size: 12,
+                        color: AppTheme.sageAccent,
+                      ),
+                      const SizedBox(width: 6),
+                      const Text(
+                        'SECURE SIGN IN',
+                        style: TextStyle(
+                          color: AppTheme.sagePaleBlue,
+                          fontSize: 9,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 0.9,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 18),
+            Center(
+              child: Container(
+                width: 72,
+                height: 72,
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.96),
+                  borderRadius: BorderRadius.circular(20),
+                  boxShadow: [
+                    BoxShadow(
+                      color: AppTheme.sageBlue.withValues(alpha: 0.2),
+                      blurRadius: 22,
+                      offset: const Offset(0, 8),
+                    ),
+                  ],
+                ),
+                child: const AppLogo(height: 52),
+              ),
+            ),
+            const SizedBox(height: 18),
+            const Text(
+              'Eatery Management System',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: AppTheme.sageAccent,
+                fontSize: 12,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 1,
+              ),
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              'Sign in to your workspace',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 22,
+                fontWeight: FontWeight.w800,
+                letterSpacing: -0.4,
+              ),
+            ),
+            const SizedBox(height: 24),
+            _buildAnimatedTextField(
+              controller: _emailController,
+              label: 'Email',
+              icon: Icons.email_outlined,
+              focusNode: _emailFocusNode,
+              nextFocus: _passwordFocusNode,
+              keyboardType: TextInputType.emailAddress,
+              validator: (value) {
+                if (value == null || value.isEmpty) {
+                  return 'Please enter your email';
+                }
+                if (!RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$')
+                    .hasMatch(value)) {
+                  return 'Please enter a valid email';
+                }
+                return null;
+              },
+            ),
+            _buildAnimatedTextField(
+              controller: _passwordController,
+              label: 'Password',
+              icon: Icons.lock_outline,
+              focusNode: _passwordFocusNode,
+              isLastField: true,
+              obscureText: _obscurePassword,
+              validator: (value) {
+                if (value == null || value.isEmpty) {
+                  return 'Please enter your password';
+                }
+                if (value.length < 6) {
+                  return 'Password must be at least 6 characters';
+                }
+                return null;
+              },
+              suffixIcon: IconButton(
+                icon: Icon(
+                  _obscurePassword
+                      ? Icons.visibility_outlined
+                      : Icons.visibility_off_outlined,
+                  color: Colors.white.withValues(alpha: 0.45),
+                ),
+                onPressed: _togglePasswordVisibility,
+              ),
+            ),
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton(
+                key: const Key('login-forgot-password'),
+                onPressed: _isLoading
+                    ? null
+                    : () => Navigator.of(context).pushNamed('/forgot-password'),
+                style: TextButton.styleFrom(
+                  padding: EdgeInsets.zero,
+                  minimumSize: Size.zero,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+                child: const Text(
+                  'Forgot password?',
+                  style: TextStyle(
+                    color: AppTheme.sageAccent,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
               ),
             ),
+            const SizedBox(height: 14),
+            Opacity(
+              opacity: _isLoading ? 0.75 : 1,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: AppTheme.sageGradient,
+                  borderRadius: BorderRadius.circular(16),
+                  boxShadow: [
+                    BoxShadow(
+                      color: AppTheme.sageBlue.withValues(alpha: 0.3),
+                      blurRadius: 18,
+                      offset: const Offset(0, 8),
+                    ),
+                  ],
+                ),
+                child: SizedBox(
+                  width: double.infinity,
+                  height: 52,
+                  child: ElevatedButton(
+                    key: const Key('login-sign-in'),
+                    onPressed: _isLoading ? null : _submit,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.transparent,
+                      disabledBackgroundColor: Colors.transparent,
+                      foregroundColor: Colors.white,
+                      shadowColor: Colors.transparent,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                    ),
+                    child: _isLoading
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              valueColor:
+                                  AlwaysStoppedAnimation<Color>(Colors.white),
+                            ),
+                          )
+                        : const Text(
+                            'Sign In',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w800,
+                              color: Colors.white,
+                            ),
+                          ),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Wrap(
+              alignment: WrapAlignment.center,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                Text(
+                  "Don't have an account? ",
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.52),
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                TextButton(
+                  key: const Key('login-create-account'),
+                  onPressed: () {
+                    Navigator.of(context).pushReplacementNamed('/register');
+                  },
+                  style: TextButton.styleFrom(
+                    padding: EdgeInsets.zero,
+                    minimumSize: Size.zero,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                  child: const Text(
+                    'Sign Up',
+                    style: TextStyle(
+                      color: AppTheme.sageAccent,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            TextButton.icon(
+              onPressed: _goBackToLanding,
+              icon: const Icon(Icons.arrow_back_rounded, size: 14),
+              label: const Text('Back to home'),
+              style: TextButton.styleFrom(
+                foregroundColor: Colors.white.withValues(alpha: 0.5),
+                textStyle: const TextStyle(fontWeight: FontWeight.w600),
+              ),
+            ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SageGlow extends StatelessWidget {
+  const _SageGlow({required this.size, required this.color});
+
+  final double size;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return IgnorePointer(
+      child: Container(
+        width: size,
+        height: size,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          gradient: RadialGradient(colors: [color, color.withValues(alpha: 0)]),
         ),
       ),
     );

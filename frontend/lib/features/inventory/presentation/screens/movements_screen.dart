@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../../../../../models/inventory_item.dart';
+import '../../../../../theme.dart';
 import '../../../../../widgets/dashboard/empty_state.dart';
 import '../../../../../widgets/dashboard/kpi_card.dart';
 import '../../data/models/stock_movement.dart';
@@ -69,15 +70,15 @@ class _MovementsScreenState extends State<MovementsScreen> {
   Color _typeColor(StockMovementType type) {
     switch (type) {
       case StockMovementType.purchase:
-        return const Color(0xFF2563EB);
+        return AppTheme.sageAccent;
       case StockMovementType.adjustIncrease:
       case StockMovementType.countCorrection:
-        return const Color(0xFF16A34A);
+        return AppTheme.sageSuccess;
       case StockMovementType.adjustDecrease:
       case StockMovementType.writeOff:
       case StockMovementType.damaged:
       case StockMovementType.saleConsumption:
-        return const Color(0xFFDC2626);
+        return AppTheme.error;
     }
   }
 
@@ -121,9 +122,10 @@ class _MovementsScreenState extends State<MovementsScreen> {
       }
       if (_itemFilter != null && m.itemId != _itemFilter) return false;
       if (_dateRange != null) {
-        final d = DateTime(m.timestamp.year, m.timestamp.month, m.timestamp.day);
-        final start = DateTime(
-            _dateRange!.start.year, _dateRange!.start.month, _dateRange!.start.day);
+        final d =
+            DateTime(m.timestamp.year, m.timestamp.month, m.timestamp.day);
+        final start = DateTime(_dateRange!.start.year, _dateRange!.start.month,
+            _dateRange!.start.day);
         final end = DateTime(
             _dateRange!.end.year, _dateRange!.end.month, _dateRange!.end.day);
         if (d.isBefore(start) || d.isAfter(end)) return false;
@@ -166,7 +168,8 @@ class _MovementsScreenState extends State<MovementsScreen> {
     // Group the filtered movements by calendar day (most recent first).
     final groups = <DateTime, List<StockMovement>>{};
     for (final m in filtered) {
-      final day = DateTime(m.timestamp.year, m.timestamp.month, m.timestamp.day);
+      final day =
+          DateTime(m.timestamp.year, m.timestamp.month, m.timestamp.day);
       groups.putIfAbsent(day, () => []).add(m);
     }
     final days = groups.keys.toList()..sort((a, b) => b.compareTo(a));
@@ -175,7 +178,8 @@ class _MovementsScreenState extends State<MovementsScreen> {
       appBar: AppBar(title: const Text('Movement History')),
       body: Column(
         children: [
-          _buildHeader(context, theme, filtered.length, unitsIn, unitsOut, spend),
+          _buildHeader(
+              context, theme, filtered.length, unitsIn, unitsOut, spend),
           const Divider(height: 1),
           Expanded(
             child: filtered.isEmpty
@@ -241,7 +245,8 @@ class _MovementsScreenState extends State<MovementsScreen> {
                   value: '$count',
                   icon: Icons.swap_vert,
                   color: theme.colorScheme.primary,
-                  description: 'Number of stock movement records in the current filter/range.',
+                  description:
+                      'Number of stock movement records in the current filter/range.',
                 ),
               ),
               const SizedBox(width: 8),
@@ -250,8 +255,9 @@ class _MovementsScreenState extends State<MovementsScreen> {
                   title: 'Units In',
                   value: _qty(unitsIn),
                   icon: Icons.arrow_upward,
-                  color: const Color(0xFF16A34A),
-                  description: 'Quantity added by inbound movements (e.g., purchases/adjustments in) in the current view.',
+                  color: AppTheme.sageSuccess,
+                  description:
+                      'Quantity added by inbound movements (e.g., purchases/adjustments in) in the current view.',
                 ),
               ),
               const SizedBox(width: 8),
@@ -260,8 +266,9 @@ class _MovementsScreenState extends State<MovementsScreen> {
                   title: 'Units Out',
                   value: _qty(unitsOut),
                   icon: Icons.arrow_downward,
-                  color: const Color(0xFFDC2626),
-                  description: 'Quantity removed by outbound movements (e.g., sale consumption, damage, write-off) in the current view.',
+                  color: AppTheme.error,
+                  description:
+                      'Quantity removed by outbound movements (e.g., sale consumption, damage, write-off) in the current view.',
                 ),
               ),
               const SizedBox(width: 8),
@@ -270,8 +277,9 @@ class _MovementsScreenState extends State<MovementsScreen> {
                   title: 'Purchase Spend',
                   value: _money(spend),
                   icon: Icons.payments_outlined,
-                  color: const Color(0xFF7C3AED),
-                  description: 'Total cost impact from purchase/inbound costed movements in the current view.',
+                  color: Colors.deepPurpleAccent,
+                  description:
+                      'Total cost impact from purchase/inbound costed movements in the current view.',
                 ),
               ),
             ],
@@ -426,12 +434,9 @@ class _DayGroup extends StatelessWidget {
               ),
               const SizedBox(width: 8),
               Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                 decoration: BoxDecoration(
-                  color: (netPositive
-                          ? const Color(0xFF16A34A)
-                          : const Color(0xFFDC2626))
+                  color: (netPositive ? AppTheme.sageSuccess : AppTheme.error)
                       .withValues(alpha: 0.12),
                   borderRadius: BorderRadius.circular(999),
                 ),
@@ -440,9 +445,7 @@ class _DayGroup extends StatelessWidget {
                   style: TextStyle(
                     fontSize: 11.5,
                     fontWeight: FontWeight.w700,
-                    color: netPositive
-                        ? const Color(0xFF16A34A)
-                        : const Color(0xFFDC2626),
+                    color: netPositive ? AppTheme.sageSuccess : AppTheme.error,
                   ),
                 ),
               ),

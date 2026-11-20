@@ -55,7 +55,8 @@ class FinancePayablesTab extends StatelessWidget {
       'overdue' => overdue,
       'paid' => paid,
       _ => upcoming,
-    }..sort((a, b) {
+    }
+      ..sort((a, b) {
         final ad = FinanceFormat.asDate(a['dueDate']);
         final bd = FinanceFormat.asDate(b['dueDate']);
         if (ad == null && bd == null) return 0;
@@ -179,10 +180,10 @@ class _AgingCard extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final order = ['Current', '1-30 days', '31-60 days', '60+ days'];
     final colors = {
-      'Current': AppTheme.success,
-      '1-30 days': AppTheme.warning,
-      '31-60 days': const Color(0xFFF97316),
-      '60+ days': AppTheme.error,
+      'Current': AppTheme.sageSuccess,
+      '1-30 days': const Color(0xFFFBBF24),
+      '31-60 days': const Color(0xFFFB923C),
+      '60+ days': scheme.error,
     };
 
     return SectionCard(
@@ -262,8 +263,8 @@ class _PayableCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(AppTheme.cardRadius),
         side: BorderSide(
           color: label == 'Overdue'
-              ? AppTheme.error.withValues(alpha: 0.35)
-              : scheme.outlineVariant,
+              ? scheme.error.withValues(alpha: 0.35)
+              : Colors.white.withValues(alpha: 0.1),
         ),
       ),
       child: InkWell(
@@ -318,7 +319,8 @@ class _PayableCard extends StatelessWidget {
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
                           fontSize: 11.5,
-                          color: scheme.onSurfaceVariant.withValues(alpha: 0.85),
+                          color:
+                              scheme.onSurfaceVariant.withValues(alpha: 0.85),
                         ),
                       ),
                     ],

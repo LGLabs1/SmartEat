@@ -7,12 +7,12 @@ import '../../../../theme.dart';
 class FinanceStatus {
   FinanceStatus._();
 
-  static const Color paid = AppTheme.success;
-  static const Color overdue = AppTheme.error;
-  static const Color dueSoon = AppTheme.warning;
-  static const Color neutral = Color(0xFF64748B);
-  static const Color linked = AppTheme.primary;
-  static const Color billPayment = Color(0xFF7C3AED);
+  static const Color paid = AppTheme.sageSuccess;
+  static const Color overdue = Color(0xFFFF6B6B);
+  static const Color dueSoon = Color(0xFFFBBF24);
+  static const Color neutral = Color(0x99FFFFFF);
+  static const Color linked = AppTheme.sageAccent;
+  static const Color billPayment = Color(0xFFA78BFA);
 
   static Color payable(Map<String, dynamic> p) {
     final status = (p['status'] ?? 'unpaid').toString().toLowerCase().trim();

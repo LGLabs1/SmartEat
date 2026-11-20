@@ -41,10 +41,15 @@ void main() {
   });
 
   group('staffDisplayName', () {
-    test('prefers full name, then email, then uid', () {
+    test('prefers full name, then stored name, email, then uid', () {
       expect(
         staffDisplayName(
             {'firstName': 'Ana', 'lastName': 'Cruz', 'email': 'a@x.com'}, 'u1'),
+        'Ana Cruz',
+      );
+      expect(staffDisplayName({'name': 'Ana Cruz'}, 'u1'), 'Ana Cruz');
+      expect(
+        staffDisplayName({'displayName': 'Ana Cruz'}, 'u1'),
         'Ana Cruz',
       );
       expect(staffDisplayName({'email': 'a@x.com'}, 'u1'), 'a@x.com');

@@ -6,6 +6,7 @@ dotenv.config();
 
 // Initialize Express app
 const app = express();
+app.set('trust proxy', 1);
 
 // Middleware
 app.use(cors());
@@ -23,6 +24,7 @@ app.use('/api/analytics', require('./routes/analyticsRoutes'));
 app.use('/api/inventory', require('./routes/inventoryRoutes'));
 app.use('/api/chatbot', require('./routes/chatbotRoutes'));
 app.use('/api/sms', require('./routes/smsRoutes'));
+app.use('/api/auth', require('./routes/authRoutes'));
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
@@ -31,11 +33,25 @@ app.get('/api/health', (req, res) => {
 
 // Error handling middleware
 app.use((err, req, res, next) => {
-  console.error('Error:', err);
-  res.status(500).json({
-    error: 'Internal server error',
-    message: process.env.NODE_ENV === 'development' ? err.message : undefined,
-  });
+  const status = Number(err.status) || 500;
+  const expose = Boolean(err.expose) || status < 500;
+  const message = expose && err.message ? err.message : 'Internal server error';
+
+  if (status >= 500) {
+    console.error('Error:', err.message);
+  } else {
+    console.warn('Request error:', err.message);
+  }
+
+  const payload = {
+    error: message,
+    code: err.code || 'internal_error',
+  };
+  if (err.retryAfterSeconds) {
+    payload.retryAfterSeconds = err.retryAfterSeconds;
+  }
+
+  res.status(status).json(payload);
 });
 
 // 404 handler

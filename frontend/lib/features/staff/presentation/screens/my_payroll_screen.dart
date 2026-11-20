@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../../../services/auth_provider.dart';
+import '../../../../theme.dart';
 import '../../../../utils/staff_utils.dart';
 import '../../data/staff_service.dart';
 
@@ -151,7 +152,7 @@ class _SummaryCard extends StatelessWidget {
                   child: _SummaryTile(
                     label: 'Weekly payouts',
                     value: _money(summary.paid),
-                    color: Colors.green.shade800,
+                    color: AppTheme.sageSuccess,
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -159,7 +160,7 @@ class _SummaryCard extends StatelessWidget {
                   child: _SummaryTile(
                     label: 'Advances',
                     value: _money(summary.advances),
-                    color: Colors.orange.shade800,
+                    color: AppTheme.warning,
                   ),
                 ),
               ],
@@ -196,16 +197,19 @@ class _SummaryTile extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppTheme.sageNavy,
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: Colors.grey.shade200),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
             label,
-            style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+            style: TextStyle(
+              fontSize: 12,
+              color: Colors.white.withValues(alpha: 0.6),
+            ),
           ),
           const SizedBox(height: 4),
           FittedBox(
@@ -249,15 +253,14 @@ class _PayoutCard extends StatelessWidget {
 
     return Card(
       elevation: 0,
-      color: Colors.white,
+      color: AppTheme.sagePanel,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(12),
-        side: BorderSide(color: Colors.grey.shade200),
+        side: BorderSide(color: Colors.white.withValues(alpha: 0.1)),
       ),
       child: ListTile(
         leading: CircleAvatar(
-          backgroundColor:
-              isAdvance ? Colors.orange.shade400 : Colors.green.shade500,
+          backgroundColor: isAdvance ? AppTheme.warning : AppTheme.sageSuccess,
           child: Icon(
             isAdvance ? Icons.trending_up : Icons.payments_outlined,
             color: Colors.white,
@@ -272,7 +275,7 @@ class _PayoutCard extends StatelessWidget {
           isAdvance ? '-${_money(amount)}' : _money(amount),
           style: TextStyle(
             fontWeight: FontWeight.w800,
-            color: isAdvance ? Colors.orange.shade800 : Colors.green.shade800,
+            color: isAdvance ? AppTheme.warning : AppTheme.sageSuccess,
           ),
         ),
       ),
@@ -292,12 +295,12 @@ class _EmptyState extends StatelessWidget {
           Icon(
             Icons.receipt_long_outlined,
             size: 56,
-            color: Colors.grey.shade300,
+            color: Colors.white.withValues(alpha: 0.3),
           ),
           const SizedBox(height: 12),
           Text(
             'No payouts recorded yet.',
-            style: TextStyle(color: Colors.grey.shade600),
+            style: TextStyle(color: Colors.white.withValues(alpha: 0.6)),
           ),
         ],
       ),

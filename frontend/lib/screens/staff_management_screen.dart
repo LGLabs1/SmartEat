@@ -4,12 +4,17 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../features/staff/data/staff_service.dart';
+import '../features/staff/widgets/admin_attendance_calendar.dart';
+import '../services/attendance_settings_service.dart';
 import '../services/auth_provider.dart';
 import '../services/api_service.dart';
 import '../services/firebase_service.dart';
+import '../theme.dart';
 import '../widgets/confirmation_dialogs.dart';
+import '../widgets/dashboard/dashboard_back_handler.dart';
 import '../widgets/pending_approvals_card.dart';
 import '../widgets/skeleton_loaders.dart';
+import '../utils/attendance_utils.dart';
 import '../utils/error_messages.dart';
 import '../utils/haptic_feedback.dart';
 import '../utils/staff_utils.dart';
@@ -26,11 +31,15 @@ class StaffManagementScreen extends StatefulWidget {
     this.globalSearchQuery,
     this.showAppBar = true,
     this.onOpenDrawer,
+    this.initialTabIndex = 0,
+    this.onBackHandlerChanged,
   }) : super(key: key);
 
   final ValueNotifier<String>? globalSearchQuery;
   final bool showAppBar;
   final VoidCallback? onOpenDrawer;
+  final int initialTabIndex;
+  final DashboardBackHandlerChanged? onBackHandlerChanged;
 
   @override
   State<StaffManagementScreen> createState() => _StaffManagementScreenState();
@@ -289,30 +298,60 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
     required String eateryId,
     required String uid,
     required String userLabel,
+    DateTime? day,
   }) async {
-    var selectedDate = DateTime.now();
+    var selectedDate = day ?? DateTime.now();
     var workUnit = 1.0;
+    DateTime? timeIn;
+    DateTime? timeOut;
+    var duration = Duration.zero;
+    var needsReview = false;
     final notesController = TextEditingController();
     Map<String, dynamic>? existing;
     var loadingExisting = true;
 
-    Future<void> loadExisting(DateTime day) async {
+    final settings = await AttendanceSettingsService.loadForEatery(eateryId);
+
+    void recalcUnit() {
+      if (timeIn != null && timeOut != null) {
+        duration = attendanceShiftDuration(timeIn, timeOut) ?? Duration.zero;
+        workUnit = computeAttendanceWorkUnit(
+          duration: duration,
+          fullDayHours: settings.fullDayHours,
+          halfDayHours: settings.halfDayHours,
+        );
+      } else if (timeIn != null) {
+        duration = attendanceOpenShiftDuration(timeIn);
+      } else {
+        duration = Duration.zero;
+      }
+    }
+
+    Future<void> loadExisting(DateTime targetDay) async {
       loadingExisting = true;
       existing = await _attendanceForDate(
         eateryId: eateryId,
         uid: uid,
-        day: day,
+        day: targetDay,
       );
       final record = existing;
       if (record == null) {
         workUnit = 1.0;
+        timeIn = null;
+        timeOut = null;
+        duration = Duration.zero;
+        needsReview = false;
         notesController.text = '';
       } else {
         final rawUnit = record['workUnit'];
         workUnit = rawUnit is num
             ? rawUnit.toDouble()
             : (record['present'] == true ? 1.0 : 0.0);
+        timeIn = attendanceAsDateTime(record['timeIn']);
+        timeOut = attendanceAsDateTime(record['timeOut']);
+        needsReview = record['needsReview'] == true;
         notesController.text = (record['notes'] ?? '').toString();
+        recalcUnit();
       }
       loadingExisting = false;
     }
@@ -328,88 +367,181 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
       builder: (context) {
         return StatefulBuilder(
           builder: (context, setLocal) {
+            Future<void> pickTime({required bool isOut}) async {
+              final base = isOut ? timeOut : timeIn;
+              final initial = base ??
+                  DateTime(
+                    selectedDate.year,
+                    selectedDate.month,
+                    selectedDate.day,
+                    isOut ? 17 : 9,
+                  );
+              final picked = await showTimePicker(
+                context: context,
+                initialTime: TimeOfDay.fromDateTime(initial),
+              );
+              if (picked == null) return;
+              var value = DateTime(
+                selectedDate.year,
+                selectedDate.month,
+                selectedDate.day,
+                picked.hour,
+                picked.minute,
+              );
+              // Overnight shifts: Time Out after midnight rolls to next day.
+              if (isOut && timeIn != null && !value.isAfter(timeIn!)) {
+                value = value.add(const Duration(days: 1));
+              }
+              setLocal(() {
+                if (isOut) {
+                  timeOut = value;
+                } else {
+                  timeIn = value;
+                }
+                recalcUnit();
+              });
+            }
+
+            final summary = _attendanceCheckInSummary(
+              existing,
+              timeIn: timeIn,
+              timeOut: timeOut,
+              duration: duration,
+            );
+
             return AlertDialog(
               title: Text('Attendance: $userLabel'),
               content: SizedBox(
                 width: 520,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              'Date: ${_fmtDate(selectedDate)}',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                          TextButton.icon(
+                            onPressed: () async {
+                              final picked = await showDatePicker(
+                                context: context,
+                                initialDate: selectedDate,
+                                firstDate: DateTime(2020, 1, 1),
+                                lastDate: DateTime(2100, 12, 31),
+                              );
+                              if (picked == null) return;
+                              setLocal(() {
+                                selectedDate = picked;
+                                loadingExisting = true;
+                              });
+                              await loadExisting(picked);
+                              if (!context.mounted) return;
+                              setLocal(() {});
+                            },
+                            icon: const Icon(Icons.calendar_today, size: 18),
+                            label: const Text('Pick'),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      if (loadingExisting)
+                        const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 8),
+                          child: LinearProgressIndicator(),
+                        )
+                      else
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(10),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withValues(alpha: 0.06),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
                           child: Text(
-                            'Date: ${_fmtDate(selectedDate)}',
-                            style: const TextStyle(fontWeight: FontWeight.w600),
+                            summary,
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.white.withValues(alpha: 0.82),
+                            ),
                           ),
                         ),
-                        TextButton.icon(
-                          onPressed: () async {
-                            final picked = await showDatePicker(
-                              context: context,
-                              initialDate: selectedDate,
-                              firstDate: DateTime(2020, 1, 1),
-                              lastDate: DateTime(2100, 12, 31),
-                            );
-                            if (picked == null) return;
-                            setLocal(() {
-                              selectedDate = picked;
-                              loadingExisting = true;
-                            });
-                            await loadExisting(picked);
-                            if (!context.mounted) return;
-                            setLocal(() {});
-                          },
-                          icon: const Icon(Icons.calendar_today, size: 18),
-                          label: const Text('Pick'),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    if (loadingExisting)
-                      const Padding(
-                        padding: EdgeInsets.symmetric(vertical: 8),
-                        child: LinearProgressIndicator(),
-                      )
-                    else
-                      Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.all(10),
-                        decoration: BoxDecoration(
-                          color: Colors.blueGrey.shade50,
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Text(
-                          _attendanceCheckInSummary(existing),
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Colors.blueGrey.shade700,
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              onPressed: loadingExisting
+                                  ? null
+                                  : () => pickTime(isOut: false),
+                              icon: const Icon(Icons.login, size: 18),
+                              label: Text(
+                                timeIn == null
+                                    ? 'Set Time In'
+                                    : 'In ${formatAttendanceClock(timeIn)}',
+                              ),
+                            ),
                           ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              onPressed: loadingExisting
+                                  ? null
+                                  : () => pickTime(isOut: true),
+                              icon: const Icon(Icons.logout, size: 18),
+                              label: Text(
+                                timeOut == null
+                                    ? 'Set Time Out'
+                                    : 'Out ${formatAttendanceClock(timeOut)}',
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      DropdownButtonFormField<double>(
+                        value:
+                            workUnit >= 1.0 ? 1.0 : (workUnit > 0 ? 0.5 : 0.0),
+                        items: const [
+                          DropdownMenuItem(value: 1.0, child: Text('Full day')),
+                          DropdownMenuItem(value: 0.5, child: Text('Half day')),
+                          DropdownMenuItem(value: 0.0, child: Text('Absent')),
+                        ],
+                        onChanged: (v) =>
+                            setLocal(() => workUnit = (v ?? workUnit)),
+                        decoration: const InputDecoration(
+                          labelText: 'Work logged',
+                          helperText:
+                              'Set automatically from shift hours; override if needed.',
                         ),
                       ),
-                    const SizedBox(height: 12),
-                    DropdownButtonFormField<double>(
-                      value: workUnit,
-                      items: const [
-                        DropdownMenuItem(value: 1.0, child: Text('Full day')),
-                        DropdownMenuItem(value: 0.5, child: Text('Half day')),
-                        DropdownMenuItem(value: 0.0, child: Text('Absent')),
-                      ],
-                      onChanged: (v) =>
-                          setLocal(() => workUnit = (v ?? workUnit)),
-                      decoration: const InputDecoration(
-                        labelText: 'Work logged',
+                      const SizedBox(height: 12),
+                      SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        value: needsReview,
+                        onChanged: loadingExisting
+                            ? null
+                            : (value) => setLocal(() => needsReview = value),
+                        title: const Text('Needs review'),
+                        subtitle: const Text(
+                          'Flag missing or incomplete shift details',
+                        ),
                       ),
-                    ),
-                    TextField(
-                      controller: notesController,
-                      decoration: const InputDecoration(
-                        labelText: 'Notes (optional)',
+                      TextField(
+                        controller: notesController,
+                        decoration: const InputDecoration(
+                          labelText: 'Notes (optional)',
+                        ),
+                        maxLines: 2,
                       ),
-                      maxLines: 2,
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
               actions: [
@@ -434,21 +566,36 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
     notesController.dispose();
     if (saved != true) return;
 
-    final day = _dateOnly(selectedDate);
-    final docId = '${eateryId}_${uid}_${_fmtDate(day)}';
-    final present = workUnit > 0;
-    final status =
-        workUnit >= 1.0 ? 'present' : (workUnit > 0 ? 'halfday' : 'absent');
+    final selectedDay = _dateOnly(selectedDate);
+    final docId = '${eateryId}_${uid}_${_fmtDate(selectedDay)}';
+    final normalizedUnit = workUnit >= 1.0 ? 1.0 : (workUnit > 0 ? 0.5 : 0.0);
+    final present = timeIn != null || normalizedUnit > 0;
+    final status = timeIn != null
+        ? (timeOut != null
+            ? attendanceStatusForUnit(normalizedUnit)
+            : attendanceIncomplete)
+        : (normalizedUnit > 0
+            ? attendanceStatusForUnit(normalizedUnit)
+            : attendanceAbsent);
     final data = <String, dynamic>{
       'eateryId': eateryId,
       'uid': uid,
-      'date': _fmtDate(day),
+      'date': _fmtDate(selectedDay),
       'present': present,
-      'workUnit': workUnit,
+      'workUnit': normalizedUnit,
       'status': status,
+      'needsReview': needsReview || (timeIn != null && timeOut == null),
+      'source': 'admin',
+      'editedByUid': _getAdminUid(),
+      'editedAt': FieldValue.serverTimestamp(),
       'notes': notes,
       'updatedAt': FieldValue.serverTimestamp(),
     };
+    if (timeIn != null) data['timeIn'] = Timestamp.fromDate(timeIn!);
+    if (timeOut != null) data['timeOut'] = Timestamp.fromDate(timeOut!);
+    if (timeIn != null && timeOut != null) {
+      data['hoursWorked'] = duration.inSeconds / 3600.0;
+    }
     if (existing == null) {
       data['createdAt'] = FieldValue.serverTimestamp();
     }
@@ -484,50 +631,56 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
     }
   }
 
-  String _attendanceCheckInSummary(Map<String, dynamic>? record) {
+  String _attendanceCheckInSummary(
+    Map<String, dynamic>? record, {
+    DateTime? timeIn,
+    DateTime? timeOut,
+    Duration? duration,
+  }) {
+    final inLabel = formatAttendanceClock(timeIn ?? record?['timeIn']);
+    final outLabel = formatAttendanceClock(timeOut ?? record?['timeOut']);
+    if (inLabel.isNotEmpty || outLabel.isNotEmpty) {
+      final worked = duration ??
+          attendanceShiftDuration(
+            timeIn ?? record?['timeIn'],
+            timeOut ?? record?['timeOut'],
+          );
+      return [
+        if (inLabel.isNotEmpty) 'In: $inLabel',
+        if (outLabel.isNotEmpty) 'Out: $outLabel',
+        if (worked != null && worked > Duration.zero)
+          'Worked: ${formatAttendanceDuration(worked)}',
+      ].join(' | ');
+    }
+
     if (record == null) {
       return 'No record yet. Saving will create a new attendance entry.';
     }
-    final morning = _formatClockValue(record['morningCheckIn']);
-    final afternoon = _formatClockValue(record['afternoonCheckIn']);
-    if (morning.isEmpty && afternoon.isEmpty) {
-      return 'No self check-ins recorded for this day.';
-    }
-    return [
-      if (morning.isNotEmpty) 'Morning: $morning',
-      if (afternoon.isNotEmpty) 'Afternoon: $afternoon',
-    ].join(' · ');
-  }
 
-  String _formatClockValue(dynamic value) {
-    DateTime? dt;
-    if (value is DateTime) {
-      dt = value;
-    } else if (value is Timestamp) {
-      dt = value.toDate();
-    } else if (value is String) {
-      dt = DateTime.tryParse(value);
-    }
-    if (dt == null) return '';
-    final hour = dt.hour % 12 == 0 ? 12 : dt.hour % 12;
-    final minute = dt.minute.toString().padLeft(2, '0');
-    final period = dt.hour < 12 ? 'AM' : 'PM';
-    return '$hour:$minute $period';
+    final legacy = attendanceLegacySummary(record);
+    if (legacy.isNotEmpty) return 'Legacy check-ins: $legacy';
+    return 'No shift times recorded. Set Time In/Out or override work units.';
   }
 
   Future<int> _autoMarkAbsent({
     required String eateryId,
     required Map<String, Map<String, dynamic>> usersByUid,
-    required DateTime weekStart,
+    required DateTime monthStart,
     required Map<String, Map<String, dynamic>> existingAttendance,
   }) {
     final staffUids = usersByUid.entries
         .where((e) => !isAdminUser(e.value))
         .map((e) => e.key);
-    return StaffService.markMissingAbsent(
+    final monthEnd = DateTime(
+      monthStart.year,
+      monthStart.month + 1,
+      0,
+    );
+    return StaffService.markMissingAbsentInRange(
       eateryId: eateryId,
       staffUids: staffUids,
-      weekStart: weekStart,
+      start: monthStart,
+      end: monthEnd,
       existingKeys: existingAttendance.keys.toSet(),
       today: DateTime.now(),
     );
@@ -696,6 +849,7 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
 
         return DefaultTabController(
           length: 4,
+          initialIndex: widget.initialTabIndex.clamp(0, 3).toInt(),
           child: Scaffold(
             appBar: widget.showAppBar
                 ? AppBar(
@@ -714,39 +868,21 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
                             : null),
                     title: const Text('Staff Management'),
                     actions: [
-                      IconButton(
-                        tooltip: 'Previous week',
-                        onPressed: () {
+                      _StaffWeekNav(
+                        weekLabel: weekLabel,
+                        onPrevious: () {
                           setState(() {
                             _weekStart =
                                 _weekStart.subtract(const Duration(days: 7));
                           });
                         },
-                        icon: const Icon(Icons.chevron_left),
-                      ),
-                      Center(
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 6),
-                          child: Text(
-                            weekLabel,
-                            style: const TextStyle(
-                              fontWeight: FontWeight.w600,
-                              fontSize: 12,
-                            ),
-                          ),
-                        ),
-                      ),
-                      IconButton(
-                        tooltip: 'Next week',
-                        onPressed: () {
+                        onNext: () {
                           setState(() {
                             _weekStart =
                                 _weekStart.add(const Duration(days: 7));
                           });
                         },
-                        icon: const Icon(Icons.chevron_right),
                       ),
-                      const SizedBox(width: 4),
                     ],
                   )
                 : null,
@@ -754,7 +890,7 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
               children: [
                 if (!widget.showAppBar)
                   Material(
-                    color: Colors.white,
+                    color: AppTheme.sagePanel,
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
@@ -763,36 +899,22 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
                           child: Row(
                             mainAxisAlignment: MainAxisAlignment.end,
                             children: [
-                              IconButton(
-                                tooltip: 'Previous week',
-                                onPressed: () {
+                              _StaffWeekNav(
+                                weekLabel: weekLabel,
+                                onBackHandlerChanged:
+                                    widget.onBackHandlerChanged,
+                                onPrevious: () {
                                   setState(() {
                                     _weekStart = _weekStart
                                         .subtract(const Duration(days: 7));
                                   });
                                 },
-                                icon: const Icon(Icons.chevron_left),
-                              ),
-                              Padding(
-                                padding:
-                                    const EdgeInsets.symmetric(horizontal: 6),
-                                child: Text(
-                                  weekLabel,
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.w600,
-                                    fontSize: 12,
-                                  ),
-                                ),
-                              ),
-                              IconButton(
-                                tooltip: 'Next week',
-                                onPressed: () {
+                                onNext: () {
                                   setState(() {
                                     _weekStart =
                                         _weekStart.add(const Duration(days: 7));
                                   });
                                 },
-                                icon: const Icon(Icons.chevron_right),
                               ),
                             ],
                           ),
@@ -857,20 +979,20 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
                           _AttendanceTab(
                             eateryId: eateryId,
                             usersByUid: usersByUid,
-                            weekStart: _weekStart,
-                            onEncodeAttendance: (uid, label) =>
+                            onEncodeAttendance: (uid, label, day) =>
                                 _encodeAttendance(
                               context,
                               eateryId: eateryId,
                               uid: uid,
                               userLabel: label,
+                              day: day,
                             ),
-                            onAutoMarkAbsent: (existingAttendance) =>
+                            onMarkMissingAbsent: (monthStart, existing) =>
                                 _autoMarkAbsent(
                               eateryId: eateryId,
                               usersByUid: usersByUid,
-                              weekStart: _weekStart,
-                              existingAttendance: existingAttendance,
+                              monthStart: monthStart,
+                              existingAttendance: existing,
                             ),
                           ),
                           _PayrollTab(
@@ -950,6 +1072,116 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
           ),
         );
       },
+    );
+  }
+}
+
+class _StaffWeekNav extends StatefulWidget {
+  const _StaffWeekNav({
+    required this.weekLabel,
+    required this.onPrevious,
+    required this.onNext,
+    this.onBackHandlerChanged,
+  });
+
+  final String weekLabel;
+  final VoidCallback onPrevious;
+  final VoidCallback onNext;
+  final DashboardBackHandlerChanged? onBackHandlerChanged;
+
+  @override
+  State<_StaffWeekNav> createState() => _StaffWeekNavState();
+}
+
+class _StaffWeekNavState extends State<_StaffWeekNav> {
+  TabController? _controller;
+  bool _restoringTab = false;
+  late final List<int> _tabHistory;
+  late int _lastTabIndex;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final controller = DefaultTabController.of(context);
+    if (_controller == controller) return;
+    _controller?.removeListener(_handleTabChanged);
+    _controller = controller;
+    _tabHistory = <int>[controller.index];
+    _lastTabIndex = controller.index;
+    _controller!.addListener(_handleTabChanged);
+    final callback = widget.onBackHandlerChanged;
+    if (callback != null) {
+      callback(
+        DashboardBackHandler(
+          canUnwind: () => _tabHistory.length > 1,
+          unwind: () {
+            if (_tabHistory.length <= 1) return false;
+            _restoringTab = true;
+            _tabHistory.removeLast();
+            final previous = _tabHistory.last;
+            _lastTabIndex = previous;
+            _controller?.animateTo(
+              previous,
+              duration: const Duration(milliseconds: 180),
+              curve: Curves.easeOutCubic,
+            );
+            _restoringTab = false;
+            setState(() {});
+            return true;
+          },
+        ),
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.onBackHandlerChanged?.call(null);
+    _controller?.removeListener(_handleTabChanged);
+    super.dispose();
+  }
+
+  void _handleTabChanged() {
+    if (_restoringTab) return;
+    final index = _controller?.index ?? 0;
+    if (index != _lastTabIndex) {
+      _tabHistory.add(index);
+      _lastTabIndex = index;
+    }
+    if (mounted) setState(() {});
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_controller?.index == 1) return const SizedBox.shrink();
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        IconButton(
+          tooltip: 'Previous week',
+          onPressed: widget.onPrevious,
+          icon: const Icon(Icons.chevron_left),
+        ),
+        Center(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 6),
+            child: Text(
+              widget.weekLabel,
+              style: const TextStyle(
+                fontWeight: FontWeight.w600,
+                fontSize: 12,
+              ),
+            ),
+          ),
+        ),
+        IconButton(
+          tooltip: 'Next week',
+          onPressed: widget.onNext,
+          icon: const Icon(Icons.chevron_right),
+        ),
+        const SizedBox(width: 4),
+      ],
     );
   }
 }

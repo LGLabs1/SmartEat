@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../../../theme.dart';
+
 /// A labelled progress bar for category spend (or budget usage).
 class FinanceCategoryBar extends StatelessWidget {
   const FinanceCategoryBar({
@@ -58,7 +60,7 @@ class FinanceCategoryBar extends StatelessWidget {
             borderRadius: BorderRadius.circular(6),
             child: LinearProgressIndicator(
               value: (percent / 100).clamp(0.0, 1.0),
-              backgroundColor: scheme.surfaceContainerHighest,
+              backgroundColor: Colors.white.withValues(alpha: 0.1),
               valueColor: AlwaysStoppedAnimation<Color>(
                 overBudget ? scheme.error : color,
               ),
@@ -128,21 +130,21 @@ class FinanceDetailRow extends StatelessWidget {
 /// Maps a finance category to a stable accent color for bars and icons.
 Color financeCategoryColor(String category) {
   const colors = {
-    'Ingredients': Color(0xFFF97316),
-    'Utilities': Color(0xFFF59E0B),
-    'Rent': Color(0xFF1E88E5),
-    'Salaries': Color(0xFF16A34A),
-    'Equipment': Color(0xFF8B5CF6),
-    'Maintenance': Color(0xFF92400E),
-    'Marketing': Color(0xFFEC4899),
-    'Supplies': Color(0xFF14B8A6),
-    'Transportation': Color(0xFF6366F1),
-    'Taxes': Color(0xFFEF5350),
-    'Insurance': Color(0xFF06B6D4),
-    'Bills': Color(0xFF0EA5E9),
-    'Other': Color(0xFF64748B),
+    'Ingredients': Color(0xFFFB923C),
+    'Utilities': Color(0xFFFBBF24),
+    'Rent': Color(0xFF60A5FA),
+    'Salaries': AppTheme.sageSuccess,
+    'Equipment': Color(0xFFA78BFA),
+    'Maintenance': Color(0xFFF59E0B),
+    'Marketing': Color(0xFFF472B6),
+    'Supplies': Color(0xFF2DD4BF),
+    'Transportation': Color(0xFF818CF8),
+    'Taxes': Color(0xFFFF6B6B),
+    'Insurance': Color(0xFF22D3EE),
+    'Bills': Color(0xFF38BDF8),
+    'Other': Color(0xFF94A3B8),
   };
-  return colors[category] ?? const Color(0xFF1E88E5);
+  return colors[category] ?? AppTheme.sageAccent;
 }
 
 IconData financeCategoryIcon(String category) {

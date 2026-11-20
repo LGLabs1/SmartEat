@@ -1,5 +1,6 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import '../../../../../models/inventory_item.dart';
+import '../../../../../theme.dart';
 import '../widgets/inventory_table.dart';
 import '../widgets/purchase_dialog.dart';
 import '../widgets/category_cards.dart';
@@ -13,6 +14,7 @@ class ItemsListScreen extends StatefulWidget {
   final ValueChanged<PurchaseReceipt>? onPurchase;
   final ValueChanged<StockAdjustment>? onAdjustment;
   final ValueChanged<InventoryItem>? onAddItem;
+  final Future<void> Function()? onRefresh;
 
   const ItemsListScreen({
     Key? key,
@@ -21,6 +23,7 @@ class ItemsListScreen extends StatefulWidget {
     this.onPurchase,
     this.onAdjustment,
     this.onAddItem,
+    this.onRefresh,
   }) : super(key: key);
 
   @override
@@ -32,20 +35,62 @@ class _ItemsListScreenState extends State<ItemsListScreen> {
   String _selectedCategory = 'All';
   String? _selectedStockStatus;
 
+  String _normalizeCategory(String value) => value.trim().toLowerCase();
+
   List<String> _getCategories() {
-    final defaultCats = ['Vegetables', 'Meat', 'Dairy', 'Grains', 'Spices', 'Beverages'];
-    return defaultCats;
+    const defaultCats = [
+      'Vegetables',
+      'Meat',
+      'Dairy',
+      'Grains',
+      'Spices',
+      'Beverages',
+      'Other',
+    ];
+    final seen = <String>{};
+    final result = <String>[];
+    final derived = widget.items
+        .map((item) => item.category.trim())
+        .where((category) => category.isNotEmpty);
+    for (final category in [...defaultCats, ...derived]) {
+      if (seen.add(_normalizeCategory(category))) result.add(category);
+    }
+    return result;
+  }
+
+  @override
+  void didUpdateWidget(covariant ItemsListScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (_selectedCategory != 'All' &&
+        !_getCategories().any(
+          (category) =>
+              _normalizeCategory(category) ==
+              _normalizeCategory(_selectedCategory),
+        )) {
+      setState(() {
+        _selectedCategory = 'All';
+        _selectedStockStatus = null;
+      });
+    }
   }
 
   List<InventoryItem> _filtered() {
     if (_selectedStockStatus == 'low') {
-      return widget.items.where((i) => i.isLowStock && i.currentStock > 0).toList();
+      return widget.items
+          .where((i) => i.isLowStock && i.currentStock > 0)
+          .toList();
     } else if (_selectedStockStatus == 'out') {
       return widget.items.where((i) => i.currentStock <= 0).toList();
     } else if (_selectedCategory == 'All') {
       return widget.items;
     }
-    return widget.items.where((i) => i.category == _selectedCategory).toList();
+    return widget.items
+        .where(
+          (i) =>
+              _normalizeCategory(i.category) ==
+              _normalizeCategory(_selectedCategory),
+        )
+        .toList();
   }
 
   @override
@@ -80,7 +125,8 @@ class _ItemsListScreenState extends State<ItemsListScreen> {
               final result = await showDialog<InventoryItem>(
                 context: context,
                 builder: (_) => AddItemDialog(
-                  initialCategory: _selectedCategory != 'All' ? _selectedCategory : null,
+                  initialCategory:
+                      _selectedCategory != 'All' ? _selectedCategory : null,
                 ),
               );
               if (result != null && widget.onAddItem != null) {
@@ -90,41 +136,47 @@ class _ItemsListScreenState extends State<ItemsListScreen> {
           ),
         ],
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(16),
-        child: _showGrid
-            ? _buildGrid(context, categories)
-            : Column(
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 12),
-                    child: Row(
-                      children: [
-                        TextButton.icon(
-                          icon: const Icon(Icons.arrow_back),
-                          label: const Text('Back to Categories'),
-                          onPressed: () {
-                            setState(() {
-                              _showGrid = true;
-                              _selectedCategory = 'All';
-                              _selectedStockStatus = null;
-                            });
-                          },
-                        ),
-                        const Spacer(),
-                      ],
+      body: RefreshIndicator(
+        onRefresh: widget.onRefresh ?? () async {},
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: _showGrid
+              ? _buildGrid(context, categories)
+              : Column(
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: Row(
+                        children: [
+                          TextButton.icon(
+                            icon: const Icon(Icons.arrow_back),
+                            label: const Text('Back to Categories'),
+                            onPressed: () {
+                              setState(() {
+                                _showGrid = true;
+                                _selectedCategory = 'All';
+                                _selectedStockStatus = null;
+                              });
+                            },
+                          ),
+                          const Spacer(),
+                        ],
+                      ),
                     ),
-                  ),
-                  Expanded(child: InventoryTable(items: filtered, onRowTap: widget.onItemTap)),
-                ],
-              ),
+                    Expanded(
+                        child: InventoryTable(
+                            items: filtered, onRowTap: widget.onItemTap)),
+                  ],
+                ),
+        ),
       ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () async {
           final result = await showDialog<InventoryItem>(
             context: context,
             builder: (_) => AddItemDialog(
-              initialCategory: _selectedCategory != 'All' ? _selectedCategory : null,
+              initialCategory:
+                  _selectedCategory != 'All' ? _selectedCategory : null,
             ),
           );
           if (result != null && widget.onAddItem != null) {
@@ -149,8 +201,11 @@ class _ItemsListScreenState extends State<ItemsListScreen> {
                     ? 2
                     : 1;
         final cats = categories.toList();
-        final lowStockItems = widget.items.where((i) => i.isLowStock && i.currentStock > 0).toList();
-        final outOfStockItems = widget.items.where((i) => i.currentStock <= 0).toList();
+        final lowStockItems = widget.items
+            .where((i) => i.isLowStock && i.currentStock > 0)
+            .toList();
+        final outOfStockItems =
+            widget.items.where((i) => i.currentStock <= 0).toList();
         final damagedCount = 0;
         return ListView(
           children: [
@@ -207,7 +262,7 @@ class _ItemsListScreenState extends State<ItemsListScreen> {
                   title: 'Damaged Items',
                   itemCount: damagedCount,
                   icon: Icons.report_problem_outlined,
-                  accent: Colors.deepOrange.shade700,
+                  accent: AppTheme.warning,
                   onTap: () {},
                 ),
               ],
@@ -227,9 +282,15 @@ class _ItemsListScreenState extends State<ItemsListScreen> {
               itemCount: cats.length,
               itemBuilder: (context, index) {
                 final category = cats[index];
-                final itemsInCategory =
-                    widget.items.where((i) => i.category == category).toList();
-                final lowStockCount = itemsInCategory.where((i) => i.isLowStock).length;
+                final itemsInCategory = widget.items
+                    .where(
+                      (i) =>
+                          _normalizeCategory(i.category) ==
+                          _normalizeCategory(category),
+                    )
+                    .toList();
+                final lowStockCount =
+                    itemsInCategory.where((i) => i.isLowStock).length;
                 return CategoryCard(
                   category: category,
                   itemCount: itemsInCategory.length,

@@ -66,7 +66,8 @@ class FirestoreInsightsService {
             '₱${ctx.todayRevenue.toStringAsFixed(2)} across ${ctx.todayOrderCount} orders ($changeLabel vs yesterday).',
         'icon': Icons.monetization_on_outlined,
         'color': revenueColor,
-        'isImportant': ctx.dayChangePercent >= 15 || ctx.dayChangePercent <= -20,
+        'isImportant':
+            ctx.dayChangePercent >= 15 || ctx.dayChangePercent <= -20,
       });
 
       // 2. Best seller
@@ -93,7 +94,7 @@ class FirestoreInsightsService {
         'title': 'Business Health',
         'message':
             'Health score: ${ctx.healthScore.toStringAsFixed(0)}/100 (${ctx.healthLabel}). '
-            'Monthly trend: ${ctx.monthlyGrowthPercent >= 0 ? '+' : ''}${ctx.monthlyGrowthPercent.toStringAsFixed(1)}% vs last month.',
+                'Monthly trend: ${ctx.monthlyGrowthPercent >= 0 ? '+' : ''}${ctx.monthlyGrowthPercent.toStringAsFixed(1)}% vs last month.',
         'icon': Icons.monitor_heart_outlined,
         'color': healthColor,
         'isImportant': ctx.healthScore < 40,
@@ -110,8 +111,10 @@ class FirestoreInsightsService {
           'isImportant': true,
         });
       } else if (ctx.lowStockCount > 0) {
-        final names =
-            ctx.lowStockItems.take(2).map((i) => i['name'] as String).join(', ');
+        final names = ctx.lowStockItems
+            .take(2)
+            .map((i) => i['name'] as String)
+            .join(', ');
         insights.add({
           'title': 'Low Stock',
           'message':
@@ -124,10 +127,12 @@ class FirestoreInsightsService {
 
       // 5. Peak hour
       if (ctx.peakHour != 'N/A') {
+        final bestDayNote = ctx.bestDayOfWeek != 'N/A' && ctx.bestDayRevenue > 0
+            ? ' ${ctx.bestDayOfWeek} is your best-performing day of the week.'
+            : '';
         insights.add({
           'title': 'Peak Hour',
-          'message':
-              '${ctx.peakHour} is your busiest time. ${ctx.bestDayOfWeek} is your best-performing day of the week.',
+          'message': '${ctx.peakHour} is your busiest time.$bestDayNote',
           'icon': Icons.access_time_rounded,
           'color': Colors.blueAccent,
           'isImportant': false,
@@ -366,10 +371,13 @@ class FirestoreInsightsService {
           : ctx.trendDirection == 'declining'
               ? Colors.redAccent
               : Colors.blueGrey;
+      final bestDayNote = ctx.bestDayOfWeek != 'N/A' && ctx.bestDayRevenue > 0
+          ? ' Best day: ${ctx.bestDayOfWeek} (₱${ctx.bestDayRevenue.toStringAsFixed(2)} avg).'
+          : ' Sales are still building, so there is no clear best day yet.';
       insights.add({
         'title': '14-Day Revenue Trend',
         'message':
-            'Revenue is ${ctx.trendDirection} over the last 14 days. Best day: ${ctx.bestDayOfWeek} (₱${ctx.bestDayRevenue.toStringAsFixed(2)} avg).',
+            'Revenue is ${ctx.trendDirection} over the last 14 days.$bestDayNote',
         'icon': trendIcon,
         'color': trendColor,
         'isImportant': ctx.trendDirection == 'declining',
@@ -490,8 +498,7 @@ class FirestoreInsightsService {
         final data = doc.data();
         final status = (data['status'] ?? '').toString().toLowerCase();
         if (status == 'completed') {
-          todayRevenue +=
-              (data['totalAmount'] as num?)?.toDouble() ?? 0.0;
+          todayRevenue += (data['totalAmount'] as num?)?.toDouble() ?? 0.0;
           completedOrdersCount++;
         } else if (status == 'pending') {
           pendingOrdersCount++;
@@ -563,8 +570,9 @@ class FirestoreInsightsService {
   /// Used as a fallback when the full builder hasn't run yet.
   static Future<BusinessContext> _buildMinimalContext() async {
     final summary = await fetchBusinessSummary();
+    final eateryId = await FirebaseService.getCurrentEateryId() ?? '';
     return BusinessContext(
-      eateryId: '',
+      eateryId: eateryId,
       eateryName: '',
       generatedAt: DateTime.now().toIso8601String(),
       todayRevenue: (summary['todayRevenue'] as num?)?.toDouble() ?? 0,

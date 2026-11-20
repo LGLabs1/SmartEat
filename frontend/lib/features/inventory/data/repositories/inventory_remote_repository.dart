@@ -1,4 +1,4 @@
-﻿import 'dart:convert';
+import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../../../../services/api_service.dart';
 import '../../../../../services/firebase_service.dart';
@@ -41,11 +41,12 @@ class InventoryRemoteRepository implements InventoryRepository {
   @override
   Future<List<InventoryItem>> getInventoryItems() async {
     final response = await ApiService.getInventoryItems();
-    final items = (response['data'] as List?)
-            ?.map((item) => InventoryItem.fromJson(item as Map<String, dynamic>))
+    final rows = (response['data'] as List?)
+            ?.whereType<Map>()
+            .map((item) => Map<String, dynamic>.from(item))
             .toList() ??
-        [];
-    return items;
+        const [];
+    return _safeParse(rows, InventoryItem.fromJson);
   }
 
   // --- Local cache read/write -------------------------------------------------
@@ -68,6 +69,19 @@ class InventoryRemoteRepository implements InventoryRepository {
   Future<void> _writeCache(String key, List<Map<String, dynamic>> rows) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(await _cacheKey(key), jsonEncode(rows));
+  }
+
+  List<T> _safeParse<T>(
+    List<Map<String, dynamic>> rows,
+    T Function(Map<String, dynamic>) factory,
+  ) {
+    final parsed = <T>[];
+    for (final row in rows) {
+      try {
+        parsed.add(factory(row));
+      } catch (_) {}
+    }
+    return parsed;
   }
 
   /// Merges [remote] (authoritative) with [local] (offline-only rows not yet
@@ -103,9 +117,7 @@ class InventoryRemoteRepository implements InventoryRepository {
     }
     final merged = _merge(remote, cached);
     if (merged.isNotEmpty) await _writeCache(_movementsKey, merged);
-    return merged
-        .map((e) => StockMovement.fromJson(e))
-        .toList();
+    return _safeParse(merged, StockMovement.fromJson);
   }
 
   Future<void> _appendMovement(StockMovement movement) async {
@@ -134,7 +146,7 @@ class InventoryRemoteRepository implements InventoryRepository {
     }
     final merged = _merge(remote, cached);
     if (merged.isNotEmpty) await _writeCache(_adjustmentsKey, merged);
-    return merged.map((e) => StockAdjustment.fromJson(e)).toList();
+    return _safeParse(merged, StockAdjustment.fromJson);
   }
 
   Future<void> _appendAdjustment(StockAdjustment adjustment) async {
@@ -162,7 +174,7 @@ class InventoryRemoteRepository implements InventoryRepository {
     }
     final merged = _merge(remote, cached);
     if (merged.isNotEmpty) await _writeCache(_purchasesKey, merged);
-    return merged.map((e) => PurchaseReceipt.fromJson(e)).toList();
+    return _safeParse(merged, PurchaseReceipt.fromJson);
   }
 
   Future<void> _appendPurchase(PurchaseReceipt receipt) async {
@@ -207,7 +219,8 @@ class InventoryRemoteRepository implements InventoryRepository {
         operation: 'add',
       );
       final items = await getInventoryItems();
-      final item = items.firstWhere((x) => x.id == it.itemId, orElse: () => throw Exception('Inventory item not found'));
+      final item = items.firstWhere((x) => x.id == it.itemId,
+          orElse: () => throw Exception('Inventory item not found'));
       final before = item.currentStock - it.qtyBase;
       final after = item.currentStock;
       await _appendMovement(StockMovement(
@@ -225,7 +238,8 @@ class InventoryRemoteRepository implements InventoryRepository {
         notes: receipt.notes,
       ));
       final lots = await getFifoLots(it.itemId);
-      final nl = FifoQueueService.addPurchase(lots, it.qtyBase, it.unitCostPerBase);
+      final nl =
+          FifoQueueService.addPurchase(lots, it.qtyBase, it.unitCostPerBase);
       await saveFifoLots(it.itemId, nl);
     }
   }
@@ -238,7 +252,8 @@ class InventoryRemoteRepository implements InventoryRepository {
       operation: adjustment.reasonCode,
     );
     final items = await getInventoryItems();
-    final item = items.firstWhere((x) => x.id == adjustment.itemId, orElse: () => throw Exception('Inventory item not found'));
+    final item = items.firstWhere((x) => x.id == adjustment.itemId,
+        orElse: () => throw Exception('Inventory item not found'));
     final before = adjustment.qtyBeforeBase > 0
         ? adjustment.qtyBeforeBase
         : (item.currentStock - adjustment.deltaBase);
@@ -246,7 +261,9 @@ class InventoryRemoteRepository implements InventoryRepository {
     await _appendMovement(StockMovement(
       id: DateTime.now().microsecondsSinceEpoch.toString(),
       itemId: adjustment.itemId,
-      type: adjustment.deltaBase >= 0 ? StockMovementType.adjustIncrease : StockMovementType.adjustDecrease,
+      type: adjustment.deltaBase >= 0
+          ? StockMovementType.adjustIncrease
+          : StockMovementType.adjustDecrease,
       referenceType: StockMovementRefType.adjustment,
       referenceId: adjustment.id,
       qtyBeforeBase: before,
@@ -276,14 +293,16 @@ class InventoryRemoteRepository implements InventoryRepository {
   }) async {
     if (qtyBaseSold <= 0) return;
     final items = await getInventoryItems();
-    final item = items.firstWhere((x) => x.id == itemId, orElse: () => null as dynamic);
+    final item =
+        items.firstWhere((x) => x.id == itemId, orElse: () => null as dynamic);
     if (item.consumptionMode != ConsumptionMode.direct) return;
     await ApiService.updateInventoryStock(
       itemId,
       quantity: -qtyBaseSold,
       operation: 'Sale consumption',
     );
-    final afterItem = (await getInventoryItems()).firstWhere((x) => x.id == itemId, orElse: () => item);
+    final afterItem = (await getInventoryItems())
+        .firstWhere((x) => x.id == itemId, orElse: () => item);
     final before = item.currentStock;
     final after = afterItem.currentStock;
     final lots = await getFifoLots(itemId);

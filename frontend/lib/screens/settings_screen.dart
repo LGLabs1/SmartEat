@@ -1,9 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import '../services/notification_service.dart';
+import '../services/attendance_settings_service.dart';
+import '../services/bluetooth_printer_service.dart';
 import '../services/auth_provider.dart';
 import '../services/pos_settings_service.dart';
+import '../theme.dart';
+import '../widgets/bluetooth_printer_sheet.dart';
 import '../widgets/download_apps_card.dart';
+import '../widgets/sage_header_button.dart';
+import '../widgets/smart_eat_header.dart';
 import 'package:provider/provider.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -14,16 +19,7 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
-  final NotificationService _notificationService = NotificationService();
-  bool _isLoading = true;
   bool _isAdmin = false;
-
-  // Notification settings
-  bool _notificationsEnabled = true;
-  bool _lowStockEnabled = true;
-  bool _billRemindersEnabled = true;
-  bool _orderAlertsEnabled = true;
-  int _billReminderDays = 3;
 
   // Business settings
   String _currencySymbol = '\u20B1';
@@ -40,12 +36,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
   // Receipt printing settings (eatery-wide, persisted via
   // PosSettingsService)
   bool _receiptPrintingEnabled = false;
-  bool _askForReceipt = false;
+  BluetoothPrinterDevice? _savedPrinter;
+  bool _printerConnected = false;
+  bool _printerLoading = false;
 
   // Inventory settings
   bool _lowStockWarnings = true;
   int _lowStockThreshold = 10;
   bool _autoDeductStock = true;
+
+  // Attendance settings (eatery-wide, admin-write)
+  double _fullDayHours = 8;
+  double _halfDayHours = 4;
+  int _graceMinutes = 10;
+  String _scheduledStart = '';
 
   AuthProvider? _authProvider;
 
@@ -55,9 +59,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final auth = context.read<AuthProvider>();
     _authProvider = auth;
     auth.addListener(_onAuthChanged);
-    _loadSettings();
     _loadBusinessSettings();
     _loadPosSettings();
+    _loadPrinter();
+    _loadAttendanceSettings();
     _loadProfile();
   }
 
@@ -74,8 +79,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _loadProfile() async {
     try {
-      var profile =
-          await context.read<AuthProvider>().getCurrentUserProfile();
+      var profile = await context.read<AuthProvider>().getCurrentUserProfile();
       if (profile == null) {
         await Future.delayed(const Duration(milliseconds: 150));
         if (!mounted) return;
@@ -140,7 +144,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
       if (!mounted) return;
       setState(() {
         _receiptPrintingEnabled = settings.receiptPrintingEnabled;
-        _askForReceipt = settings.askForReceipt;
       });
     } catch (_) {
       // Defaults stay in effect; the section still renders.
@@ -149,26 +152,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _updateReceiptSetting({
     bool? receiptPrintingEnabled,
-    bool? askForReceipt,
   }) async {
     final previousEnabled = _receiptPrintingEnabled;
-    final previousAsk = _askForReceipt;
     setState(() {
       if (receiptPrintingEnabled != null) {
         _receiptPrintingEnabled = receiptPrintingEnabled;
       }
-      if (askForReceipt != null) _askForReceipt = askForReceipt;
     });
     try {
       await PosSettingsService.save(PosSettings(
         receiptPrintingEnabled: _receiptPrintingEnabled,
-        askForReceipt: _askForReceipt,
       ));
     } catch (_) {
       if (!mounted) return;
       setState(() {
         _receiptPrintingEnabled = previousEnabled;
-        _askForReceipt = previousAsk;
       });
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -177,45 +175,135 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
-  Future<void> _loadSettings() async {
-    setState(() => _isLoading = true);
-    await Future.delayed(const Duration(milliseconds: 100));
-
-    if (mounted) {
+  Future<void> _loadPrinter() async {
+    try {
+      final saved = await BluetoothPrinterService.loadSavedPrinter();
+      var connected = false;
+      if (saved != null) {
+        connected = await BluetoothPrinterService.isConnected(saved.address);
+      }
+      if (!mounted) return;
       setState(() {
-        _notificationsEnabled = _notificationService.notificationsEnabled;
-        _lowStockEnabled = _notificationService.lowStockEnabled;
-        _billRemindersEnabled = _notificationService.billRemindersEnabled;
-        _orderAlertsEnabled = _notificationService.orderAlertsEnabled;
-        _billReminderDays = _notificationService.billReminderDays;
-        _isLoading = false;
+        _savedPrinter = saved;
+        _printerConnected = connected;
+        _printerLoading = false;
       });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _printerLoading = false);
     }
   }
 
-  Future<void> _updateNotificationSetting(String key, dynamic value) async {
-    switch (key) {
-      case 'master':
-        await _notificationService.setNotificationsEnabled(value as bool);
-        setState(() => _notificationsEnabled = value);
-        break;
-      case 'lowStock':
-        await _notificationService.setLowStockEnabled(value as bool);
-        setState(() => _lowStockEnabled = value);
-        break;
-      case 'billReminders':
-        await _notificationService.setBillRemindersEnabled(value as bool);
-        setState(() => _billRemindersEnabled = value);
-        break;
-      case 'orderAlerts':
-        await _notificationService.setOrderAlertsEnabled(value as bool);
-        setState(() => _orderAlertsEnabled = value);
-        break;
-      case 'billReminderDays':
-        await _notificationService.setBillReminderDays(value as int);
-        setState(() => _billReminderDays = value);
-        break;
+  Future<void> _openPrinterPicker() async {
+    final selected = await showBluetoothPrinterSheet(
+      context,
+      savedPrinter: _savedPrinter,
+    );
+    if (selected == null || !mounted) return;
+    final connected =
+        await BluetoothPrinterService.isConnected(selected.address);
+    if (!mounted) return;
+    setState(() {
+      _savedPrinter = selected;
+      _printerConnected = connected;
+      _printerLoading = false;
+    });
+    if (connected) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Connected to ${selected.displayName}')),
+      );
     }
+  }
+
+  Future<void> _disconnectPrinter() async {
+    final printer = _savedPrinter;
+    if (printer == null) return;
+    setState(() => _printerLoading = true);
+    final disconnected =
+        await BluetoothPrinterService.disconnect(printer.address);
+    if (!mounted) return;
+    setState(() {
+      _printerConnected = disconnected ? false : _printerConnected;
+      _printerLoading = false;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          disconnected
+              ? 'Printer disconnected'
+              : 'Could not disconnect the printer',
+        ),
+      ),
+    );
+  }
+
+  Future<void> _loadAttendanceSettings() async {
+    try {
+      final settings = await AttendanceSettingsService.load();
+      if (!mounted) return;
+      setState(() {
+        _fullDayHours = settings.fullDayHours;
+        _halfDayHours = settings.halfDayHours;
+        _graceMinutes = settings.graceMinutes;
+        _scheduledStart = settings.scheduledStart;
+      });
+    } catch (_) {
+      // Defaults stay in effect.
+    }
+  }
+
+  Future<void> _updateAttendanceSettings({
+    double? fullDayHours,
+    double? halfDayHours,
+    int? graceMinutes,
+    String? scheduledStart,
+  }) async {
+    final nextFull = fullDayHours ?? _fullDayHours;
+    var nextHalf = halfDayHours ?? _halfDayHours;
+    if (nextHalf > nextFull) nextHalf = nextFull;
+    final nextGrace = graceMinutes ?? _graceMinutes;
+    final nextStart = scheduledStart ?? _scheduledStart;
+    setState(() {
+      _fullDayHours = nextFull;
+      _halfDayHours = nextHalf;
+      _graceMinutes = nextGrace;
+      _scheduledStart = nextStart;
+    });
+    try {
+      await AttendanceSettingsService.save(AttendanceSettings(
+        fullDayHours: nextFull,
+        halfDayHours: nextHalf,
+        graceMinutes: nextGrace,
+        scheduledStart: nextStart,
+      ));
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Could not save attendance settings. Try again.'),
+        ),
+      );
+    }
+  }
+
+  Future<void> _pickScheduledStart() async {
+    final parts = _scheduledStart.split(':');
+    final hour = int.tryParse(parts.isNotEmpty ? parts[0] : '') ?? 9;
+    final minute = int.tryParse(parts.length > 1 ? parts[1] : '') ?? 0;
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay(hour: hour, minute: minute),
+    );
+    if (picked == null) return;
+    final value = '${picked.hour.toString().padLeft(2, '0')}:'
+        '${picked.minute.toString().padLeft(2, '0')}';
+    await _updateAttendanceSettings(scheduledStart: value);
+  }
+
+  List<double> _hourOptions(double current) {
+    final values = <double>{2, 3, 4, 5, 6, 8, 10, 12, current};
+    final sorted = values.toList()..sort();
+    return sorted;
   }
 
   @override
@@ -223,72 +311,86 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final user = context.read<AuthProvider>().user;
     final userEmail = user?.email ?? 'Unknown';
 
-    return Scaffold(
-      appBar: AppBar(
-        leading: Navigator.of(context).canPop()
-            ? IconButton(
-                icon: const Icon(Icons.arrow_back),
-                onPressed: () => Navigator.of(context).maybePop(),
-              )
-            : null,
-        title: const Text('Settings'),
+    return Theme(
+      data: AppTheme.dashboardTheme,
+      child: Scaffold(
+        backgroundColor: AppTheme.sageNavy,
+        appBar: SmartEatHeader(
+          leading: Navigator.of(context).canPop()
+              ? IconButton(
+                  icon: const Icon(Icons.arrow_back),
+                  onPressed: () => Navigator.of(context).maybePop(),
+                )
+              : null,
+          title: const Text('Settings'),
+          actions: const [SageHeaderButton(), SizedBox(width: 8)],
+        ),
+        body: ListView(
+          padding: const EdgeInsets.fromLTRB(
+            AppTheme.pagePadding,
+            8,
+            AppTheme.pagePadding,
+            32,
+          ),
+          children: [
+            // User Info Card
+            _buildUserInfoCard(userEmail),
+            const SizedBox(height: 24),
+
+            // Notification Settings Section
+            _buildSectionHeader('Notifications'),
+            _buildNotificationSettingsCard(),
+            if (_isAdmin) ...[
+              const SizedBox(height: 24),
+              _buildSectionHeader('SMS Alerts'),
+              _buildSmsSettingsCard(),
+            ],
+            const SizedBox(height: 24),
+
+            // Business Settings Section
+            _buildSectionHeader('Business Settings'),
+            _buildBusinessSettingsCard(),
+            if (_isAdmin) ...[
+              const SizedBox(height: 24),
+              _buildSectionHeader('Attendance'),
+              _buildAttendanceSettingsCard(),
+            ],
+            const SizedBox(height: 24),
+
+            // POS Settings Section
+            _buildSectionHeader('POS Settings'),
+            _buildPOSSettingsCard(),
+            const SizedBox(height: 24),
+
+            // Receipt Printing Section
+            _buildSectionHeader('Receipt Printing'),
+            _buildReceiptPrintingCard(),
+            const SizedBox(height: 24),
+
+            // Inventory Settings Section
+            _buildSectionHeader('Inventory Settings'),
+            _buildInventorySettingsCard(),
+            const SizedBox(height: 24),
+
+            // App Settings Section
+            _buildSectionHeader('App Settings'),
+            _buildAppSettingsCard(),
+            const SizedBox(height: 24),
+            _buildSectionHeader('Get Smart Eat'),
+            const DownloadAppsCard(),
+            const SizedBox(height: 32),
+
+            // Danger Zone
+            _buildSectionHeader('Danger Zone'),
+            _buildDangerZoneCard(),
+          ],
+        ),
       ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : ListView(
-              padding: const EdgeInsets.all(16),
-              children: [
-                // User Info Card
-                _buildUserInfoCard(userEmail),
-                const SizedBox(height: 24),
-
-                // Notification Settings Section
-                _buildSectionHeader('Notifications'),
-                _buildNotificationSettingsCard(),
-                if (_isAdmin) ...[
-                  const SizedBox(height: 24),
-                  _buildSectionHeader('SMS Alerts'),
-                  _buildSmsSettingsCard(),
-                ],
-                const SizedBox(height: 24),
-
-                // Business Settings Section
-                _buildSectionHeader('Business Settings'),
-                _buildBusinessSettingsCard(),
-                const SizedBox(height: 24),
-
-                // POS Settings Section
-                _buildSectionHeader('POS Settings'),
-                _buildPOSSettingsCard(),
-                const SizedBox(height: 24),
-
-                // Receipt Printing Section
-                _buildSectionHeader('Receipt Printing'),
-                _buildReceiptPrintingCard(),
-                const SizedBox(height: 24),
-
-                // Inventory Settings Section
-                _buildSectionHeader('Inventory Settings'),
-                _buildInventorySettingsCard(),
-                const SizedBox(height: 24),
-
-                // App Settings Section
-                _buildSectionHeader('App Settings'),
-                _buildAppSettingsCard(),
-                const SizedBox(height: 24),
-                _buildSectionHeader('Get Smart Eat'),
-                const DownloadAppsCard(),
-                const SizedBox(height: 32),
-
-                // Danger Zone
-                _buildSectionHeader('Danger Zone'),
-                _buildDangerZoneCard(),
-              ],
-            ),
     );
   }
 
   Widget _buildUserInfoCard(String email) {
+    final scheme = Theme.of(context).colorScheme;
     return Card(
       elevation: 0,
       color: Theme.of(context).colorScheme.primary.withOpacity(0.08),
@@ -312,9 +414,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text(
+                  Text(
                     'Account',
-                    style: TextStyle(fontSize: 12, color: Colors.grey),
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: scheme.onSurface.withValues(alpha: 0.65),
+                    ),
                   ),
                   Text(
                     email,
@@ -344,80 +449,29 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Widget _buildNotificationSettingsCard() {
+    final scheme = Theme.of(context).colorScheme;
     return Card(
       elevation: 0,
-      color: Colors.white,
+      color: scheme.surface,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: BorderSide(color: Colors.grey.shade200),
+        borderRadius: BorderRadius.circular(AppTheme.cardRadius),
+        side: BorderSide(color: scheme.outline.withValues(alpha: 0.25)),
       ),
-      child: Column(
-        children: [
-          SwitchListTile(
-            title: const Text(
-              'Enable Notifications',
-              style: TextStyle(fontWeight: FontWeight.w600),
-            ),
-            subtitle: const Text('Receive alerts for important events'),
-            value: _notificationsEnabled,
-            onChanged: (value) => _updateNotificationSetting('master', value),
-            secondary: Icon(
-              Icons.notifications_active,
-              color: _notificationsEnabled ? Colors.blue : Colors.grey,
-            ),
+      child: ListTile(
+        leading: Container(
+          width: 40,
+          height: 40,
+          decoration: BoxDecoration(
+            color: AppTheme.sageAccent.withValues(alpha: 0.14),
+            borderRadius: BorderRadius.circular(12),
           ),
-          const Divider(height: 1),
-          SwitchListTile(
-            title: const Text('Low Stock Alerts'),
-            subtitle: const Text('Notify when inventory items are running low'),
-            value: _notificationsEnabled && _lowStockEnabled,
-            onChanged: _notificationsEnabled
-                ? (value) => _updateNotificationSetting('lowStock', value)
-                : null,
-            secondary: const Icon(Icons.inventory_2_outlined),
-          ),
-          const Divider(height: 1),
-          SwitchListTile(
-            title: const Text('Bill Payment Reminders'),
-            subtitle: const Text('Remind about upcoming bill payments'),
-            value: _notificationsEnabled && _billRemindersEnabled,
-            onChanged: _notificationsEnabled
-                ? (value) => _updateNotificationSetting('billReminders', value)
-                : null,
-            secondary: const Icon(Icons.receipt_long_outlined),
-          ),
-          const Divider(height: 1),
-          SwitchListTile(
-            title: const Text('Order Alerts'),
-            subtitle:
-                const Text('Notify about pending orders requiring attention'),
-            value: _notificationsEnabled && _orderAlertsEnabled,
-            onChanged: _notificationsEnabled
-                ? (value) => _updateNotificationSetting('orderAlerts', value)
-                : null,
-            secondary: const Icon(Icons.receipt_outlined),
-          ),
-          const Divider(height: 1),
-          ListTile(
-            leading: const Icon(Icons.schedule_outlined),
-            title: const Text('Bill Reminder Days'),
-            subtitle: Text('Remind $_billReminderDays days before due date'),
-            trailing: SizedBox(
-              width: 120,
-              child: Slider(
-                value: _billReminderDays.toDouble(),
-                min: 1,
-                max: 7,
-                divisions: 6,
-                label: '$_billReminderDays days',
-                onChanged: _notificationsEnabled && _billRemindersEnabled
-                    ? (value) => _updateNotificationSetting(
-                        'billReminderDays', value.round())
-                    : null,
-              ),
-            ),
-          ),
-        ],
+          child: const Icon(Icons.notifications_active_outlined,
+              color: AppTheme.sageAccent, size: 20),
+        ),
+        title: const Text('Notification preferences'),
+        subtitle: const Text('Alerts, reminders, and test notifications'),
+        trailing: Icon(Icons.chevron_right, color: scheme.primary),
+        onTap: () => Navigator.of(context).pushNamed('/settings/notifications'),
       ),
     );
   }
@@ -425,10 +479,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Widget _buildSmsSettingsCard() {
     return Card(
       elevation: 0,
-      color: Colors.white,
+      color: Theme.of(context).colorScheme.surface,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: BorderSide(color: Colors.grey.shade200),
+        borderRadius: BorderRadius.circular(AppTheme.cardRadius),
+        side: BorderSide(
+          color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.25),
+        ),
       ),
       child: ListTile(
         leading: const Icon(Icons.sms_outlined),
@@ -444,10 +500,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Widget _buildBusinessSettingsCard() {
     return Card(
       elevation: 0,
-      color: Colors.white,
+      color: Theme.of(context).colorScheme.surface,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: BorderSide(color: Colors.grey.shade200),
+        borderRadius: BorderRadius.circular(AppTheme.cardRadius),
+        side: BorderSide(
+          color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.25),
+        ),
       ),
       child: Column(
         children: [
@@ -508,10 +566,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Widget _buildPOSSettingsCard() {
     return Card(
       elevation: 0,
-      color: Colors.white,
+      color: Theme.of(context).colorScheme.surface,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: BorderSide(color: Colors.grey.shade200),
+        borderRadius: BorderRadius.circular(AppTheme.cardRadius),
+        side: BorderSide(
+          color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.25),
+        ),
       ),
       child: Column(
         children: [
@@ -531,20 +591,156 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   /// Placeholder for the upcoming wireless receipt printer integration.
   /// Nothing prints yet — the toggles only configure the future behavior.
-  Widget _buildReceiptPrintingCard() {
+  Widget _buildAttendanceSettingsCard() {
+    final scheme = Theme.of(context).colorScheme;
+    final graceOptions = <int>{0, 5, 10, 15, 20, 30, _graceMinutes}.toList()
+      ..sort();
+    final halfOptions = _hourOptions(_halfDayHours)
+        .where((value) => value <= _fullDayHours || value == _halfDayHours)
+        .toList();
+
     return Card(
       elevation: 0,
-      color: Colors.white,
+      color: Theme.of(context).colorScheme.surface,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: BorderSide(color: Colors.grey.shade200),
+        borderRadius: BorderRadius.circular(AppTheme.cardRadius),
+        side: BorderSide(
+          color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.25),
+        ),
+      ),
+      child: Column(
+        children: [
+          ListTile(
+            leading: const Icon(Icons.schedule),
+            title: const Text('Full day hours'),
+            subtitle: const Text('Shift hours needed for a full work unit'),
+            trailing: DropdownButton<double>(
+              value: _fullDayHours,
+              underline: const SizedBox(),
+              items: [
+                for (final value in _hourOptions(_fullDayHours))
+                  DropdownMenuItem(
+                    value: value,
+                    child: Text('${value.toStringAsFixed(0)} h'),
+                  ),
+              ],
+              onChanged: (value) {
+                if (value != null) {
+                  _updateAttendanceSettings(fullDayHours: value);
+                }
+              },
+            ),
+          ),
+          const Divider(height: 1),
+          ListTile(
+            leading: const Icon(Icons.timelapse),
+            title: const Text('Half day hours'),
+            subtitle: const Text('Shift hours needed for a half work unit'),
+            trailing: DropdownButton<double>(
+              value: _halfDayHours,
+              underline: const SizedBox(),
+              items: [
+                for (final value in halfOptions)
+                  DropdownMenuItem(
+                    value: value,
+                    child: Text('${value.toStringAsFixed(0)} h'),
+                  ),
+              ],
+              onChanged: (value) {
+                if (value != null) {
+                  _updateAttendanceSettings(halfDayHours: value);
+                }
+              },
+            ),
+          ),
+          const Divider(height: 1),
+          ListTile(
+            leading: const Icon(Icons.hourglass_bottom),
+            title: const Text('Grace period'),
+            subtitle: const Text('Late minutes allowed after scheduled start'),
+            trailing: DropdownButton<int>(
+              value: _graceMinutes,
+              underline: const SizedBox(),
+              items: [
+                for (final value in graceOptions)
+                  DropdownMenuItem(value: value, child: Text('$value min')),
+              ],
+              onChanged: (value) {
+                if (value != null) {
+                  _updateAttendanceSettings(graceMinutes: value);
+                }
+              },
+            ),
+          ),
+          const Divider(height: 1),
+          ListTile(
+            leading: const Icon(Icons.alarm),
+            title: const Text('Scheduled start'),
+            subtitle: Text(
+              _scheduledStart.isEmpty
+                  ? 'Not set - lateness tracking is inactive'
+                  : 'Lateness uses this start time (${_scheduledStart})',
+            ),
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (_scheduledStart.isNotEmpty)
+                  IconButton(
+                    tooltip: 'Clear start time',
+                    icon: const Icon(Icons.close),
+                    onPressed: () =>
+                        _updateAttendanceSettings(scheduledStart: ''),
+                  ),
+                IconButton(
+                  tooltip: 'Pick start time',
+                  icon: const Icon(Icons.edit_outlined),
+                  onPressed: _pickScheduledStart,
+                ),
+              ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+            child: Row(
+              children: [
+                Icon(Icons.info_outline,
+                    size: 16, color: scheme.onSurface.withValues(alpha: 0.6)),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Open 24/7: staff may Time In/Out at any hour. '
+                    'Overnight shifts roll Time Out to the next day.',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: scheme.onSurface.withValues(alpha: 0.6),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildReceiptPrintingCard() {
+    final scheme = Theme.of(context).colorScheme;
+    return Card(
+      elevation: 0,
+      color: Theme.of(context).colorScheme.surface,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(AppTheme.cardRadius),
+        side: BorderSide(
+          color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.25),
+        ),
       ),
       child: Column(
         children: [
           SwitchListTile(
             title: const Text('Enable Receipt Printing'),
             subtitle: const Text(
-                'Turn on once a wireless receipt printer is connected'),
+                'Shows a Print receipt switch in the cart after a printer is connected'),
             value: _receiptPrintingEnabled,
             onChanged: (value) =>
                 _updateReceiptSetting(receiptPrintingEnabled: value),
@@ -553,23 +749,86 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const Divider(height: 1),
           ListTile(
             leading: const Icon(Icons.bluetooth),
-            title: const Text('Printer'),
-            trailing: Text(
-              'Not Connected',
-              style: TextStyle(
-                color: Colors.grey.shade600,
-                fontWeight: FontWeight.w600,
-              ),
+            title: const Text('Bluetooth Printer'),
+            subtitle: Text(
+              _savedPrinter == null
+                  ? 'No printer selected'
+                  : '${_savedPrinter!.displayName}\n${_savedPrinter!.address}',
+            ),
+            isThreeLine: _savedPrinter != null,
+            trailing: _printerLoading
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                    decoration: BoxDecoration(
+                      color: _printerConnected
+                          ? AppTheme.sageSuccess.withValues(alpha: 0.12)
+                          : scheme.surfaceVariant.withValues(alpha: 0.6),
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(
+                        color: _printerConnected
+                            ? AppTheme.sageSuccess.withValues(alpha: 0.35)
+                            : scheme.outline.withValues(alpha: 0.3),
+                      ),
+                    ),
+                    child: Text(
+                      _printerConnected
+                          ? 'Connected'
+                          : (_savedPrinter == null ? 'Not Connected' : 'Saved'),
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: _printerConnected
+                            ? AppTheme.sageSuccess
+                            : scheme.onSurface.withValues(alpha: 0.7),
+                      ),
+                    ),
+                  ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+            child: Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: _printerLoading ? null : _openPrinterPicker,
+                    icon: const Icon(Icons.bluetooth_searching, size: 18),
+                    label: const Text('Search Bluetooth Devices'),
+                  ),
+                ),
+                if (_printerConnected && _savedPrinter != null) ...[
+                  const SizedBox(width: 8),
+                  TextButton(
+                    onPressed: _printerLoading ? null : _disconnectPrinter,
+                    child: const Text('Disconnect'),
+                  ),
+                ],
+              ],
             ),
           ),
-          const Divider(height: 1),
-          SwitchListTile(
-            title: const Text('Ask for Receipt'),
-            subtitle: const Text(
-                'Ask whether to print a receipt before completing an order'),
-            value: _askForReceipt,
-            onChanged: (value) => _updateReceiptSetting(askForReceipt: value),
-            secondary: const Icon(Icons.receipt_long_outlined),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+            child: Row(
+              children: [
+                Icon(Icons.info_outline,
+                    size: 15, color: scheme.onSurface.withValues(alpha: 0.6)),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    'Connects this device directly to the printer over Bluetooth.',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: scheme.onSurface.withValues(alpha: 0.6),
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
         ],
       ),
@@ -579,10 +838,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Widget _buildInventorySettingsCard() {
     return Card(
       elevation: 0,
-      color: Colors.white,
+      color: Theme.of(context).colorScheme.surface,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: BorderSide(color: Colors.grey.shade200),
+        borderRadius: BorderRadius.circular(AppTheme.cardRadius),
+        side: BorderSide(
+          color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.25),
+        ),
       ),
       child: Column(
         children: [
@@ -637,10 +898,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Widget _buildAppSettingsCard() {
     return Card(
       elevation: 0,
-      color: Colors.white,
+      color: Theme.of(context).colorScheme.surface,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: BorderSide(color: Colors.grey.shade200),
+        borderRadius: BorderRadius.circular(AppTheme.cardRadius),
+        side: BorderSide(
+          color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.25),
+        ),
       ),
       child: Column(
         children: [
@@ -718,29 +981,30 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Widget _buildDangerZoneCard() {
+    final scheme = Theme.of(context).colorScheme;
     return Card(
       elevation: 0,
-      color: Colors.red.shade50,
+      color: scheme.error.withValues(alpha: 0.08),
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: BorderSide(color: Colors.red.shade200),
+        borderRadius: BorderRadius.circular(AppTheme.cardRadius),
+        side: BorderSide(color: scheme.error.withValues(alpha: 0.3)),
       ),
       child: Column(
         children: [
           ListTile(
-            leading: Icon(Icons.delete_forever, color: Colors.red.shade700),
+            leading: Icon(Icons.delete_forever, color: scheme.error),
             title: Text(
               'Clear All Data',
               style: TextStyle(
-                color: Colors.red.shade700,
+                color: scheme.error,
                 fontWeight: FontWeight.w600,
               ),
             ),
             subtitle: Text(
               'Delete all local app data and reset settings',
-              style: TextStyle(color: Colors.red.shade600),
+              style: TextStyle(color: scheme.error.withValues(alpha: 0.8)),
             ),
-            trailing: Icon(Icons.chevron_right, color: Colors.red.shade700),
+            trailing: Icon(Icons.chevron_right, color: scheme.error),
             onTap: () {
               showDialog(
                 context: context,
@@ -762,8 +1026,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         );
                       },
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.red,
-                        foregroundColor: Colors.white,
+                        backgroundColor: scheme.error,
+                        foregroundColor: scheme.onError,
                       ),
                       child: const Text('Clear Data'),
                     ),
@@ -778,14 +1042,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Widget _buildSectionHeader(String title) {
+    final scheme = Theme.of(context).colorScheme;
     return Padding(
       padding: const EdgeInsets.only(bottom: 8, left: 4),
       child: Text(
         title,
         style: TextStyle(
           fontSize: 13,
-          fontWeight: FontWeight.w700,
-          color: Colors.grey.shade700,
+          fontWeight: FontWeight.w800,
+          color: scheme.onSurface.withValues(alpha: 0.65),
           letterSpacing: 0.5,
         ),
       ),

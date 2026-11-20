@@ -8,7 +8,6 @@ void main() {
   Future<void> _open(
     WidgetTester tester, {
     double totalAmount = 450,
-    bool askForReceipt = false,
     void Function(PaymentDetails? result)? onResult,
   }) async {
     tester.view.physicalSize = const Size(1200, 1000);
@@ -23,7 +22,6 @@ void main() {
               final result = await showPaymentDetailsDialog(
                 context,
                 totalAmount: totalAmount,
-                askForReceipt: askForReceipt,
               );
               onResult?.call(result);
             },
@@ -131,33 +129,6 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(result, isNull);
-  });
-
-  testWidgets('receipt offer only appears when asked for', (tester) async {
-    await _open(tester, askForReceipt: true);
-    expect(find.text('Print a receipt for this order?'), findsOneWidget);
-    await tester.tap(find.text('Cancel'));
-    await tester.pumpAndSettle();
-
-    await _open(tester, askForReceipt: false);
-    expect(find.text('Print a receipt for this order?'), findsNothing);
-  });
-
-  testWidgets('receipt answer is carried on the result', (tester) async {
-    PaymentDetails? result;
-    await _open(tester, askForReceipt: true, onResult: (r) => result = r);
-
-    await tester.tap(find.text('Print a receipt for this order?'));
-    await tester.pump();
-
-    await tester.enterText(find.byType(TextField), '450');
-    await tester.pump();
-
-    await tester.tap(find.text('Complete Order'));
-    await tester.pumpAndSettle();
-
-    expect(result, isNotNull);
-    expect(result!.wantsReceipt, isTrue);
   });
 
   test('paymentMethodLabel maps stored values to display labels', () {

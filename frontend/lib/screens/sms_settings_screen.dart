@@ -3,6 +3,8 @@ import 'package:provider/provider.dart';
 
 import '../services/auth_provider.dart';
 import '../services/sms_settings_service.dart';
+import '../widgets/sage_header_button.dart';
+import '../widgets/smart_eat_header.dart';
 
 class SmsSettingsScreen extends StatefulWidget {
   const SmsSettingsScreen({Key? key}) : super(key: key);
@@ -174,7 +176,7 @@ class _SmsSettingsScreenState extends State<SmsSettingsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
+      appBar: SmartEatHeader(
         leading: Navigator.of(context).canPop()
             ? IconButton(
                 icon: const Icon(Icons.arrow_back),
@@ -182,6 +184,7 @@ class _SmsSettingsScreenState extends State<SmsSettingsScreen> {
               )
             : null,
         title: const Text('SMS Alerts'),
+        actions: const [SageHeaderButton(), SizedBox(width: 8)],
       ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
@@ -298,7 +301,8 @@ class _SmsSettingsScreenState extends State<SmsSettingsScreen> {
           const Divider(height: 1),
           SwitchListTile(
             title: const Text('Bill Reminders'),
-            subtitle: const Text('Reminder for bills due soon (checked on app open)'),
+            subtitle:
+                const Text('Reminder for bills due soon (checked on app open)'),
             value: _settings.billRemindersEnabled,
             onChanged: enabled
                 ? (value) =>
