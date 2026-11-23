@@ -10,6 +10,7 @@ import '../features/staff/widgets/staff_attendance_calendar.dart';
 import '../services/attendance_settings_service.dart';
 import '../services/auth_provider.dart';
 import '../services/firebase_service.dart';
+import '../services/notification_badge_provider.dart';
 import '../theme.dart';
 import '../utils/attendance_utils.dart';
 import '../utils/phone_utils.dart';
@@ -77,6 +78,7 @@ class _ProfileScreenState extends State<ProfileScreen>
       if (mounted) _clockTick.value++;
     });
     _loadProfile();
+    context.read<NotificationBadgeProvider>().refresh();
   }
 
   @override
@@ -686,7 +688,7 @@ class _ProfileScreenState extends State<ProfileScreen>
       child: Scaffold(
         backgroundColor: AppTheme.sageNavy,
         appBar: SmartEatHeader(
-          title: const Text('Profile'),
+          titleText: 'Profile',
           actions: [
             const SageHeaderButton(),
             IconButton(
@@ -1551,7 +1553,17 @@ class _ProfileScreenState extends State<ProfileScreen>
             color: scheme.outline.withValues(alpha: 0.25),
           ),
           ListTile(
-            leading: const Icon(Icons.notifications_outlined),
+            leading: context.watch<NotificationBadgeProvider>().unreadCount > 0
+                ? Badge(
+                    label: Text(
+                      context.watch<NotificationBadgeProvider>().unreadCount > 99
+                          ? '99+'
+                          : '${context.watch<NotificationBadgeProvider>().unreadCount}',
+                    ),
+                    backgroundColor: AppTheme.error,
+                    child: const Icon(Icons.notifications_outlined),
+                  )
+                : const Icon(Icons.notifications_outlined),
             title: const Text('Notifications'),
             trailing: const Icon(Icons.chevron_right),
             onTap: () => Navigator.of(context).pushNamed('/notifications'),

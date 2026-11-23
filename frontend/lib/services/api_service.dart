@@ -238,6 +238,34 @@ class ApiService {
     }
   }
 
+  static Future<void> updateNotificationPreference(
+    String id, {
+    bool? removed,
+    bool? pinned,
+    bool? ignored,
+  }) async {
+    final token = await _requireNotificationToken();
+    final response = await _client
+        .patch(
+          Uri.parse(
+            '$_baseUrl/notifications/${Uri.encodeComponent(id)}/preferences',
+          ),
+          headers: _notificationHeaders(token),
+          body: jsonEncode(<String, dynamic>{
+            if (removed != null) 'removed': removed,
+            if (pinned != null) 'pinned': pinned,
+            if (ignored != null) 'ignored': ignored,
+          }),
+        )
+        .timeout(const Duration(seconds: 10));
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw NotificationApiException(
+        _notificationError(response, 'update'),
+        statusCode: response.statusCode,
+      );
+    }
+  }
+
   // Menu endpoints - using Firebase
   static Future<Map<String, dynamic>> getMenuItems() async {
     final items = await FirebaseService.getMenuItems();

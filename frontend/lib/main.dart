@@ -8,6 +8,7 @@ import 'services/chat_provider.dart';
 import 'services/ai_assistant_provider.dart';
 import 'services/firebase_service.dart';
 import 'services/notification_service.dart';
+import 'services/notification_badge_provider.dart';
 import 'screens/dashboard_screen.dart';
 import 'screens/landing_screen.dart';
 import 'screens/login_screen.dart';
@@ -162,6 +163,7 @@ class SmartEatApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => AuthProvider()),
         ChangeNotifierProvider(create: (_) => ChatProvider()),
         ChangeNotifierProvider(create: (_) => AIAssistantProvider()),
+        ChangeNotifierProvider(create: (_) => NotificationBadgeProvider()),
       ],
       child: MaterialApp(
         title: 'Smart Eat - Eatery Management System',

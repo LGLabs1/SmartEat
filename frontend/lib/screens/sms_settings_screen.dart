@@ -183,7 +183,7 @@ class _SmsSettingsScreenState extends State<SmsSettingsScreen> {
                 onPressed: () => Navigator.of(context).maybePop(),
               )
             : null,
-        title: const Text('SMS Alerts'),
+        titleText: 'SMS Alerts',
         actions: const [SageHeaderButton(), SizedBox(width: 8)],
       ),
       body: _isLoading
@@ -338,7 +338,8 @@ class _SmsSettingsScreenState extends State<SmsSettingsScreen> {
           const Divider(height: 1),
           SwitchListTile(
             title: const Text('Daily Sales Summary'),
-            subtitle: const Text('Daily summary (sent on app open)'),
+            subtitle: const Text(
+                'Sent once at 12:00 AM Manila for the previous day'),
             value: _settings.dailySummaryEnabled,
             onChanged: enabled
                 ? (value) =>

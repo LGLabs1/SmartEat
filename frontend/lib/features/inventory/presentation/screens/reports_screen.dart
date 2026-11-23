@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 import '../../../../../models/inventory_item.dart';
 import '../../../../../services/api_service.dart';
 import '../../../../../services/receipt_printer_service.dart';
+import '../../../../../services/report_pdf_service.dart';
 import '../../../../../theme.dart';
 import '../../data/models/stock_movement.dart';
 import '../../domain/usecases/cogs.dart';
@@ -56,7 +57,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
     return unit.trim().isEmpty ? s : '$s $unit';
   }
 
-  Future<void> _printReport() async {
+  List<ReportPdfSection> _buildReportSections() {
     final items = widget.items;
     final movements = widget.movements;
     final health = InventoryHealthScoreUseCase()
@@ -83,56 +84,83 @@ class _ReportsScreenState extends State<ReportsScreen> {
       }
     }
 
-    final lines = <String>[
-      'Generated: ${DateFormat('MMM d, yyyy h:mm a').format(DateTime.now())}',
-      '${ReceiptPrinterService.documentSection}KEY METRICS',
-      'Health score: ${health.score.toStringAsFixed(0)}/100 (${health.band})',
-      'Inventory value: ${_formatCurrency(value)}',
-      'Actual COGS: ${_formatCurrency(cogs)}',
-      'Consumption: ${_qty(consumptionQty)} / ${_formatCurrency(consumptionCost)}',
-      'Waste: ${_qty(wasteQty)} / ${_formatCurrency(wasteCost)}',
-      ReceiptPrinterService.documentDivider,
-      '${ReceiptPrinterService.documentSection}LOW STOCK (${lowStock.length})',
-      if (lowStock.isEmpty)
-        'None'
-      else
-        ...lowStock.take(8).map(
-              (entry) =>
-                  '${entry.isOutOfStock ? "OUT" : "LOW"} ${entry.item.name}: '
-                  '${_qty(entry.item.currentStock, entry.item.effectiveBaseUnit)} '
-                  '(min ${_qty(entry.item.minStock, entry.item.effectiveBaseUnit)})',
-            ),
-      ReceiptPrinterService.documentDivider,
-      '${ReceiptPrinterService.documentSection}RESTOCK (${restock.length})',
-      if (restock.isEmpty)
-        'None'
-      else
-        ...restock.take(8).map(
-              (entry) =>
-                  '${entry.item.name}: +${_qty(entry.suggestedQtyBase, entry.item.effectiveBaseUnit)}',
-            ),
-    ];
-
     final ingredients = (_usage['ingredients'] as List?) ?? const [];
-    if (ingredients.isNotEmpty) {
-      lines
-        ..add(ReceiptPrinterService.documentDivider)
-        ..add(
-            '${ReceiptPrinterService.documentSection}TOP INGREDIENT USAGE (30D)');
-      for (final raw in ingredients.take(6)) {
-        if (raw is! Map) continue;
-        final name = (raw['name'] ?? '').toString();
-        final qty =
-            _qty(raw['usedQty'] as num?, (raw['unit'] ?? '').toString());
-        final cost = (raw['estimatedCost'] as num?)?.toDouble() ?? 0;
-        lines.add('$name: $qty / ${_formatCurrency(cost)}');
-      }
+    final usageLines = <String>[];
+    for (final raw in ingredients.take(6)) {
+      if (raw is! Map) continue;
+      final name = (raw['name'] ?? '').toString();
+      final qty = _qty(raw['usedQty'] as num?, (raw['unit'] ?? '').toString());
+      final cost = (raw['estimatedCost'] as num?)?.toDouble() ?? 0;
+      usageLines.add('$name: $qty / ${_formatCurrency(cost)}');
     }
 
+    return [
+      ReportPdfSection(
+        title: 'Key metrics',
+        lines: [
+          'Generated: ${DateFormat('MMM d, yyyy h:mm a').format(DateTime.now())}',
+          'Health score: ${health.score.toStringAsFixed(0)}/100 (${health.band})',
+          'Inventory value: ${_formatCurrency(value)}',
+          'Actual COGS: ${_formatCurrency(cogs)}',
+          'Consumption: ${_qty(consumptionQty)} / ${_formatCurrency(consumptionCost)}',
+          'Waste: ${_qty(wasteQty)} / ${_formatCurrency(wasteCost)}',
+        ],
+      ),
+      ReportPdfSection(
+        title: 'Low stock (${lowStock.length})',
+        lines: lowStock.isEmpty
+            ? ['None']
+            : [
+                for (final entry in lowStock.take(8))
+                  '${entry.isOutOfStock ? "OUT" : "LOW"} ${entry.item.name}: '
+                      '${_qty(entry.item.currentStock, entry.item.effectiveBaseUnit)} '
+                      '(min ${_qty(entry.item.minStock, entry.item.effectiveBaseUnit)})',
+              ],
+      ),
+      ReportPdfSection(
+        title: 'Restock suggestions (${restock.length})',
+        lines: restock.isEmpty
+            ? ['None']
+            : [
+                for (final entry in restock.take(8))
+                  '${entry.item.name}: +${_qty(entry.suggestedQtyBase, entry.item.effectiveBaseUnit)}',
+              ],
+      ),
+      if (usageLines.isNotEmpty)
+        ReportPdfSection(
+          title: 'Top ingredient usage (30 days)',
+          lines: usageLines,
+        ),
+    ];
+  }
+
+  List<String> _printerLines(List<ReportPdfSection> sections) {
+    final lines = <String>[];
+    for (var i = 0; i < sections.length; i++) {
+      if (i > 0) lines.add(ReceiptPrinterService.documentDivider);
+      lines.add('${ReceiptPrinterService.documentSection}${sections[i].title}');
+      lines.addAll(sections[i].lines);
+    }
+    return lines;
+  }
+
+  Future<void> _runPdfAction(Future<void> Function() action) async {
+    try {
+      await action();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not open report: $e')),
+      );
+    }
+  }
+
+  Future<void> _printReport() async {
+    final sections = _buildReportSections();
     final result = await ReceiptPrinterService.printDocument(
       title: 'Inventory Report',
       subtitle: 'Stock health, value, and consumption summary',
-      lines: lines,
+      lines: _printerLines(sections),
       footer: 'SmartEat Inventory Reports',
     );
     if (!mounted) return;
@@ -145,6 +173,26 @@ class _ReportsScreenState extends State<ReportsScreen> {
         ),
       ),
     );
+  }
+
+  Future<void> _printPdfReport() {
+    return _runPdfAction(() => ReportPdfService.printReport(
+          title: 'Inventory Report',
+          subtitle: 'Stock health, value, and consumption summary',
+          filePrefix: 'inventory_report',
+          sections: _buildReportSections(),
+          footer: 'SmartEat Inventory Reports',
+        ));
+  }
+
+  Future<void> _sharePdfReport() {
+    return _runPdfAction(() => ReportPdfService.shareReport(
+          title: 'Inventory Report',
+          subtitle: 'Stock health, value, and consumption summary',
+          filePrefix: 'inventory_report',
+          sections: _buildReportSections(),
+          footer: 'SmartEat Inventory Reports',
+        ));
   }
 
   @override
@@ -213,6 +261,33 @@ class _ReportsScreenState extends State<ReportsScreen> {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
+          Row(children: [
+            Expanded(
+              child: FilledButton.icon(
+                onPressed: _printPdfReport,
+                icon: const Icon(Icons.print_outlined),
+                label: const Text('Print PDF'),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: _sharePdfReport,
+                icon: const Icon(Icons.share_outlined),
+                label: const Text('Share PDF'),
+              ),
+            ),
+          ]),
+          const SizedBox(height: 8),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: _printReport,
+              icon: const Icon(Icons.print_outlined),
+              label: const Text('Print to Bluetooth Printer'),
+            ),
+          ),
+          const SizedBox(height: 16),
           sectionHeader('Key Metrics & Health', AppTheme.sageAccent),
           HealthScoreCard(result: health),
           const SizedBox(height: 16),

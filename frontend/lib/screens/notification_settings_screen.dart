@@ -163,7 +163,7 @@ class _NotificationSettingsScreenState
                   onPressed: () => Navigator.of(context).maybePop(),
                 )
               : null,
-          title: const Text('Notification Settings'),
+          titleText: 'Notification Settings',
           actions: [
             const SageHeaderButton(),
             IconButton(

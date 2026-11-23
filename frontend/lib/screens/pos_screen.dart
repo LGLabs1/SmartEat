@@ -1359,14 +1359,10 @@ class _POSScreenState extends State<POSScreen> {
                                       Navigator.of(context).maybePop(),
                                 )
                               : null,
-                          title: Text(
-                            _addToExistingOrder &&
-                                    _targetPendingOrderId.trim().isNotEmpty
-                                ? 'Add Items — Order #${_shortOrderId(_targetPendingOrderId)}'
-                                : 'Point of Sale',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
+                          titleText: _addToExistingOrder &&
+                                  _targetPendingOrderId.trim().isNotEmpty
+                              ? 'Add Items — Order #${_shortOrderId(_targetPendingOrderId)}'
+                              : 'Point of Sale',
                           actions: [
                             const SageHeaderButton(),
                             if (isCompact)

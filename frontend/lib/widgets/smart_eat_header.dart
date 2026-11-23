@@ -7,21 +7,46 @@ class SmartEatHeader extends StatelessWidget implements PreferredSizeWidget {
     Key? key,
     this.leading,
     this.title,
+    this.titleText,
     this.actions,
     this.toolbarHeight = 64,
+    this.showBackButton = false,
   }) : super(key: key);
 
   final Widget? leading;
   final Widget? title;
+  final String? titleText;
   final List<Widget>? actions;
   final double toolbarHeight;
+  final bool showBackButton;
 
   @override
   Widget build(BuildContext context) {
+    final resolvedLeading = leading ??
+        (showBackButton && Navigator.of(context).canPop()
+            ? IconButton(
+                tooltip: 'Back',
+                icon: const Icon(Icons.arrow_back),
+                onPressed: () => Navigator.of(context).pop(),
+              )
+            : null);
+    final resolvedTitle = title ??
+        (titleText == null
+            ? null
+            : Text(
+                titleText!,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w800,
+                ),
+              ));
+
     return AppBar(
       automaticallyImplyLeading: false,
-      leading: leading,
-      title: title,
+      leading: resolvedLeading,
+      title: resolvedTitle,
       actions: actions,
       toolbarHeight: toolbarHeight,
       backgroundColor: Colors.transparent,

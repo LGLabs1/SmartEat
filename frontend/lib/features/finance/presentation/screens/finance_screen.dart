@@ -893,10 +893,21 @@ class _FinanceScreenState extends State<FinanceScreen> {
     }
   }
 
-  Future<void> _exportExpenses() async {
+  Future<void> _exportExpenses([DateTime? month]) async {
+    final rows = month == null
+        ? _expenses
+        : _expenses.where((expense) {
+            final date = FinanceMetrics.expenseDate(expense);
+            return date != null &&
+                date.year == month.year &&
+                date.month == month.month;
+          }).toList();
+    final name = month == null
+        ? 'expenses'
+        : 'expenses_${month.year}-${month.month.toString().padLeft(2, '0')}';
     await _exportCsv(
-      'expenses',
-      FinanceExportService.buildExpensesCsv(_expenses, _fmt),
+      name,
+      FinanceExportService.buildExpensesCsv(rows, _fmt),
     );
   }
 
@@ -1111,7 +1122,7 @@ class _FinanceScreenState extends State<FinanceScreen> {
           fmt: _fmt,
           budgets: _budgets,
           onEditBudgets: _editBudgets,
-          onExport: (_) => _exportExpenses(),
+          onExport: _exportExpenses,
         );
       case 4:
         return FinancePayrollTab(

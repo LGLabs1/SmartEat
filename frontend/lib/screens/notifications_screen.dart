@@ -8,12 +8,16 @@ import 'package:provider/provider.dart';
 import '../models/notification_item.dart';
 import '../services/api_service.dart';
 import '../services/auth_provider.dart';
+import '../services/notification_badge_provider.dart';
 import '../services/notification_repository.dart';
 import '../services/notification_trigger_manager.dart';
 import '../theme.dart';
 import '../utils/notification_visibility.dart';
 import '../widgets/sage_header_button.dart';
 import '../widgets/smart_eat_header.dart';
+import 'admin_tab_index.dart';
+import 'dashboard_screen.dart';
+import 'profile_screen.dart';
 import 'staff_management_screen.dart';
 
 String notificationDocId(String eateryId, String key) =>
@@ -64,7 +68,12 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     super.dispose();
   }
 
-  bool get _canDelete => _isAdmin;
+  void _syncBadge(List<NotificationItem> items) {
+    if (!mounted) return;
+    context.read<NotificationBadgeProvider>().setCount(
+          items.where((item) => !item.isRead && !item.ignored).length,
+        );
+  }
 
   Future<void> _loadIdentity() async {
     setState(() {
@@ -146,6 +155,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         _bannerError = null;
         _isLoading = false;
       });
+      _syncBadge(items);
       await _repository.writeCache(_uid, items);
     } catch (e) {
       if (!mounted) return;
@@ -181,6 +191,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         .toList();
     if (!mounted) return;
     setState(() => _notifications = updated);
+    _syncBadge(updated);
     await _repository.writeCache(_uid, updated);
     try {
       await ApiService.markNotificationRead(notification.id);
@@ -205,6 +216,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       _isWorking = true;
       _notifications = updated;
     });
+    _syncBadge(updated);
     await _repository.writeCache(_uid, updated);
     try {
       await ApiService.markAllNotificationsRead();
@@ -220,21 +232,58 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     }
   }
 
-  Future<void> _deleteNotification(NotificationItem notification) async {
+  Future<void> _updatePreference(
+    NotificationItem notification, {
+    bool? removed,
+    bool? pinned,
+    bool? ignored,
+  }) async {
     final previous = _notifications;
-    final updated =
-        previous.where((item) => item.id != notification.id).toList();
+    List<NotificationItem> updated;
+    if (removed == true) {
+      updated = previous.where((item) => item.id != notification.id).toList();
+    } else {
+      updated = previous
+          .map(
+            (item) => item.id == notification.id
+                ? item.copyWith(
+                    pinned: pinned ?? item.pinned,
+                    ignored: ignored ?? item.ignored,
+                  )
+                : item,
+          )
+          .toList();
+    }
     if (!mounted) return;
     setState(() => _notifications = updated);
+    _syncBadge(updated);
     await _repository.writeCache(_uid, updated);
     try {
-      await ApiService.deleteNotification(notification.id);
+      await ApiService.updateNotificationPreference(
+        notification.id,
+        removed: removed,
+        pinned: pinned,
+        ignored: ignored,
+      );
+      if (!mounted) return;
+      final label = removed == true
+          ? 'Notification removed'
+          : ignored == true
+              ? 'Notification ignored'
+              : ignored == false
+                  ? 'Notification unignored'
+                  : pinned == true
+                      ? 'Notification pinned'
+                      : 'Notification unpinned';
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(label)));
     } catch (e) {
       if (!mounted) return;
       setState(() => _notifications = previous);
+      _syncBadge(previous);
       await _repository.writeCache(_uid, previous);
       ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('Failed to delete: $e')));
+          .showSnackBar(SnackBar(content: Text('Failed to update: $e')));
     }
   }
 
@@ -264,7 +313,10 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
           return true;
       }
     }).toList();
-    filtered.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    filtered.sort((a, b) {
+      if (a.pinned != b.pinned) return a.pinned ? -1 : 1;
+      return b.createdAt.compareTo(a.createdAt);
+    });
     return filtered;
   }
 
@@ -397,6 +449,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   PreferredSizeWidget _buildAppBar(List<NotificationItem> unread) {
     final unreadCount = unread.length;
     return SmartEatHeader(
+      titleText: 'Notifications',
       leading: Navigator.of(context).canPop()
           ? IconButton(
               icon: const Icon(Icons.arrow_back),
@@ -484,7 +537,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     final scheme = Theme.of(context).colorScheme;
     final icon = _getIconForType(notification.type, notification.source);
     final color = _getColorForType(notification.type, notification.source);
-    final tile = Material(
+    return Material(
       color:
           notification.isRead ? scheme.surface : color.withValues(alpha: 0.1),
       borderRadius: BorderRadius.circular(AppTheme.cardRadius),
@@ -507,12 +560,21 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
           ),
           child: Icon(icon, color: color),
         ),
-        title: Text(
-          notification.title,
-          style: TextStyle(
-            fontWeight: notification.isRead ? FontWeight.w600 : FontWeight.w800,
-            color: scheme.onSurface,
-          ),
+        title: Row(
+          children: [
+            Expanded(
+              child: Text(
+                notification.title,
+                style: TextStyle(
+                  fontWeight:
+                      notification.isRead ? FontWeight.w600 : FontWeight.w800,
+                  color: scheme.onSurface,
+                ),
+              ),
+            ),
+            if (notification.pinned)
+              Icon(Icons.push_pin, size: 16, color: AppTheme.warning),
+          ],
         ),
         subtitle: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -526,6 +588,24 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                 color: scheme.onSurface.withValues(alpha: 0.7),
               ),
             ),
+            if (notification.ignored) ...[
+              const SizedBox(height: 5),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(
+                  color: scheme.outline.withValues(alpha: 0.18),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Text(
+                  'ignored',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    color: scheme.onSurface.withValues(alpha: 0.65),
+                  ),
+                ),
+              ),
+            ],
             const SizedBox(height: 5),
             Text(
               _formatTime(notification.createdAt),
@@ -536,16 +616,73 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
             ),
           ],
         ),
-        trailing: notification.isRead
-            ? null
-            : Container(
-                width: 9,
-                height: 9,
-                decoration: BoxDecoration(
-                  color: AppTheme.sageAccent,
-                  borderRadius: BorderRadius.circular(5),
-                ),
+        trailing: PopupMenuButton<String>(
+          tooltip: 'Edit notification',
+          onSelected: (value) {
+            switch (value) {
+              case 'remove':
+                _updatePreference(notification, removed: true);
+                break;
+              case 'pin':
+                _updatePreference(notification,
+                    pinned: !notification.pinned);
+                break;
+              case 'ignore':
+                _updatePreference(notification,
+                    ignored: !notification.ignored);
+                break;
+            }
+          },
+          itemBuilder: (context) => [
+            const PopupMenuItem<String>(
+              value: 'remove',
+              child: ListTile(
+                leading: Icon(Icons.delete_outline),
+                title: Text('Remove'),
+                dense: true,
               ),
+            ),
+            PopupMenuItem<String>(
+              value: 'pin',
+              child: ListTile(
+                leading: Icon(notification.pinned
+                    ? Icons.push_pin_outlined
+                    : Icons.push_pin),
+                title: Text(notification.pinned ? 'Unpin' : 'Pin'),
+                dense: true,
+              ),
+            ),
+            PopupMenuItem<String>(
+              value: 'ignore',
+              child: ListTile(
+                leading: Icon(notification.ignored
+                    ? Icons.notifications_active_outlined
+                    : Icons.notifications_off_outlined),
+                title: Text(notification.ignored ? 'Unignore' : 'Ignore'),
+                dense: true,
+              ),
+            ),
+          ],
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              const Icon(Icons.more_vert),
+              if (!notification.isRead)
+                Positioned(
+                  right: 0,
+                  top: 4,
+                  child: Container(
+                    width: 8,
+                    height: 8,
+                    decoration: BoxDecoration(
+                      color: AppTheme.error,
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
         onTap: () async {
           await _markAsRead(notification);
           if (mounted)
@@ -553,24 +690,11 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         },
       ),
     );
-
-    if (!_canDelete) return tile;
-    return Dismissible(
-      key: Key(notification.id),
-      direction: DismissDirection.endToStart,
-      background: Container(
-        color: AppTheme.error.withValues(alpha: 0.85),
-        alignment: Alignment.centerRight,
-        padding: const EdgeInsets.only(right: 16),
-        child: Icon(Icons.delete, color: scheme.onError),
-      ),
-      onDismissed: (_) => _deleteNotification(notification),
-      child: tile,
-    );
   }
 
   void _showNotificationDetail(NotificationItem notification) {
     final scheme = Theme.of(context).colorScheme;
+    final hasRoute = _sourceTarget(notification).isNotEmpty;
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -583,48 +707,111 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
             Expanded(child: Text(notification.title)),
           ],
         ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(notification.body),
-            const SizedBox(height: 16),
-            Text(
-              'Received: ${DateFormat('MMM d, yyyy h:mm a').format(notification.createdAt)}',
-              style: TextStyle(
-                fontSize: 12,
-                color: scheme.onSurface.withValues(alpha: 0.6),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(notification.body),
+              if (notification.details.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                const Text(
+                  'Details',
+                  style: TextStyle(fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(height: 4),
+                Text(notification.details.join(', ')),
+              ],
+              const SizedBox(height: 16),
+              Text(
+                'Received: ${DateFormat('MMM d, yyyy h:mm a').format(notification.createdAt)}',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: scheme.onSurface.withValues(alpha: 0.6),
+                ),
               ),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              'Source: ${notification.source}',
-              style: TextStyle(
-                fontSize: 12,
-                color: scheme.onSurface.withValues(alpha: 0.6),
+              const SizedBox(height: 6),
+              Text(
+                'Source: ${notification.source}',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: scheme.onSurface.withValues(alpha: 0.6),
+                ),
               ),
-            ),
-          ],
+              if (notification.ignored) ...[
+                const SizedBox(height: 6),
+                const Text(
+                  'ignored',
+                  style: TextStyle(fontWeight: FontWeight.w700),
+                ),
+              ],
+            ],
+          ),
         ),
         actions: [
-          if (notification.type == 'staff_approval' && _isAdmin)
+          if (hasRoute)
             FilledButton(
               onPressed: () {
-                final navigator = Navigator.of(context);
-                navigator.pop();
-                navigator.push(
-                  MaterialPageRoute(
-                    builder: (_) => const StaffManagementScreen(),
-                  ),
-                );
+                Navigator.pop(context);
+                _openSource(notification);
               },
-              child: const Text('Open Staff'),
+              child: const Text('Open source'),
             ),
           TextButton(
               onPressed: () => Navigator.pop(context),
               child: const Text('Close')),
         ],
       ),
+    );
+  }
+
+  String _sourceTarget(NotificationItem notification) {
+    final target = notification.route.isNotEmpty
+        ? notification.route
+        : (notification.data['target'] ?? notification.data['route'] ?? '')
+            .toString();
+    return target.trim().toLowerCase();
+  }
+
+  Future<void> _openSource(NotificationItem notification) async {
+    final target = _sourceTarget(notification);
+    Widget? destination;
+    switch (target) {
+      case 'staff':
+      case 'staff_approval':
+        destination = const StaffManagementScreen(initialTabIndex: 0);
+        break;
+      case 'attendance':
+      case 'staff_attendance':
+        destination = _isAdmin
+            ? const StaffManagementScreen(initialTabIndex: 1)
+            : const ProfileScreen();
+        break;
+      case 'inventory':
+      case 'low_stock':
+      case 'out_of_stock':
+        destination = const DashboardScreen(
+            initialTabIndex: AdminTabIndex.inventory);
+        break;
+      case 'finance':
+      case 'payables':
+      case 'bill_due_soon':
+      case 'bill_overdue':
+        destination =
+            const DashboardScreen(initialTabIndex: AdminTabIndex.finance);
+        break;
+      case 'orders':
+      case 'pending_orders':
+        destination =
+            const DashboardScreen(initialTabIndex: AdminTabIndex.orders);
+        break;
+      case 'dashboard':
+        destination = const DashboardScreen();
+        break;
+    }
+    if (destination == null || !mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute<dynamic>(builder: (_) => destination!),
     );
   }
 

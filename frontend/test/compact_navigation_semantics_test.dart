@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:smarteat/features/finance/presentation/screens/finance_screen.dart';
+import 'package:smarteat/features/inventory/presentation/screens/inventory_feature_screen.dart';
 import 'package:smarteat/screens/analytics_screen.dart';
 import 'package:smarteat/screens/menu_screen.dart';
 
@@ -60,6 +61,30 @@ void main() {
     ]));
 
     for (final label in ['Sales', 'Insights', 'Forecast', 'Finance']) {
+      expect(find.bySemanticsLabel(label), findsOneWidget);
+      expect(find.byTooltip(label), findsOneWidget);
+    }
+  });
+
+  testWidgets('inventory compact nav icons expose labels and tooltips',
+      (tester) async {
+    await tester.pumpWidget(buildHarness([
+      inventoryCompactNavIcon(Icons.dashboard, 'Overview'),
+      inventoryCompactNavIcon(Icons.inventory, 'Items'),
+      inventoryCompactNavIcon(Icons.history, 'Movements'),
+      inventoryCompactNavIcon(Icons.shopping_cart, 'Purchases'),
+      inventoryCompactNavIcon(Icons.tune, 'Adjustments'),
+      inventoryCompactNavIcon(Icons.bar_chart, 'Reports'),
+    ]));
+
+    for (final label in [
+      'Overview',
+      'Items',
+      'Movements',
+      'Purchases',
+      'Adjustments',
+      'Reports',
+    ]) {
       expect(find.bySemanticsLabel(label), findsOneWidget);
       expect(find.byTooltip(label), findsOneWidget);
     }

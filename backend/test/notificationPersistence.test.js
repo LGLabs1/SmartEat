@@ -130,6 +130,33 @@ test('notification sync always creates a permanent history record', async () => 
           }),
         };
       }
+      if (name === 'users') {
+        const usersStub = {
+          where: () => usersStub,
+          get: async () => ({ docs: [] }),
+          doc: () => ({
+            collection: (collectionName) => {
+              assert.ok(
+                collectionName === 'notificationStates' ||
+                  collectionName === 'notificationIgnoreRules',
+              );
+              return { get: async () => ({ docs: [] }) };
+            },
+          }),
+        };
+        return usersStub;
+      }
+      if (name === 'eateries') {
+        return {
+          doc: () => ({
+            collection: () => ({
+              doc: () => ({ get: async () => ({ exists: false, data: () => ({}) }) }),
+              where: () => ({ get: async () => ({ docs: [] }) }),
+              get: async () => ({ docs: [] }),
+            }),
+          }),
+        };
+      }
       let whereClauses = 0;
       const queryStub = {
         where: () => {
@@ -182,6 +209,19 @@ test('notification list hides admin-only records from staff and serializes times
   ];
   const dbStub = {
     collection(name) {
+      if (name === 'users') {
+        return {
+          doc: () => ({
+            collection: (collectionName) => {
+              assert.ok(
+                collectionName === 'notificationStates' ||
+                  collectionName === 'notificationIgnoreRules',
+              );
+              return { get: async () => ({ docs: [] }) };
+            },
+          }),
+        };
+      }
       assert.equal(name, 'notifications');
       const queryStub = {
         where: () => queryStub,
@@ -255,6 +295,7 @@ test('notification controller rejects privilege escalation and allows self-targe
     markSystemNotificationRead: async () => true,
     markAllSystemNotificationsRead: async () => 0,
     deactivateSystemNotification: async () => true,
+    setNotificationPreference: async () => null,
   };
   const controller = loadController(serviceStub);
 

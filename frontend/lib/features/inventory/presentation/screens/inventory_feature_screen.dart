@@ -17,6 +17,13 @@ import 'reports_screen.dart';
 import 'purchase_list_screen.dart';
 import 'inventory_overview_screen.dart';
 
+Widget inventoryCompactNavIcon(IconData icon, String label) {
+  return Semantics(
+    label: label,
+    child: Tooltip(message: label, child: Icon(icon)),
+  );
+}
+
 class InventoryFeatureScreen extends StatefulWidget {
   const InventoryFeatureScreen({Key? key, this.onBackHandlerChanged})
       : super(key: key);
@@ -314,17 +321,31 @@ class _InventoryFeatureScreenState extends State<InventoryFeatureScreen> {
         backgroundColor: AppTheme.sagePanel,
         selectedItemColor: AppTheme.sageAccent,
         unselectedItemColor: Colors.white.withValues(alpha: 0.52),
-        items: const [
+        items: [
           BottomNavigationBarItem(
-              icon: Icon(Icons.dashboard), label: 'Overview'),
-          BottomNavigationBarItem(icon: Icon(Icons.inventory), label: 'Items'),
+            icon: inventoryCompactNavIcon(Icons.dashboard, 'Overview'),
+            label: '',
+          ),
           BottomNavigationBarItem(
-              icon: Icon(Icons.history), label: 'Movements'),
+            icon: inventoryCompactNavIcon(Icons.inventory, 'Items'),
+            label: '',
+          ),
           BottomNavigationBarItem(
-              icon: Icon(Icons.shopping_cart), label: 'Purchases'),
-          BottomNavigationBarItem(icon: Icon(Icons.tune), label: 'Adjustments'),
+            icon: inventoryCompactNavIcon(Icons.history, 'Movements'),
+            label: '',
+          ),
           BottomNavigationBarItem(
-              icon: Icon(Icons.bar_chart), label: 'Reports'),
+            icon: inventoryCompactNavIcon(Icons.shopping_cart, 'Purchases'),
+            label: '',
+          ),
+          BottomNavigationBarItem(
+            icon: inventoryCompactNavIcon(Icons.tune, 'Adjustments'),
+            label: '',
+          ),
+          BottomNavigationBarItem(
+            icon: inventoryCompactNavIcon(Icons.bar_chart, 'Reports'),
+            label: '',
+          ),
         ],
       ),
     );

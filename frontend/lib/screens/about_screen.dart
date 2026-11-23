@@ -11,7 +11,7 @@ class AboutScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: SmartEatHeader(
-        title: const Text('About'),
+        titleText: 'About',
         actions: const [SageHeaderButton(), SizedBox(width: 8)],
       ),
       body: Center(

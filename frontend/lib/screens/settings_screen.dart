@@ -323,7 +323,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   onPressed: () => Navigator.of(context).maybePop(),
                 )
               : null,
-          title: const Text('Settings'),
+          titleText: 'Settings',
           actions: const [SageHeaderButton(), SizedBox(width: 8)],
         ),
         body: ListView(

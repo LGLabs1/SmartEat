@@ -5,6 +5,7 @@
   sendSmsMessage,
 } = require('../services/smsService');
 const { normalizePhMobile } = require('../utils/passwordReset');
+const { sendDailySummaryForAllEateries } = require('../services/dailySummarySmsService');
 
 const ALLOWED_PURPOSES = new Set([
   'test',
@@ -157,4 +158,15 @@ async function sendSms(req, res) {
   }
 }
 
-module.exports = { sendSms };
+async function sendDailySummaryCron(req, res) {
+  try {
+    const result = await sendDailySummaryForAllEateries({ now: new Date() });
+    console.info(`[SMS cron] ${JSON.stringify(result)}`);
+    return res.status(200).json({ status: 200, data: result });
+  } catch (error) {
+    console.error('[SMS cron] failed:', error.message);
+    return errorResponse(res, 500, 'daily_summary_cron_failed', 'Daily summary cron failed');
+  }
+}
+
+module.exports = { sendDailySummaryCron, sendSms };

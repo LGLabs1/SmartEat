@@ -10,6 +10,7 @@ import '../services/ai_assistant_provider.dart';
 import '../services/analytics_service.dart';
 import '../services/firebase_service.dart';
 import '../services/notification_trigger_manager.dart';
+import '../services/notification_badge_provider.dart';
 import '../theme.dart';
 
 import '../features/finance/data/business_kpis.dart';
@@ -46,7 +47,9 @@ double dashboardSidebarWidth(double screenWidth) {
 }
 
 class DashboardScreen extends StatefulWidget {
-  const DashboardScreen({Key? key}) : super(key: key);
+  const DashboardScreen({Key? key, this.initialTabIndex}) : super(key: key);
+
+  final int? initialTabIndex;
 
   @override
   State<DashboardScreen> createState() => _DashboardScreenState();
@@ -213,6 +216,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     _initializeDashboard();
     _startUserDocListener();
     _notificationTriggers.startPeriodicChecks();
+    context.read<NotificationBadgeProvider>().refresh();
   }
 
   bool _sidebarInitialized = false;
@@ -291,7 +295,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Future<void> _initializeDashboard() async {
     await _loadRole();
-    if (mounted) {
+    if (mounted && widget.initialTabIndex == null) {
       // Defer restoring the remembered tab until after the first frame so the
       // shell (Home tab) paints immediately instead of blocking startup on a
       // heavy deep tab (finance, staff, …) building its data views.
@@ -444,6 +448,28 @@ class _DashboardScreenState extends State<DashboardScreen> {
           _isRoleLoading = false;
         }
       });
+      final requestedTab = widget.initialTabIndex;
+      final availableTabs = isAdmin ? _adminTabCount : _staffTabCount;
+      if (requestedTab != null &&
+          requestedTab >= 0 &&
+          requestedTab < availableTabs &&
+          mounted) {
+        setState(() {
+          _selectedIndex = requestedTab;
+          _tabHistory.reset(requestedTab);
+          _visitedTabs
+            ..clear()
+            ..add(requestedTab);
+          _tabLoadedAt
+            ..clear()
+            ..[requestedTab] = DateTime.now();
+          _tabGenerations.clear();
+        });
+        _saveTabIndex(requestedTab);
+        context
+            .read<AIAssistantProvider>()
+            .setActivePage(_activePageNameForIndex(requestedTab));
+      }
       _syncAssistantAccess();
     } catch (e) {
       if (!mounted) return;
@@ -880,6 +906,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           key: _scaffoldKey,
           backgroundColor: AppTheme.sageNavy,
           appBar: SmartEatHeader(
+            titleText: pageTitle,
             leading: Builder(
               builder: (context) {
                 if (_canGoBack) {
@@ -1028,9 +1055,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
                           ),
                         ),
                       ),
-                      if (isNarrow)
-                        const Spacer()
-                      else ...[
+                      if (isNarrow) ...[
+                        const SizedBox(width: 8),
+                        Expanded(
+                          flex: 4,
+                          child: Align(
+                            alignment: Alignment.centerLeft,
+                            child: title,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                      ] else ...[
                         const SizedBox(width: 10),
                         Expanded(
                           flex: 5,
@@ -1126,6 +1161,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Widget _buildSidebar() {
     final email = context.read<AuthProvider>().user?.email ?? '';
     final roleLabel = _isAdmin ? 'Admin' : 'Staff';
+    final notificationUnreadCount =
+        context.watch<NotificationBadgeProvider>().unreadCount;
     final screenWidth = MediaQuery.sizeOf(context).width;
     final sidebarWidth = dashboardSidebarWidth(screenWidth);
 
@@ -1338,6 +1375,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   icon: Icons.notifications_outlined,
                   label: 'Notifications',
                   selected: false,
+                  badgeCount: notificationUnreadCount,
                   onTap: () {
                     _closeSidebarOnNarrow();
                     Navigator.of(context).pushNamed('/notifications');

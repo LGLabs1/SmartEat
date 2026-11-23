@@ -9,6 +9,7 @@ class SageNavItem extends StatefulWidget {
     required this.selected,
     this.onTap,
     this.danger = false,
+    this.badgeCount = 0,
   });
 
   final IconData icon;
@@ -16,6 +17,7 @@ class SageNavItem extends StatefulWidget {
   final bool selected;
   final VoidCallback? onTap;
   final bool danger;
+  final int badgeCount;
 
   @override
   State<SageNavItem> createState() => _SageNavItemState();
@@ -56,10 +58,19 @@ class _SageNavItemState extends State<SageNavItem> {
         ),
         child: ListTile(
           selected: widget.selected,
-          leading: Icon(
-            widget.icon,
-            color: widget.selected ? AppTheme.sageCyan : accent,
-          ),
+          leading: widget.badgeCount > 0
+              ? Badge(
+                  label: Text('${widget.badgeCount > 99 ? '99+' : widget.badgeCount}'),
+                  backgroundColor: AppTheme.error,
+                  child: Icon(
+                    widget.icon,
+                    color: widget.selected ? AppTheme.sageCyan : accent,
+                  ),
+                )
+              : Icon(
+                  widget.icon,
+                  color: widget.selected ? AppTheme.sageCyan : accent,
+                ),
           title: Text(
             widget.label,
             style: TextStyle(

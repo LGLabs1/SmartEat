@@ -5,6 +5,7 @@ const admin = require('firebase-admin');
 const PH_OFFSET_MS = 8 * 60 * 60 * 1000;
 const DEFAULT_FULL_DAY_HOURS = 8;
 const DEFAULT_HALF_DAY_HOURS = 4;
+const DEFAULT_GRACE_MINUTES = 10;
 const STALE_SHIFT_HOURS = 20;
 const LOOKBACK_DAYS = 3;
 
@@ -114,15 +115,21 @@ async function loadSettings(db, eateryId) {
       .doc('attendance')
       .get();
     const data = snap.exists ? snap.data() || {} : {};
+    const graceRaw = data.graceMinutes;
+    const graceMinutes = graceRaw === undefined || graceRaw === null
+      ? DEFAULT_GRACE_MINUTES
+      : asNumber(graceRaw, DEFAULT_GRACE_MINUTES);
     return {
       fullDayHours: asNumber(data.fullDayHours, DEFAULT_FULL_DAY_HOURS),
       halfDayHours: asNumber(data.halfDayHours, DEFAULT_HALF_DAY_HOURS),
+      graceMinutes: Math.max(0, graceMinutes),
     };
   } catch (err) {
     console.warn(`Using default attendance settings for ${eateryId}:`, err);
     return {
       fullDayHours: DEFAULT_FULL_DAY_HOURS,
       halfDayHours: DEFAULT_HALF_DAY_HOURS,
+      graceMinutes: DEFAULT_GRACE_MINUTES,
     };
   }
 }
@@ -262,7 +269,33 @@ async function main() {
               }
             } else if (timeIn && !timeOut) {
               const openHours = (now.getTime() - timeIn.getTime()) / 3600000;
-              if (openHours > STALE_SHIFT_HOURS && data.needsReview !== true) {
+              const expectedOut = new Date(
+                timeIn.getTime() +
+                  settings.fullDayHours * 3600000 +
+                  settings.graceMinutes * 60000
+              );
+              if (now >= expectedOut && data.lateTimeout !== true) {
+                const workUnit = computeWorkUnit(settings.fullDayHours, settings);
+                writes.push(
+                  ref.set(
+                    {
+                      present: true,
+                      workUnit,
+                      status: statusForUnit(workUnit),
+                      hoursWorked: settings.fullDayHours,
+                      needsReview: true,
+                      lateTimeout: true,
+                      notes: data.notes || 'Missing Time Out - past expected end time',
+                      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+                      autoMarked: true,
+                    },
+                    { merge: true }
+                  )
+                );
+                console.log(
+                  `Flagged ${uid} as late time out for ${eateryId} on ${dateKey}`
+                );
+              } else if (openHours > STALE_SHIFT_HOURS && data.needsReview !== true) {
                 writes.push(
                   ref.set(
                     {

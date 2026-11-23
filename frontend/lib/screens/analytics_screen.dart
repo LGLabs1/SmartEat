@@ -1932,37 +1932,49 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
             style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 16),
-          // Side-by-side forecast cards
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Orders Forecast Card
-              Expanded(
-                child: _buildForecastGridCard(
-                  title: 'Predicted Orders',
-                  subtitle: 'Next $_selectedRangeDays days',
-                  icon: Icons.trending_up,
-                  iconColor: Colors.orange,
-                  data: _ordersForecast,
-                  valueKey: 'predictedOrders',
-                  unit: 'orders',
-                ),
-              ),
-              const SizedBox(width: 16),
-              // Sales Forecast Card
-              Expanded(
-                child: _buildForecastGridCard(
-                  title: 'Predicted Sales',
-                  subtitle: 'Next $_selectedRangeDays days revenue',
-                  icon: Icons.attach_money,
-                  iconColor: const Color(0xFF00B0FF),
-                  data: _salesForecast,
-                  valueKey: 'predictedRevenue',
-                  unit: '\u20B1',
-                  isCurrency: true,
-                ),
-              ),
-            ],
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final stackVertically = constraints.maxWidth < 600;
+              final ordersCard = _buildForecastGridCard(
+                title: 'Predicted Orders',
+                subtitle: 'Next $_selectedRangeDays days',
+                icon: Icons.trending_up,
+                iconColor: Colors.orange,
+                data: _ordersForecast,
+                valueKey: 'predictedOrders',
+                unit: 'orders',
+              );
+              final salesCard = _buildForecastGridCard(
+                title: 'Predicted Sales',
+                subtitle: 'Next $_selectedRangeDays days revenue',
+                icon: Icons.attach_money,
+                iconColor: const Color(0xFF00B0FF),
+                data: _salesForecast,
+                valueKey: 'predictedRevenue',
+                unit: '\u20B1',
+                isCurrency: true,
+              );
+
+              if (stackVertically) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    ordersCard,
+                    const SizedBox(height: 16),
+                    salesCard,
+                  ],
+                );
+              }
+
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(child: ordersCard),
+                  const SizedBox(width: 16),
+                  Expanded(child: salesCard),
+                ],
+              );
+            },
           ),
           const SizedBox(height: 16),
           Builder(builder: (context) {

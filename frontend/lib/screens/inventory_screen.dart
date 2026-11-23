@@ -1,6 +1,8 @@
 ﻿import 'package:flutter/material.dart';
 import '../features/inventory/inventory_module.dart';
+import '../theme.dart';
 import '../widgets/dashboard/dashboard_back_handler.dart';
+import '../widgets/smart_eat_header.dart';
 
 class InventoryScreen extends StatefulWidget {
   final ValueNotifier<String>? globalSearchQuery;
@@ -29,8 +31,25 @@ class InventoryScreen extends StatefulWidget {
 class InventoryScreenState extends State<InventoryScreen> {
   @override
   Widget build(BuildContext context) {
-    return InventoryModule(
+    final content = InventoryModule(
       onBackHandlerChanged: widget.onBackHandlerChanged,
+    );
+    if (!widget.showAppBar) return content;
+    return Scaffold(
+      backgroundColor: AppTheme.sageNavy,
+      appBar: SmartEatHeader(
+        titleText: 'Inventory',
+        leading: widget.onOpenDrawer != null
+            ? IconButton(
+                tooltip: 'Menu',
+                icon: const Icon(Icons.menu),
+                onPressed: widget.onOpenDrawer,
+              )
+            : null,
+        showBackButton: widget.onOpenDrawer == null,
+        actions: const [SizedBox(width: 4)],
+      ),
+      body: content,
     );
   }
 }

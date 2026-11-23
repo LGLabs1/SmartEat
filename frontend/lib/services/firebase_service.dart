@@ -2556,7 +2556,11 @@ class FirebaseService {
           final status =
               (order['status'] ?? '').toString().trim().toLowerCase();
           if (status == 'completed') {
-            return {'ok': true, 'status': 'completed'};
+            return {
+              'ok': true,
+              'status': 'completed',
+              'alreadyCompleted': true,
+            };
           }
           if (status == 'rejected') {
             return {'ok': true, 'status': 'rejected'};
@@ -2580,7 +2584,12 @@ class FirebaseService {
               },
               SetOptions(merge: true),
             );
-            return {'ok': true, 'status': 'completed'};
+            return {
+              'ok': true,
+              'status': 'completed',
+              'newlyCompleted': true,
+              'orderTotal': order['totalAmount'] ?? 0,
+            };
           }
 
           final rawItems =
@@ -2623,10 +2632,35 @@ class FirebaseService {
           return {
             'ok': true,
             'status': 'completed',
+            'newlyCompleted': true,
+            'orderTotal': order['totalAmount'] ?? 0,
             'lowStockItems': deduction.lowStockItems,
           };
         }),
       );
+
+      if (result['status'] == 'completed' && result['newlyCompleted'] == true) {
+        final total = result['orderTotal'] is num
+            ? (result['orderTotal'] as num).toDouble()
+            : 0.0;
+        final shortId = orderId.length > 6 ? orderId.substring(0, 6) : orderId;
+        await NotificationService().persistFeedNotification(
+          title: 'Order completed',
+          body: 'Order #$shortId was completed (₱${total.toStringAsFixed(2)}).',
+          type: 'order_completed',
+          source: 'orders',
+          audience: 'admin',
+          dedupeKey: 'order_completed_$orderId',
+          preserveReadState: true,
+          data: <String, dynamic>{
+            'orderId': orderId,
+            'total': total,
+            'target': 'orders',
+            'route': 'orders',
+            'ignoreKey': 'order_completed',
+          },
+        );
+      }
 
       BusinessContextBuilder.invalidate();
       return result;

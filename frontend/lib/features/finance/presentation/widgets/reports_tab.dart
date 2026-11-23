@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../../services/report_pdf_service.dart';
 import '../../../../theme.dart';
 import '../../../../widgets/dashboard/empty_state.dart';
 import '../../../../widgets/dashboard/section_card.dart';
@@ -53,6 +54,17 @@ class _FinanceReportsTabState extends State<FinanceReportsTab> {
 
   String get _monthName =>
       '${FinanceFormat.monthLabel(_month.month)} ${_month.year}';
+
+  Future<void> _runPdfAction(Future<void> Function() action) async {
+    try {
+      await action();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not open report: $e')),
+      );
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -118,6 +130,72 @@ class _FinanceReportsTabState extends State<FinanceReportsTab> {
         sales.revenue > 0 ? (cogs.amount / sales.revenue) * 100 : 0.0;
     final expensePct =
         sales.revenue > 0 ? (operating / sales.revenue) * 100 : 0.0;
+
+    String growthText(double? value) {
+      if (value == null) return 'No prior-month comparison';
+      return '${value >= 0 ? '+' : ''}${value.toStringAsFixed(1)}%';
+    }
+
+    final reportSections = <ReportPdfSection>[
+      ReportPdfSection(
+        title: '$_monthName summary',
+        lines: [
+          'Revenue: ${widget.fmt.money(sales.revenue)}',
+          'Orders: ${sales.ordersCount}',
+          'Average order value: ${widget.fmt.money(sales.averageOrderValue)}',
+          'Gross profit: ${widget.fmt.money(grossProfit)} (${grossMarginPct.toStringAsFixed(1)}%)',
+          'Net profit: ${widget.fmt.money(netProfit)} (${profitMarginPct.toStringAsFixed(1)}%)',
+          'Operating expenses: ${widget.fmt.money(operating)} (${expensePct.toStringAsFixed(1)}% of sales)',
+          'COGS source: ${cogs.sourceLabel}',
+        ],
+      ),
+      ReportPdfSection(
+        title: 'Month-over-month',
+        lines: [
+          'Revenue growth: ${growthText(revenueGrowth)}',
+          'Expense growth: ${growthText(expenseGrowth)}',
+          'Profit growth: ${growthText(profitGrowth)}',
+        ],
+      ),
+      ReportPdfSection(
+        title: 'Costs and inventory',
+        lines: [
+          'Cost of goods sold: ${widget.fmt.money(cogs.amount)}',
+          'Food cost ratio: ${foodCostPct.toStringAsFixed(1)}%',
+          'Inventory value: ${widget.fmt.money(inventoryKpi.inventoryValue)}',
+          'Consumption: ${inventoryKpi.consumptionQty.toStringAsFixed(2)} / ${widget.fmt.money(inventoryKpi.consumptionCost)}',
+          'Waste: ${inventoryKpi.wasteQty.toStringAsFixed(2)} / ${widget.fmt.money(inventoryKpi.wasteCost)}',
+          'Payables outstanding: ${widget.fmt.money(payableKpi.outstanding)}',
+          'Payables overdue: ${widget.fmt.money(payableKpi.overdue)}',
+        ],
+      ),
+      ReportPdfSection(
+        title: 'Expenses by category',
+        lines: categoryData.isEmpty
+            ? ['No expenses recorded for $_monthName.']
+            : [
+                for (final entry in categoryData)
+                  '${entry.key}: ${widget.fmt.money(entry.value)}',
+              ],
+      ),
+      ReportPdfSection(
+        title: 'Menu profitability',
+        lines: menuRows.isEmpty
+            ? ['No menu performance data.']
+            : [
+                for (final row in menuRows.take(10))
+                  '${row.item['name'] ?? 'Unknown'} — sold ${row.quantity.toStringAsFixed(0)}, revenue ${widget.fmt.money(row.revenue)}, profit ${row.hasCosting ? widget.fmt.money(row.profit) : 'N/A'}',
+              ],
+      ),
+      ReportPdfSection(
+        title: 'Forecast',
+        lines: [
+          'Forecast revenue: ${widget.fmt.money(forecast.forecastRevenue)}',
+          'Estimated ingredient cost: ${widget.fmt.money(forecast.forecastIngredientCost)}',
+          'Estimated profit: ${widget.fmt.money(forecast.forecastProfit)}',
+        ],
+      ),
+    ];
 
     return ListView(
       padding: const EdgeInsets.all(AppTheme.pagePadding),
@@ -313,6 +391,36 @@ class _FinanceReportsTabState extends State<FinanceReportsTab> {
                           money: widget.fmt.money)
                   ])),
         const SizedBox(height: 16),
+        Row(children: [
+          Expanded(
+            child: FilledButton.icon(
+              onPressed: () => _runPdfAction(() => ReportPdfService.printReport(
+                    title: 'Financial Report',
+                    subtitle: _monthName,
+                    filePrefix: 'financial_report',
+                    sections: reportSections,
+                    footer: 'SmartEat Financial Reports',
+                  )),
+              icon: const Icon(Icons.print_outlined),
+              label: const Text('Print PDF'),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: OutlinedButton.icon(
+              onPressed: () => _runPdfAction(() => ReportPdfService.shareReport(
+                    title: 'Financial Report',
+                    subtitle: _monthName,
+                    filePrefix: 'financial_report',
+                    sections: reportSections,
+                    footer: 'SmartEat Financial Reports',
+                  )),
+              icon: const Icon(Icons.share_outlined),
+              label: const Text('Share PDF'),
+            ),
+          ),
+        ]),
+        const SizedBox(height: 10),
         SizedBox(
             width: double.infinity,
             child: OutlinedButton.icon(

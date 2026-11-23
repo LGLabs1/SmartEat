@@ -251,7 +251,6 @@ class NotificationTriggerManager {
       final eateryId = (profile?['eateryId'] ?? '').toString().trim();
       if (eateryId.isEmpty) return;
       await SmsService.sendBillReminders(eateryId: eateryId);
-      await SmsService.sendDailySummary(eateryId: eateryId);
     } catch (_) {}
   }
 
@@ -289,12 +288,23 @@ class NotificationTriggerManager {
         return;
       }
 
-      // Build notification message
-      final count = newItems.length;
-      final firstItem = newItems.first['name']?.toString() ?? 'Unknown item';
-      final message = count == 1
-          ? '$firstItem is low on stock'
-          : '$firstItem and ${count - 1} other items are low on stock';
+      final itemDetails = newItems
+          .map(
+            (item) => <String, dynamic>{
+              'id': (item['id'] ?? '').toString(),
+              'name': (item['name'] ?? 'Unknown item').toString(),
+              'quantity': item['quantity'] ?? item['currentQuantity'] ?? 0,
+              'threshold': item['reorderPoint'] ?? item['minStock'] ?? 0,
+            },
+          )
+          .toList();
+      final itemNames = itemDetails
+          .map((item) => item['name'].toString())
+          .where((name) => name.isNotEmpty)
+          .toList();
+      final message = itemNames.length == 1
+          ? '${itemNames.first} is low on stock.'
+          : '${itemNames.join(', ')} are low on stock.';
 
       await _notificationService.showNotification(
         title: 'Low Stock Alert',
@@ -304,6 +314,14 @@ class NotificationTriggerManager {
         source: 'inventory',
         audience: 'admin',
         dedupeKey: 'low_stock_alert_${_dateKey(now)}_${now.hour}',
+        data: <String, dynamic>{
+          'items': itemDetails,
+          'itemNames': itemNames,
+          'details': itemNames,
+          'target': 'inventory',
+          'route': 'inventory',
+          'ignoreKey': 'low_stock_alert',
+        },
       );
 
       // Track notified items

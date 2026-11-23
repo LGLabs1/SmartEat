@@ -4,6 +4,7 @@ const {
   listSystemNotifications,
   markAllSystemNotificationsRead,
   markSystemNotificationRead,
+  setNotificationPreference,
   syncSystemNotifications,
   writeSystemNotification,
 } = require('../services/notificationService');
@@ -143,6 +144,29 @@ async function markAllRead(req, res) {
   }
 }
 
+async function updateNotificationPreference(req, res) {
+  const eateryId = requireTenant(req, res);
+  if (!eateryId) return;
+  const body = bodyOf(req);
+  const booleanOrUndefined = (value) => typeof value === 'boolean' ? value : undefined;
+  try {
+    const result = await setNotificationPreference({
+      eateryId,
+      uid: req.user.uid,
+      role: roleOf(req),
+      docId: req.params.id,
+      removed: booleanOrUndefined(body.removed),
+      pinned: booleanOrUndefined(body.pinned),
+      ignored: booleanOrUndefined(body.ignored),
+    });
+    if (!result) return fail(res, 404, 'notification_not_found', 'Notification not found');
+    return res.status(200).json({ data: result });
+  } catch (error) {
+    console.error('Notification preference error:', error.message);
+    return fail(res, 500, 'notification_preference_failed', 'Notification update failed');
+  }
+}
+
 async function deleteNotification(req, res) {
   const eateryId = requireTenant(req, res);
   if (!eateryId) return;
@@ -169,4 +193,5 @@ module.exports = {
   markRead,
   recordNotification,
   syncNotifications,
+  updateNotificationPreference,
 };

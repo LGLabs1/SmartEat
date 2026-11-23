@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+import '../../../services/api_service.dart';
 import '../../../services/attendance_settings_service.dart';
 import '../../../utils/attendance_utils.dart';
 import '../../../utils/staff_utils.dart';
@@ -206,6 +207,7 @@ class StaffService {
     });
 
     final updated = await ref.get();
+    ApiService.syncSystemNotifications().catchError((_) => 0);
     return {'id': updated.id, ...updated.data()!};
   }
 
@@ -273,6 +275,7 @@ class StaffService {
     });
 
     final updated = await ref.get();
+    ApiService.syncSystemNotifications().catchError((_) => 0);
     return {'id': updated.id, ...updated.data()!};
   }
 
