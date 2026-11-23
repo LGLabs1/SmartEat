@@ -119,11 +119,7 @@ class _PayrollTabState extends State<_PayrollTab> {
                 final uid = (a['uid'] ?? '').toString().trim();
                 if (uid.isEmpty) continue;
 
-                final rawUnit = a['workUnit'];
-                final unit = rawUnit is num
-                    ? rawUnit.toDouble()
-                    : (a['present'] == true ? 1.0 : 0.0);
-
+                final unit = attendancePayrollWorkUnit(a);
                 if (unit >= 1.0) {
                   fullDaysByUid[uid] = (fullDaysByUid[uid] ?? 0) + 1;
                 } else if (unit > 0) {

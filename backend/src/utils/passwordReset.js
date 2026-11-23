@@ -26,6 +26,7 @@ function normalizePhMobile(value) {
   digits = digits.replace(/\D/g, '');
 
   if (digits.startsWith('00')) digits = digits.slice(2);
+  if (digits.length < 10 || digits.length > 15) return null;
 
   if (digits.startsWith('63')) {
     // Already country-coded.

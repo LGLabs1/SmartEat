@@ -11,6 +11,7 @@ import '../services/printer_availability_service.dart';
 import '../services/receipt_printer_service.dart';
 import '../widgets/payment_method_dialog.dart';
 import '../widgets/pos/receipt_printer_hint.dart';
+import '../widgets/inline_error_banner.dart';
 import '../widgets/sage_header_button.dart';
 import '../widgets/skeleton_loaders.dart';
 import '../widgets/smart_eat_header.dart';
@@ -45,6 +46,7 @@ class _POSScreenState extends State<POSScreen> {
   String? _lastRoleUid;
   bool _addToExistingOrder = false;
   String _targetPendingOrderId = '';
+  String _addRequestId = '';
   String _newOrderTempId = '';
   List<Map<String, dynamic>> _pendingOrders = const [];
   final Map<String, int> _baselineQtyByMenuId = {};
@@ -65,6 +67,73 @@ class _POSScreenState extends State<POSScreen> {
   /// created, instead of a full-screen snackbar. Auto-dismisses.
   String? _cartSuccessMessage;
   Timer? _successDismissTimer;
+
+  Object? _inlineError;
+  String? _inlineErrorContext;
+  VoidCallback? _inlineErrorRetry;
+  String? _inlineErrorActionLabel;
+
+  void _showInlineError(
+    Object error, {
+    String? operationContext,
+    VoidCallback? onRetry,
+    String? actionLabel,
+  }) {
+    if (!mounted) return;
+    setState(() {
+      _isLoading = false;
+      _inlineError = error;
+      _inlineErrorContext = operationContext;
+      _inlineErrorRetry = onRetry;
+      _inlineErrorActionLabel = actionLabel;
+      _cartSheetTick.value++;
+    });
+  }
+
+  void _clearInlineError() {
+    if (!mounted || _inlineError == null) return;
+    setState(() {
+      _inlineError = null;
+      _inlineErrorContext = null;
+      _inlineErrorRetry = null;
+      _inlineErrorActionLabel = null;
+      _cartSheetTick.value++;
+    });
+  }
+
+  String? get _inlineErrorMessage {
+    final error = _inlineError;
+    if (error == null) return null;
+    if (error is String) return error;
+    return ErrorMessageHelper.getUserFriendlyMessage(
+      error,
+      operationContext: _inlineErrorContext,
+    );
+  }
+
+  Widget _buildInlineErrorBanner() {
+    final error = _inlineError;
+    if (error == null) return const SizedBox.shrink();
+    final isMessage = error is String;
+    final retry = _inlineErrorRetry;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+      child: InlineErrorBanner(
+        key: const Key('pos-inline-error'),
+        message: isMessage ? error : null,
+        error: isMessage ? null : error,
+        operationContext: _inlineErrorContext,
+        onRetry: retry != null
+            ? () {
+                _clearInlineError();
+                retry();
+              }
+            : _clearInlineError,
+        actionLabel:
+            _inlineErrorActionLabel ?? (retry != null ? 'Retry' : 'Dismiss'),
+      ),
+    );
+  }
 
   /// The cart sheet lives in its own route and never rebuilds when this State
   /// calls setState(). Bump this tick inside the cart-affecting mutations so
@@ -92,6 +161,8 @@ class _POSScreenState extends State<POSScreen> {
                   totalAmount: _totalAmount,
                   isLoading: _isLoading,
                   successMessage: _cartSuccessMessage,
+                  errorMessage: _inlineErrorMessage,
+                  onDismissError: _clearInlineError,
                   isAddToExistingOrder: _addToExistingOrder,
                   orderId: _addToExistingOrder
                       ? _targetPendingOrderId
@@ -282,9 +353,7 @@ class _POSScreenState extends State<POSScreen> {
       setState(() {
         _isPrefilling = false;
       });
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to load order items: $e')),
-      );
+      _showInlineError('Failed to load order items: $e');
     }
   }
 
@@ -372,11 +441,17 @@ class _POSScreenState extends State<POSScreen> {
     }).toList();
   }
 
-  Future<void> _loadMenuItems() async {
-    setState(() {
-      _isLoading = true;
+  Future<void> _loadMenuItems({bool showErrors = true}) async {
+    if (showErrors) {
+      setState(() {
+        _isLoading = true;
+        _inventoryFuture = ApiService.getInventoryItems();
+      });
+    } else {
+      // Background refresh after a successful order must not show a spinner
+      // or replace the success message with an error.
       _inventoryFuture = ApiService.getInventoryItems();
-    });
+    }
 
     try {
       final results = await Future.wait([
@@ -485,16 +560,16 @@ class _POSScreenState extends State<POSScreen> {
         _isLoading = false;
       });
     } catch (e) {
-      setState(() => _isLoading = false);
-      if (mounted) {
-        ErrorMessageHelper.showSnackBar(
-          context,
-          e,
-          operationContext: 'menu',
-          onAction: _loadMenuItems,
-          actionLabel: 'Retry',
-        );
+      if (!showErrors) {
+        debugPrint('POS: background menu refresh failed: $e');
+        return;
       }
+      setState(() => _isLoading = false);
+      _showInlineError(
+        e,
+        operationContext: 'menu',
+        onRetry: () => _loadMenuItems(),
+      );
     }
   }
 
@@ -528,7 +603,7 @@ class _POSScreenState extends State<POSScreen> {
     return _pinnedItemIds.contains(itemId);
   }
 
-  Future<void> _loadPendingOrders() async {
+  Future<void> _loadPendingOrders({bool showErrors = true}) async {
     try {
       final res = await ApiService.getPendingOrders(limit: 25);
       final orders = List<Map<String, dynamic>>.from(res['data'] ?? const []);
@@ -537,10 +612,11 @@ class _POSScreenState extends State<POSScreen> {
         _pendingOrders = orders;
       });
     } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to load pending orders: $e')),
-      );
+      if (showErrors) {
+        _showInlineError('Failed to load pending orders: $e');
+      } else {
+        debugPrint('POS: background pending-orders refresh failed: $e');
+      }
     }
   }
 
@@ -593,6 +669,7 @@ class _POSScreenState extends State<POSScreen> {
     if (id.isEmpty) return;
     setState(() {
       _targetPendingOrderId = id;
+      _addRequestId = '';
     });
 
     if (_addToExistingOrder && _targetPendingOrderId.isNotEmpty) {
@@ -637,9 +714,7 @@ class _POSScreenState extends State<POSScreen> {
           : (issueSummary.isEmpty
               ? 'This item is out of stock.'
               : 'Not enough stock: $issueSummary');
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(message)),
-      );
+      _showInlineError(message);
       return;
     }
 
@@ -695,16 +770,12 @@ class _POSScreenState extends State<POSScreen> {
       }
     });
 
-    if (exceeded && mounted) {
+    if (exceeded) {
       HapticHelper.error();
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            issueSummary.isEmpty
-                ? 'Only $servings left in stock.'
-                : 'Not enough stock: $issueSummary',
-          ),
-        ),
+      _showInlineError(
+        issueSummary.isEmpty
+            ? 'Only $servings left in stock.'
+            : 'Not enough stock: $issueSummary',
       );
     }
   }
@@ -929,6 +1000,7 @@ class _POSScreenState extends State<POSScreen> {
       _baselineQtyByMenuId.clear();
       _totalAmount = 0.0;
       _newOrderTempId = '';
+      _addRequestId = '';
       _printReceipt = _printerAvailability.available;
       if (!_addToExistingOrder) {
         _targetPendingOrderId = '';
@@ -983,16 +1055,7 @@ class _POSScreenState extends State<POSScreen> {
     bool printReceipt = false,
   }) async {
     if (_cartItems.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Cart is empty',
-              style: Theme.of(context).textTheme.bodyMedium),
-          behavior: SnackBarBehavior.floating,
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-          margin: const EdgeInsets.all(16),
-        ),
-      );
+      _showInlineError('Cart is empty');
       return;
     }
 
@@ -1038,12 +1101,8 @@ class _POSScreenState extends State<POSScreen> {
     }
 
     if (invalid.isNotEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Some items are unavailable or exceed stock: ${invalid.take(3).join(', ')}',
-          ),
-        ),
+      _showInlineError(
+        'Some items are unavailable or exceed stock: ${invalid.take(3).join(', ')}',
       );
       return;
     }
@@ -1094,9 +1153,7 @@ class _POSScreenState extends State<POSScreen> {
             _cartSheetTick.value++;
             _isLoading = false;
           });
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('No new items to add.')),
-          );
+          _showInlineError('No new items to add.');
           return;
         }
         orderItems = deltas;
@@ -1113,9 +1170,15 @@ class _POSScreenState extends State<POSScreen> {
       }
 
       if (_addToExistingOrder) {
+        // Reuse the same id for any retry of this action so the backend can
+        // short-circuit a duplicate add.
+        final requestId =
+            _addRequestId.isNotEmpty ? _addRequestId : _generateOrderId();
+        _addRequestId = requestId;
         await ApiService.addItemsToPendingOrder(
           orderId: _targetPendingOrderId,
           items: orderItems,
+          addRequestId: requestId,
         );
       } else {
         final result = await ApiService.createOrder(
@@ -1137,6 +1200,10 @@ class _POSScreenState extends State<POSScreen> {
         setState(() {
           _cartSheetTick.value++;
           _isLoading = false;
+          _inlineError = null;
+          _inlineErrorContext = null;
+          _inlineErrorRetry = null;
+          _inlineErrorActionLabel = null;
           // Show the confirmation inside the open cart panel rather than a
           // screen-level snackbar.
           _cartSuccessMessage = _addToExistingOrder
@@ -1165,35 +1232,19 @@ class _POSScreenState extends State<POSScreen> {
           );
         }
 
-        _loadMenuItems().onError((Object e, StackTrace st) {
-          debugPrint('POS: background menu refresh after order failed: $e');
-        });
-        _loadPendingOrders().onError((Object e, StackTrace st) {
-          debugPrint('POS: background pending-orders refresh after order '
-              'failed: $e');
-        });
+        unawaited(_loadMenuItems(showErrors: false));
+        unawaited(_loadPendingOrders(showErrors: false));
 
         // Success haptic feedback
         HapticHelper.orderComplete();
       }
     } catch (e) {
-      setState(() {
-        _cartSheetTick.value++;
-        _isLoading = false;
-      });
-      if (mounted) {
-        ErrorMessageHelper.showSnackBar(
-          context,
-          e,
-          operationContext: 'order',
-          onAction: () => _createOrder(
-            completeNow: completeNow,
-            paymentDetails: paymentDetails,
-            printReceipt: printReceipt,
-          ),
-          actionLabel: 'Retry',
-        );
-      }
+      // Create/add-to-pending may have committed before the response failed.
+      // Never offer a blind retry here; tell the cashier to verify in Orders.
+      _showInlineError(
+        'The order may have been saved. Check Orders before trying again: $e',
+        operationContext: 'order',
+      );
     }
   }
 
@@ -1221,16 +1272,16 @@ class _POSScreenState extends State<POSScreen> {
       paymentStatus: details?.paymentStatus ??
           (order['paymentStatus'] ?? 'paid').toString(),
       createdAt: _orderCreatedAt(order),
-      cashierName: (order['createdByName'] ?? '').toString(),
     );
     if (!mounted) return;
+    if (result.printed) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Receipt printed.')),
+      );
+      return;
+    }
     final error = result.error ?? 'Unknown error';
-    final message = result.printed
-        ? 'Receipt printed.'
-        : 'Order saved, but the receipt did not print: $error';
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message)),
-    );
+    _showInlineError('Order saved, but the receipt did not print: $error');
   }
 
   DateTime _orderCreatedAt(Map<String, dynamic> order) {
@@ -1328,6 +1379,7 @@ class _POSScreenState extends State<POSScreen> {
                                   final next = !_addToExistingOrder;
                                   setState(() {
                                     _addToExistingOrder = next;
+                                    _addRequestId = '';
                                     if (!next) {
                                       _targetPendingOrderId = '';
                                       _baselineQtyByMenuId.clear();
@@ -1356,6 +1408,7 @@ class _POSScreenState extends State<POSScreen> {
                                   final next = !_addToExistingOrder;
                                   setState(() {
                                     _addToExistingOrder = next;
+                                    _addRequestId = '';
                                     if (!next) {
                                       _targetPendingOrderId = '';
                                       _baselineQtyByMenuId.clear();
@@ -1495,10 +1548,15 @@ class _POSScreenState extends State<POSScreen> {
                   body: isCompact
                       ? Column(
                           children: [
+                            _buildInlineErrorBanner(),
                             _buildCategoryChips(),
                             Expanded(
                               child: isLoading
-                                  ? const SkeletonPOS()
+                                  ? SkeletonPOS(
+                                      crossAxisCount: crossAxisCount,
+                                      childAspectRatio: childAspectRatio,
+                                      isCompact: isCompact,
+                                    )
                                   : (_selectedCategory == 'All'
                                       ? _buildMenuByCategory(
                                           items: filteredMenuItems,
@@ -1542,10 +1600,15 @@ class _POSScreenState extends State<POSScreen> {
                               flex: 3,
                               child: Column(
                                 children: [
+                                  _buildInlineErrorBanner(),
                                   _buildCategoryChips(),
                                   Expanded(
                                     child: isLoading
-                                        ? const SkeletonPOS()
+                                        ? SkeletonPOS(
+                                            crossAxisCount: crossAxisCount,
+                                            childAspectRatio: childAspectRatio,
+                                            isCompact: isCompact,
+                                          )
                                         : (_selectedCategory == 'All'
                                             ? _buildMenuByCategory(
                                                 items: filteredMenuItems,
@@ -1602,6 +1665,8 @@ class _POSScreenState extends State<POSScreen> {
                                   totalAmount: _totalAmount,
                                   isLoading: isLoading,
                                   successMessage: _cartSuccessMessage,
+                                  errorMessage: _inlineErrorMessage,
+                                  onDismissError: _clearInlineError,
                                   isAddToExistingOrder: _addToExistingOrder,
                                   orderId: _addToExistingOrder
                                       ? _targetPendingOrderId
@@ -1645,6 +1710,8 @@ class _CartPanel extends StatelessWidget {
     required this.totalAmount,
     required this.isLoading,
     this.successMessage,
+    this.errorMessage,
+    this.onDismissError,
     required this.isAddToExistingOrder,
     required this.orderId,
     required this.isNewOrder,
@@ -1668,6 +1735,8 @@ class _CartPanel extends StatelessWidget {
 
   /// In-cart confirmation banner, e.g. after an order is created.
   final String? successMessage;
+  final String? errorMessage;
+  final VoidCallback? onDismissError;
   final bool isAddToExistingOrder;
   final String orderId;
   final bool isNewOrder;
@@ -1963,6 +2032,16 @@ class _CartPanel extends StatelessWidget {
             ),
           ),
           Divider(color: theme.dividerColor, height: 1),
+          if (errorMessage != null && errorMessage!.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
+              child: InlineErrorBanner(
+                key: const Key('pos-cart-inline-error'),
+                message: errorMessage!,
+                onRetry: onDismissError,
+                actionLabel: 'Dismiss',
+              ),
+            ),
           Expanded(
             child: cartItems.isEmpty
                 ? Center(

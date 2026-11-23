@@ -956,6 +956,7 @@ class _FinanceScreenState extends State<FinanceScreen> {
   @override
   Widget build(BuildContext context) {
     final canUnwind = _tabHistory.length > 1;
+    final compactTabs = MediaQuery.sizeOf(context).width < 430;
     final body = Scaffold(
       backgroundColor: AppTheme.sageNavy,
       appBar: widget.showAppBar
@@ -995,26 +996,30 @@ class _FinanceScreenState extends State<FinanceScreen> {
               currentIndex: _index,
               onTap: _selectSection,
               type: BottomNavigationBarType.fixed,
-              items: const [
+              items: [
                 BottomNavigationBarItem(
-                  icon: Icon(Icons.dashboard_outlined),
-                  label: 'Overview',
+                  icon: financeCompactNavIcon(
+                      Icons.dashboard_outlined, 'Overview'),
+                  label: compactTabs ? '' : 'Overview',
                 ),
                 BottomNavigationBarItem(
-                  icon: Icon(Icons.receipt_long_outlined),
-                  label: 'Expenses',
+                  icon: financeCompactNavIcon(
+                      Icons.receipt_long_outlined, 'Expenses'),
+                  label: compactTabs ? '' : 'Expenses',
                 ),
                 BottomNavigationBarItem(
-                  icon: Icon(Icons.payment_outlined),
-                  label: 'Payables',
+                  icon:
+                      financeCompactNavIcon(Icons.payment_outlined, 'Payables'),
+                  label: compactTabs ? '' : 'Payables',
                 ),
                 BottomNavigationBarItem(
-                  icon: Icon(Icons.analytics_outlined),
-                  label: 'Reports',
+                  icon: financeCompactNavIcon(
+                      Icons.analytics_outlined, 'Reports'),
+                  label: compactTabs ? '' : 'Reports',
                 ),
                 BottomNavigationBarItem(
-                  icon: Icon(Icons.groups_outlined),
-                  label: 'Payroll',
+                  icon: financeCompactNavIcon(Icons.groups_outlined, 'Payroll'),
+                  label: compactTabs ? '' : 'Payroll',
                 ),
               ],
             ),
@@ -1034,7 +1039,7 @@ class _FinanceScreenState extends State<FinanceScreen> {
 
   Widget _buildBody() {
     if (_isLoading) {
-      return const SkeletonDashboard();
+      return const SkeletonFinance();
     }
     if (_error != null) {
       return Center(
@@ -1140,4 +1145,14 @@ class _FinanceScreenState extends State<FinanceScreen> {
         );
     }
   }
+}
+
+Widget financeCompactNavIcon(IconData icon, String label) {
+  return Semantics(
+    label: label,
+    child: Tooltip(
+      message: label,
+      child: Icon(icon),
+    ),
+  );
 }

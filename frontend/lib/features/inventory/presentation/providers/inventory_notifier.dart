@@ -8,6 +8,7 @@ import '../../data/models/stock_movement.dart';
 import '../../data/models/purchase_receipt.dart';
 import '../../data/models/stock_adjustment.dart';
 import '../../data/models/menu_item_ingredient.dart';
+import '../../domain/usecases/reports.dart';
 
 class InventoryState {
   final List<InventoryItem> items;
@@ -114,6 +115,14 @@ class InventoryNotifier extends ChangeNotifier {
     notifyListeners();
   }
 
+  void updateItemInState(InventoryItem item) {
+    final items = _state.items
+        .map((existing) => existing.id == item.id ? item : existing)
+        .toList();
+    _state = _state.copyWith(items: items);
+    notifyListeners();
+  }
+
   Future<void> applyPurchase(PurchaseReceipt receipt) async {
     try {
       await _repo.applyPurchase(receipt);
@@ -135,10 +144,7 @@ class InventoryNotifier extends ChangeNotifier {
     await load();
   }
 
-  double suggestedReorderQty(InventoryItem item) {
-    final s = item.maxStock - item.currentStock;
-    return s > 0 ? s : 0;
-  }
+  double suggestedReorderQty(InventoryItem item) => suggestedRestockQty(item);
 
   double computeValueFromLots(List<FifoLot> lots) {
     return FifoQueueService.computeTotalValue(lots);

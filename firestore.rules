@@ -69,7 +69,147 @@ service cloud.firestore {
     }
 
     function canWriteEaterySettings(docId) {
-      return isAdmin() || (docId != 'sms' && docId != 'attendance');
+      return isAdmin();
+    }
+
+    function isValidAmount(value) {
+      return value is number && value >= 0 && value <= 1000000000;
+    }
+
+    function isPositiveAmount(value) {
+      return value is number && value > 0 && value <= 1000000000;
+    }
+
+    function isEateryScopedWrite(eateryId) {
+      return isSignedIn()
+        && eateryId == userEateryId()
+        && request.resource.data.eateryId == eateryId;
+    }
+
+    function isEateryImmutableUpdate(eateryId) {
+      return resource.data.eateryId == eateryId
+        && request.resource.data.eateryId == resource.data.eateryId;
+    }
+
+    function isCreatedBySelfOnCreate(data) {
+      return !('createdBy' in data) || data.createdBy == request.auth.uid;
+    }
+
+    function isCreatedByImmutableOnUpdate() {
+      return (!('createdBy' in resource.data)
+          || request.resource.data.createdBy == resource.data.createdBy)
+        && (!('createdBy' in request.resource.data)
+          || request.resource.data.createdBy == request.auth.uid);
+    }
+
+    function hasValidOrderValues(data) {
+      return data.items is list
+        && data.items.size() <= 200
+        && isValidAmount(data.totalAmount)
+        && (!('amountReceived' in data) || isValidAmount(data.amountReceived))
+        && (!('change' in data) || isValidAmount(data.change));
+    }
+
+    function hasValidMenuValues(data) {
+      return (!('name' in data) || data.name is string)
+        && (!('price' in data) || isValidAmount(data.price))
+        && (!('cost' in data) || isValidAmount(data.cost))
+        && (!('availableServings' in data)
+          || (data.availableServings is number
+            && data.availableServings >= 0
+            && data.availableServings <= 1000000))
+        && (!('isAvailable' in data) || data.isAvailable is bool);
+    }
+
+    function hasValidInventoryValues(data) {
+      return (!('name' in data) || data.name is string)
+        && (!('currentStock' in data)
+          || (data.currentStock is number
+            && data.currentStock >= 0
+            && data.currentStock <= 1000000000))
+        && (!('minStock' in data) || isValidAmount(data.minStock))
+        && (!('reorderPoint' in data) || isValidAmount(data.reorderPoint))
+        && (!('unitCost' in data) || isValidAmount(data.unitCost))
+        && (!('sellingPrice' in data) || isValidAmount(data.sellingPrice));
+    }
+
+    function isEateryJoinMetadata(data) {
+      return data.keys().hasOnly([
+        'eateryId',
+        'name',
+        'ownerUid',
+        'createdAt',
+        'updatedAt'
+      ])
+        && data.eateryId is string
+        && data.name is string
+        && data.ownerUid is string;
+    }
+
+    function isEateryMember(eateryId) {
+      return hasUserDoc()
+        && userDoc().eateryId == eateryId
+        && (isAdmin() || isApprovedStaff());
+    }
+
+    function isEateryAdmin(eateryId) {
+      return isAdmin() && eateryId == userEateryId();
+    }
+
+    function hasValidNotificationPayload(payload) {
+      return payload.keys().hasAll([
+        'eateryId',
+        'title',
+        'body',
+        'type',
+        'source',
+        'audience',
+        'allowedRoles',
+        'targetUids',
+        'dedupeKey',
+        'data',
+        'active'
+      ])
+        && payload.title is string
+        && payload.body is string
+        && payload.type is string
+        && payload.source is string
+        && payload.audience is string
+        && payload.allowedRoles is list
+        && payload.targetUids is list
+        && payload.dedupeKey is string
+        && payload.data is map
+        && payload.active is bool;
+    }
+
+    function hasDeterministicNotificationId(eateryId, id) {
+      return id.matches(eateryId + '_.*');
+    }
+
+    function notificationRolesForUser() {
+      return isAdmin()
+        ? ['admin', 'manager', 'staff', 'all']
+        : (hasUserDoc()
+          && (userDoc().role == 'manager' || userDoc().role == 'owner')
+          ? ['manager', 'staff', 'all']
+          : ['staff', 'all']);
+    }
+
+    function legacyNotificationVisible(notification) {
+      return isAdmin()
+        || notification.audience in ['staff', 'all', 'everyone'];
+    }
+
+    function notificationVisibleToUser(notification) {
+      return notification.eateryId == userEateryId()
+        && (
+          (notification.targetUids is list
+            && request.auth.uid in notification.targetUids)
+          || (notification.allowedRoles is list
+            && notification.allowedRoles.hasAny(notificationRolesForUser()))
+          || (!('allowedRoles' in notification)
+            && legacyNotificationVisible(notification))
+        );
     }
 
     function isValidSageBriefingCreate(eateryId) {
@@ -121,8 +261,9 @@ service cloud.firestore {
     // NEW: Staff/admin can complete orders
     function isOrderCompleteUpdate(eateryId) {
       return resource.data.status == 'pending'
-        && request.resource.data.eateryId == resource.data.eateryId
-        && request.resource.data.eateryId == eateryId
+        && isEateryImmutableUpdate(eateryId)
+        && isCreatedByImmutableOnUpdate()
+        && hasValidOrderValues(request.resource.data)
         && request.resource.data.status == 'completed'
         && request.resource.data.diff(resource.data).changedKeys().hasOnly([
           'status',
@@ -146,22 +287,22 @@ service cloud.firestore {
 
     function isPendingOrderAppendUpdate(eateryId) {
       return resource.data.status == 'pending'
-        && request.resource.data.eateryId == resource.data.eateryId
-        && request.resource.data.eateryId == eateryId
+        && isEateryImmutableUpdate(eateryId)
+        && isCreatedByImmutableOnUpdate()
+        && hasValidOrderValues(request.resource.data)
         && request.resource.data.status == resource.data.status
         && request.resource.data.diff(resource.data).changedKeys().hasOnly([
           'items',
           'totalAmount',
           'updatedAt'
-        ])
-        && request.resource.data.items is list
-        && request.resource.data.totalAmount is number;
+        ]);
     }
 
     function isPendingOrderVoidOrPartialVoidUpdate(eateryId) {
       return resource.data.status == 'pending'
-        && request.resource.data.eateryId == resource.data.eateryId
-        && request.resource.data.eateryId == eateryId
+        && isEateryImmutableUpdate(eateryId)
+        && isCreatedByImmutableOnUpdate()
+        && hasValidOrderValues(request.resource.data)
         && request.resource.data.diff(resource.data).changedKeys().hasOnly([
           'items',
           'totalAmount',
@@ -172,26 +313,31 @@ service cloud.firestore {
           'updatedAt'
         ])
         && request.resource.data.items is list
-        && request.resource.data.totalAmount is number
         && (request.resource.data.status == 'pending' || request.resource.data.status == 'voided');
     }
 
     // UPDATED: removed dependency on menu doc having eateryId field
     function isMenuStockOnlyUpdate(eateryId) {
-      return request.resource.data.diff(resource.data).changedKeys().hasOnly([
-        'availableServings',
-        'isAvailable',
-        'updatedAt',
-        'inventoryItemId'
-      ]);
+      return isEateryImmutableUpdate(eateryId)
+        && isCreatedByImmutableOnUpdate()
+        && hasValidMenuValues(request.resource.data)
+        && request.resource.data.diff(resource.data).changedKeys().hasOnly([
+          'availableServings',
+          'isAvailable',
+          'updatedAt',
+          'inventoryItemId'
+        ]);
     }
 
     // UPDATED: removed dependency on inventory doc having eateryId field
     function isInventoryStockOnlyUpdate(eateryId) {
-      return request.resource.data.diff(resource.data).changedKeys().hasOnly([
-        'currentStock',
-        'updatedAt'
-      ]);
+      return isEateryImmutableUpdate(eateryId)
+        && isCreatedByImmutableOnUpdate()
+        && hasValidInventoryValues(request.resource.data)
+        && request.resource.data.diff(resource.data).changedKeys().hasOnly([
+          'currentStock',
+          'updatedAt'
+        ]);
     }
 
     match /users/{userId} {
@@ -204,12 +350,15 @@ service cloud.firestore {
         && request.resource.data.isAdmin is bool
         && request.resource.data.role is string
         && request.resource.data.eateryId is string
+        && request.resource.data.eateryId.size() > 0
         && (
-          // Joining an existing eatery: unapproved staff only.
+          // Joining an existing eatery: unapproved staff only. The eatery must
+          // already exist so users cannot create profiles for phantom eateries.
           (
             request.resource.data.isAdmin == false
-            && request.resource.data.role != 'admin'
+            && request.resource.data.role == 'staff'
             && request.resource.data.approved == false
+            && exists(/databases/$(database)/documents/eateries/$(request.resource.data.eateryId))
           )
           // Creating a new eatery: must be its owner, and it must exist.
           || (
@@ -220,6 +369,8 @@ service cloud.firestore {
           )
         );
 
+      // Self profile edits keep working, but privilege and membership fields
+      // can never be changed by the user themselves.
       allow update: if isSignedIn()
         && request.auth.uid == userId
         && request.resource.data.isAdmin == resource.data.isAdmin
@@ -227,18 +378,43 @@ service cloud.firestore {
         && request.resource.data.eateryId == resource.data.eateryId
         && request.resource.data.approved == resource.data.approved;
 
+      // Admins may only approve same-eatery staff. Role, admin status and
+      // eatery membership are immutable through this path; all other user
+      // profile changes require a privileged (Admin SDK) write.
       allow update: if isAdmin()
-        && resource.data.eateryId == userEateryId();
+        && resource.data.eateryId == userEateryId()
+        && request.resource.data.role == resource.data.role
+        && request.resource.data.isAdmin == resource.data.isAdmin
+        && request.resource.data.eateryId == resource.data.eateryId
+        && (
+          request.resource.data.approved == resource.data.approved
+          || (
+            (!('approved' in resource.data) || resource.data.approved != true)
+            && request.resource.data.approved == true
+          )
+        )
+        && request.resource.data.diff(resource.data).changedKeys().hasOnly([
+          'approved',
+          'approvedBy',
+          'approvedAt',
+          'updatedAt'
+        ]);
 
       allow delete: if false;
     }
 
     match /eateries/{eateryId} {
-      allow get: if isSignedIn();
+      // Eatery records are private to their owner/members. The narrow
+      // exception is the minimal join metadata written by createEatery: a
+      // signed-in user may read only that shape to look up an eatery ID.
+      // Adding any other field to the document automatically makes it private.
+      allow get: if isEateryMember(eateryId)
+        || (isSignedIn() && isEateryJoinMetadata(resource.data));
       allow list: if false;
       allow create: if isSignedIn()
         && request.resource.data.ownerUid == request.auth.uid
-        && request.resource.data.eateryId == eateryId;
+        && request.resource.data.eateryId == eateryId
+        && isEateryJoinMetadata(request.resource.data);
       allow update, delete: if false;
     }
 
@@ -246,11 +422,18 @@ service cloud.firestore {
       allow read: if canAccessEatery(eateryId);
 
       allow create: if isAdmin()
-        && eateryId == userEateryId()
-        && request.resource.data.eateryId == eateryId;
+        && isEateryScopedWrite(eateryId)
+        && hasValidMenuValues(request.resource.data)
+        && isCreatedBySelfOnCreate(request.resource.data);
 
-      allow update, delete: if isAdmin()
-        && eateryId == userEateryId();
+      allow update: if isEateryAdmin(eateryId)
+        && isEateryImmutableUpdate(eateryId)
+        && isCreatedByImmutableOnUpdate()
+        && hasValidMenuValues(request.resource.data);
+
+      allow delete: if isAdmin()
+        && eateryId == userEateryId()
+        && resource.data.eateryId == eateryId;
 
       // Staff/admin stock-only updates (includes servings, isAvailable, inventory link)
       allow update: if canAccessEatery(eateryId)
@@ -268,14 +451,19 @@ service cloud.firestore {
       // straight into 'completed' (POS "Complete"). Both are single writes that
       // deduct stock in the same transaction, so allowing either here keeps
       // that guarantee — completing an order afterwards would deduct twice.
-      allow create: if canAccessEatery(eateryId)
-        && request.resource.data.eateryId == eateryId
+      allow create: if isEateryScopedWrite(eateryId)
+        && canAccessEatery(eateryId)
         && request.resource.data.createdBy == request.auth.uid
         && request.resource.data.createdByName is string
-        && request.resource.data.status in ['pending', 'completed'];
+        && request.resource.data.status in ['pending', 'completed']
+        && hasValidOrderValues(request.resource.data);
 
-      allow update: if isAdmin()
-        && eateryId == userEateryId();
+      // Server-authoritative total recalculation is a follow-up; until then
+      // admin edits must still keep the identity and bounds of the order.
+      allow update: if isEateryAdmin(eateryId)
+        && isEateryImmutableUpdate(eateryId)
+        && isCreatedByImmutableOnUpdate()
+        && hasValidOrderValues(request.resource.data);
 
       // Staff/admin: append items to pending orders
       allow update: if canAccessEatery(eateryId)
@@ -297,11 +485,18 @@ service cloud.firestore {
       allow read: if canAccessEatery(eateryId);
 
       allow create: if isAdmin()
-        && eateryId == userEateryId()
-        && request.resource.data.eateryId == eateryId;
+        && isEateryScopedWrite(eateryId)
+        && hasValidInventoryValues(request.resource.data)
+        && isCreatedBySelfOnCreate(request.resource.data);
 
-      allow update, delete: if isAdmin()
-        && eateryId == userEateryId();
+      allow update: if isEateryAdmin(eateryId)
+        && isEateryImmutableUpdate(eateryId)
+        && isCreatedByImmutableOnUpdate()
+        && hasValidInventoryValues(request.resource.data);
+
+      allow delete: if isAdmin()
+        && eateryId == userEateryId()
+        && resource.data.eateryId == eateryId;
 
       // Staff/admin stock-only updates
       allow update: if canAccessEatery(eateryId)
@@ -353,13 +548,33 @@ service cloud.firestore {
         && eateryId == userEateryId();
     }
 
+    // Purchase receipts are financial source documents: only admins (or the
+    // Admin SDK) may create them. Receipts are schema-checked and immutable.
     match /eateries/{eateryId}/purchase_receipts/{docId} {
       allow read: if canAccessEatery(eateryId);
-      allow create: if canAccessEatery(eateryId)
-        && request.resource.data.eateryId == eateryId;
+      allow create: if isAdmin()
+        && isEateryScopedWrite(eateryId)
+        && request.resource.data.keys().hasAll([
+          'receiptNumber',
+          'status',
+          'items'
+        ])
+        && request.resource.data.receiptNumber is string
+        && request.resource.data.status in ['received', 'pending', 'cancelled']
+        && request.resource.data.items is list
+        && request.resource.data.items.size() > 0
+        && request.resource.data.items.size() <= 500
+        && (!('receivedAt' in request.resource.data)
+          || request.resource.data.receivedAt is string
+          || request.resource.data.receivedAt is timestamp)
+        && (!('supplierName' in request.resource.data)
+          || request.resource.data.supplierName is string)
+        && (!('total' in request.resource.data)
+          || isValidAmount(request.resource.data.total));
       allow update: if false;
       allow delete: if isAdmin()
-        && eateryId == userEateryId();
+        && eateryId == userEateryId()
+        && resource.data.eateryId == eateryId;
     }
 
     match /eateries/{eateryId}/stock_adjustments/{docId} {
@@ -418,80 +633,77 @@ service cloud.firestore {
       allow create, update, delete: if isAdmin() && eateryId == userEateryId();
     }
 
+    // Expenses are ledger entries. The old "any member may post an
+    // inventory_purchase expense" branch allowed forged costs and is gone:
+    // posting expenses (including GRN mirrors) is admin/server-only.
     match /eateries/{eateryId}/expenses/{docId} {
       allow read: if canAccessEatery(eateryId);
-      // Admins may record any expense. Any eatery member may create the
-      // auto-posted expense that mirrors an inventory purchase (GRN) so that
-      // recording goods received always produces a matching cost entry.
-      allow create: if isSignedIn()
-        && eateryId == userEateryId()
-        && request.resource.data.eateryId == eateryId
-        && (
-          isAdmin()
-          || (
-            request.resource.data.source == 'inventory_purchase'
-            && request.resource.data.linkedPurchaseId is string
-            && request.resource.data.amount > 0
-          )
-        );
-      allow update, delete: if isSignedIn()
-        && isAdmin()
+      allow create: if isAdmin()
+        && isEateryScopedWrite(eateryId)
+        && request.resource.data.keys().hasAll(['name', 'amount'])
+        && request.resource.data.name is string
+        && isPositiveAmount(request.resource.data.amount)
+        && (!('source' in request.resource.data)
+          || request.resource.data.source is string);
+      allow update: if isEateryAdmin(eateryId)
+        && isEateryImmutableUpdate(eateryId)
+        && isPositiveAmount(request.resource.data.amount);
+      allow delete: if isAdmin()
         && eateryId == userEateryId()
         && resource.data.eateryId == eateryId;
     }
 
     match /eateries/{eateryId}/payables/{docId} {
       allow read: if canAccessEatery(eateryId);
-      allow create: if canAccessEatery(eateryId)
-        && request.resource.data.eateryId == eateryId
-        && request.resource.data.keys().hasAll(['name', 'amount']);
-      allow update: if canAccessEatery(eateryId)
-        && resource.data.eateryId == eateryId
-        && request.resource.data.eateryId == eateryId;
-      allow delete: if isSignedIn()
-        && isAdmin()
+      allow create: if isAdmin()
+        && isEateryScopedWrite(eateryId)
+        && request.resource.data.keys().hasAll(['name', 'amount'])
+        && request.resource.data.name is string
+        && isValidAmount(request.resource.data.amount)
+        && (!('status' in request.resource.data)
+          || request.resource.data.status in ['unpaid', 'paid', 'overdue', 'cancelled']);
+      allow update: if isEateryAdmin(eateryId)
+        && isEateryImmutableUpdate(eateryId)
+        && isValidAmount(request.resource.data.amount)
+        && (!('status' in request.resource.data)
+          || request.resource.data.status in ['unpaid', 'paid', 'overdue', 'cancelled']);
+      allow delete: if isAdmin()
         && eateryId == userEateryId()
         && resource.data.eateryId == eateryId;
     }
 
     match /eateries/{eateryId}/notifications/{docId} {
       allow read: if canAccessEatery(eateryId);
-      allow create: if isSignedIn()
-        && eateryId == userEateryId()
-        && request.resource.data.eateryId == eateryId;
-      allow update: if isSignedIn()
-        && canAccessEatery(eateryId)
-        && resource.data.eateryId == eateryId
-        && request.resource.data.eateryId == eateryId
+      allow create: if isApprovedStaff()
+        && isEateryScopedWrite(eateryId)
+        && hasValidNotificationPayload(request.resource.data)
+        && hasDeterministicNotificationId(eateryId, docId);
+      allow update: if canAccessEatery(eateryId)
+        && isEateryImmutableUpdate(eateryId)
         && (isAdmin()
-          || (isApprovedStaff()
-            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-              'readBy',
-              'isRead',
-              'readAt',
-              'updatedAt'
-            ])));
-      allow delete: if isSignedIn()
-        && isAdmin()
+          || request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'readBy',
+            'isRead',
+            'readAt',
+            'updatedAt'
+          ]));
+      allow delete: if isAdmin()
         && eateryId == userEateryId()
         && resource.data.eateryId == eateryId;
     }
 
     match /eateries/{eateryId}/settings/{docId} {
-      // SMS settings contain alert configuration; attendance settings define
-      // payroll-affecting rules. Both are admin-only to write.
+      // All settings are admin-only to write. SMS settings (alert routing)
+      // remain admin-only to read; other operational settings stay readable
+      // by approved members of the eatery.
       allow read: if canAccessEatery(eateryId)
         && (docId != 'sms' || isAdmin());
-      allow create: if canAccessEatery(eateryId)
-        && canWriteEaterySettings(docId)
-        && request.resource.data.eateryId == eateryId;
-      allow update: if canAccessEatery(eateryId)
-        && canWriteEaterySettings(docId)
-        && resource.data.eateryId == eateryId
-        && request.resource.data.eateryId == eateryId;
+      allow create: if isAdmin()
+        && isEateryScopedWrite(eateryId);
+      allow update: if isEateryAdmin(eateryId)
+        && isEateryImmutableUpdate(eateryId);
       allow delete: if isAdmin()
         && eateryId == userEateryId()
-        && canWriteEaterySettings(docId)
         && resource.data.eateryId == eateryId;
     }
 
@@ -745,24 +957,26 @@ service cloud.firestore {
     }
 
     match /notifications/{docId} {
-      allow read: if isSignedIn()
-        && resource.data.eateryId == userEateryId()
-        && (isAdmin() || isApprovedStaff());
-      allow create: if isSignedIn()
-        && request.resource.data.eateryId == userEateryId();
-      allow update: if isSignedIn()
-        && resource.data.eateryId == userEateryId()
+      allow read: if canAccessEateryData(resource.data.eateryId)
+        && notificationVisibleToUser(resource.data);
+      // System/server notifications are written with the Admin SDK and bypass
+      // these rules. Client-created notifications must come from an approved
+      // member of the addressed eatery, match a known schema and use the
+      // deterministic "<eateryId>_<dedupeKey>" document id.
+      allow create: if isApprovedStaff()
+        && request.resource.data.eateryId == userEateryId()
+        && hasValidNotificationPayload(request.resource.data)
+        && hasDeterministicNotificationId(request.resource.data.eateryId, docId);
+      allow update: if canAccessEateryData(resource.data.eateryId)
         && request.resource.data.eateryId == resource.data.eateryId
         && (isAdmin()
-          || (isApprovedStaff()
-            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-              'readBy',
-              'isRead',
-              'readAt',
-              'updatedAt'
-            ])));
-      allow delete: if isSignedIn()
-        && isAdmin()
+          || request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'readBy',
+            'isRead',
+            'readAt',
+            'updatedAt'
+          ]));
+      allow delete: if isAdmin()
         && resource.data.eateryId == userEateryId();
     }
 

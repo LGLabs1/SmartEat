@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import '../../../../../models/inventory_item.dart';
+import '../../../../../services/receipt_printer_service.dart';
 import '../../../../../theme.dart';
 import '../../data/models/purchase_list_item.dart';
 import '../../data/models/purchase_receipt.dart';
@@ -84,6 +85,53 @@ class _PurchaseListScreenState extends State<PurchaseListScreen> {
     await PurchaseListPdfService.export(list: list, totalCost: total);
   }
 
+  Future<void> _printList() async {
+    final notifier = context.read<PurchaseListNotifier>();
+    final list = notifier.list;
+    if (list.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Add items to the list before printing.')),
+      );
+      return;
+    }
+
+    final total = list.fold<double>(0.0, (sum, e) => sum + e.lineCost);
+    final lines = <String>[
+      'Generated: ${DateFormat('MMM d, yyyy h:mm a').format(DateTime.now())}',
+      'Items: ${list.length} · Checked: ${notifier.checkedCount}',
+      ReceiptPrinterService.documentDivider,
+      ...list.map(
+        (entry) => '[${entry.checked ? "X" : " "}] ${entry.name} '
+            '${_qty(entry.qty)} ${entry.unit} x ${_formatCurrency(entry.unitCost)} '
+            '= ${_formatCurrency(entry.lineCost)}',
+      ),
+      ReceiptPrinterService.documentDivider,
+      'TOTAL: ${_formatCurrency(total)}',
+      'PENDING: ${_formatCurrency(notifier.pendingCost)}',
+      'CHECKED: ${_formatCurrency(notifier.checkedCost)}',
+    ];
+
+    final result = await ReceiptPrinterService.printDocument(
+      title: 'Purchase List',
+      subtitle: 'SmartEat inventory purchasing',
+      lines: lines,
+      footer: 'SmartEat Purchase List',
+    );
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          result.printed
+              ? 'Purchase list sent to printer.'
+              : result.error ?? 'Could not print purchase list.',
+        ),
+      ),
+    );
+  }
+
+  String _qty(double value) =>
+      value % 1 == 0 ? value.toStringAsFixed(0) : value.toStringAsFixed(2);
+
   Future<void> _record() async {
     final notifier = context.read<PurchaseListNotifier>();
     if (notifier.list.isEmpty) {
@@ -131,6 +179,11 @@ class _PurchaseListScreenState extends State<PurchaseListScreen> {
       appBar: AppBar(
         title: const Text('Purchase List'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.print_outlined),
+            tooltip: 'Print via Bluetooth',
+            onPressed: _printList,
+          ),
           IconButton(
             icon: const Icon(Icons.picture_as_pdf_outlined),
             tooltip: 'Download PDF',

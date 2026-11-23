@@ -56,13 +56,18 @@ class FinanceExpensesTab extends StatelessWidget {
       // Source filter
       final linked = FinanceMetrics.isLinkedPurchase(e);
       final bill = FinanceMetrics.isPayablePayment(e);
+      final payroll = FinanceMetrics.isPayrollPayout(e);
       if (sourceFilter == FinanceMetrics.inventorySource && !linked) {
         return false;
       }
       if (sourceFilter == FinanceMetrics.payablePaymentSource && !bill) {
         return false;
       }
-      if (sourceFilter == FinanceMetrics.manualSource && (linked || bill)) {
+      if (sourceFilter == FinanceMetrics.payrollPayoutSource && !payroll) {
+        return false;
+      }
+      if (sourceFilter == FinanceMetrics.manualSource &&
+          (linked || bill || payroll)) {
         return false;
       }
 
@@ -120,10 +125,12 @@ class FinanceExpensesTab extends StatelessWidget {
     final manualCount = filtered
         .where((e) =>
             !FinanceMetrics.isLinkedPurchase(e) &&
-            !FinanceMetrics.isPayablePayment(e))
+            !FinanceMetrics.isPayablePayment(e) &&
+            !FinanceMetrics.isPayrollPayout(e))
         .length;
     final linkedCount = filtered.where(FinanceMetrics.isLinkedPurchase).length;
     final billCount = filtered.where(FinanceMetrics.isPayablePayment).length;
+    final payrollCount = filtered.where(FinanceMetrics.isPayrollPayout).length;
 
     return Column(
       children: [
@@ -208,6 +215,15 @@ class FinanceExpensesTab extends StatelessWidget {
                           sourceFilter == FinanceMetrics.payablePaymentSource,
                       onTap: () => onSourceFilterChanged(
                           FinanceMetrics.payablePaymentSource),
+                    ),
+                    _chip(
+                      context,
+                      label: 'Payroll ($payrollCount)',
+                      icon: Icons.payments_outlined,
+                      selected:
+                          sourceFilter == FinanceMetrics.payrollPayoutSource,
+                      onTap: () => onSourceFilterChanged(
+                          FinanceMetrics.payrollPayoutSource),
                     ),
                   ],
                 ),
@@ -355,8 +371,12 @@ class _ExpenseCard extends StatelessWidget {
     final method = (expense['paymentMethod'] ?? '').toString().trim();
     final linked = FinanceMetrics.isLinkedPurchase(expense);
     final bill = FinanceMetrics.isPayablePayment(expense);
-    final accent =
-        bill ? FinanceStatus.billPayment : financeCategoryColor(category);
+    final payroll = FinanceMetrics.isPayrollPayout(expense);
+    final accent = bill
+        ? FinanceStatus.billPayment
+        : payroll
+            ? FinanceStatus.linked
+            : financeCategoryColor(category);
 
     final details = <String>[
       if (date != null) FinanceFormat.date(date),
@@ -391,7 +411,9 @@ class _ExpenseCard extends StatelessWidget {
                       ? Icons.inventory_2_outlined
                       : bill
                           ? Icons.receipt_long_outlined
-                          : financeCategoryIcon(category),
+                          : payroll
+                              ? Icons.payments_outlined
+                              : financeCategoryIcon(category),
                   size: 18,
                   color: accent,
                 ),
@@ -429,6 +451,14 @@ class _ExpenseCard extends StatelessWidget {
                             label: 'Bill',
                             color: FinanceStatus.billPayment,
                             icon: Icons.receipt_long_outlined,
+                          ),
+                        ],
+                        if (payroll) ...[
+                          const SizedBox(width: 6),
+                          const FinanceStatusBadge(
+                            label: 'Payroll',
+                            color: FinanceStatus.linked,
+                            icon: Icons.payments_outlined,
                           ),
                         ],
                       ],
@@ -481,6 +511,13 @@ class _ExpenseCard extends StatelessWidget {
                         'unpaid to remove it.',
                     onPressed: onUnpay ?? onDelete,
                     icon: const Icon(Icons.undo),
+                  )
+                else if (payroll)
+                  const IconButton(
+                    tooltip: 'Recorded from staff payroll. Adjust the payout '
+                        'instead.',
+                    onPressed: null,
+                    icon: Icon(Icons.lock_outline),
                   )
                 else
                   IconButton(

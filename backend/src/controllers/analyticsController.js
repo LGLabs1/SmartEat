@@ -1,4 +1,5 @@
 const { db } = require('../config/firebase');
+const { requireTenant } = require('../middleware/auth');
 const { formatDate, calculatePercentageChange, roundAmount } = require('../utils/helpers');
 const axios = require('axios');
 
@@ -7,13 +8,16 @@ const axios = require('axios');
  */
 exports.getDailySalesAnalytics = async (req, res) => {
   try {
+    const eateryId = requireTenant(req, res);
+    if (!eateryId) return;
+
     const { days = 30 } = req.query;
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - parseInt(days));
 
     const ordersSnapshot = await db
       .collection('orders')
-      .where('eateryId', '==', req.user.eateryId)
+      .where('eateryId', '==', eateryId)
       .where('createdAt', '>=', startDate)
       .where('status', '==', 'completed')
       .orderBy('createdAt', 'asc')
@@ -73,13 +77,16 @@ exports.getDailySalesAnalytics = async (req, res) => {
  */
 exports.getItemPerformance = async (req, res) => {
   try {
+    const eateryId = requireTenant(req, res);
+    if (!eateryId) return;
+
     const { days = 30 } = req.query;
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - parseInt(days));
 
     const ordersSnapshot = await db
       .collection('orders')
-      .where('eateryId', '==', req.user.eateryId)
+      .where('eateryId', '==', eateryId)
       .where('createdAt', '>=', startDate)
       .where('status', '==', 'completed')
       .get();
@@ -136,6 +143,9 @@ exports.getItemPerformance = async (req, res) => {
  */
 exports.getSummaryStats = async (req, res) => {
   try {
+    const eateryId = requireTenant(req, res);
+    if (!eateryId) return;
+
     const today = new Date();
     const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
     const weekStart = new Date(today);
@@ -145,7 +155,7 @@ exports.getSummaryStats = async (req, res) => {
     // Today's orders
     const todayOrders = await db
       .collection('orders')
-      .where('eateryId', '==', req.user.eateryId)
+      .where('eateryId', '==', eateryId)
       .where('createdAt', '>=', todayStart)
       .where('status', '==', 'completed')
       .get();
@@ -153,7 +163,7 @@ exports.getSummaryStats = async (req, res) => {
     // This week's orders
     const weekOrders = await db
       .collection('orders')
-      .where('eateryId', '==', req.user.eateryId)
+      .where('eateryId', '==', eateryId)
       .where('createdAt', '>=', weekStart)
       .where('status', '==', 'completed')
       .get();
@@ -161,7 +171,7 @@ exports.getSummaryStats = async (req, res) => {
     // This month's orders
     const monthOrders = await db
       .collection('orders')
-      .where('eateryId', '==', req.user.eateryId)
+      .where('eateryId', '==', eateryId)
       .where('createdAt', '>=', monthStart)
       .where('status', '==', 'completed')
       .get();
@@ -184,14 +194,14 @@ exports.getSummaryStats = async (req, res) => {
     // Get menu items count
     const menuSnapshot = await db
       .collection('menu_items')
-      .where('eateryId', '==', req.user.eateryId)
+      .where('eateryId', '==', eateryId)
       .where('isAvailable', '==', true)
       .get();
 
     // Get low stock count
     const lowStockSnapshot = await db
       .collection('inventory')
-      .where('eateryId', '==', req.user.eateryId)
+      .where('eateryId', '==', eateryId)
       .where('currentStock', '<=', db.FieldValue.increment('minStock'))
       .get();
 
@@ -219,9 +229,11 @@ exports.getSummaryStats = async (req, res) => {
  */
 exports.getOrderCountForecast = async (req, res) => {
   try {
+    const eateryId = requireTenant(req, res);
+    if (!eateryId) return;
+
     const { days = 7 } = req.query;
     const forecastDays = parseInt(days);
-    const eateryId = req.user.eateryId;
 
     // Fetch last 12 weeks of order data for pattern analysis
     const weeksToAnalyze = 12;
@@ -346,9 +358,11 @@ exports.getOrderCountForecast = async (req, res) => {
  */
 exports.getSalesForecast = async (req, res) => {
   try {
+    const eateryId = requireTenant(req, res);
+    if (!eateryId) return;
+
     const { days = 7 } = req.query;
     const forecastDays = parseInt(days);
-    const eateryId = req.user.eateryId;
 
     // Fetch last 12 weeks of order data
     const weeksToAnalyze = 12;
@@ -468,11 +482,14 @@ exports.getSalesForecast = async (req, res) => {
  */
 exports.getRecommendations = async (req, res) => {
   try {
+    const eateryId = requireTenant(req, res);
+    if (!eateryId) return;
+
     // Call ML service
     const mlServiceUrl = process.env.ML_SERVICE_URL || 'http://localhost:8000';
     const response = await axios.get(`${mlServiceUrl}/api/recommendations`, {
       params: {
-        eateryId: req.user.eateryId
+        eateryId: eateryId
       }
     });
 
@@ -505,13 +522,16 @@ exports.getRecommendations = async (req, res) => {
  */
 exports.getPeakHours = async (req, res) => {
   try {
+    const eateryId = requireTenant(req, res);
+    if (!eateryId) return;
+
     const { days = 30 } = req.query;
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - parseInt(days));
 
     const ordersSnapshot = await db
       .collection('orders')
-      .where('eateryId', '==', req.user.eateryId)
+      .where('eateryId', '==', eateryId)
       .where('createdAt', '>=', startDate)
       .where('status', '==', 'completed')
       .get();

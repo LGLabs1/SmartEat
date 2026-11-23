@@ -22,17 +22,134 @@ import 'screens/about_screen.dart';
 import 'widgets/ai_side_panel.dart';
 import 'widgets/sage_briefing_card.dart';
 import 'widgets/sage_full_screen.dart';
+import 'widgets/sage_popup_bubble.dart';
 import 'theme.dart';
 
-void main() async {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  try {
-    await FirebaseService.initializeFirebase();
+  runApp(const BootstrapApp());
+}
 
-    // Initialize notifications in background - don't block on errors
-    NotificationService().initialize().catchError((e) {});
-  } catch (e) {}
-  runApp(const SmartEatApp());
+class BootstrapApp extends StatefulWidget {
+  const BootstrapApp({Key? key}) : super(key: key);
+
+  @override
+  State<BootstrapApp> createState() => _BootstrapAppState();
+}
+
+class _BootstrapAppState extends State<BootstrapApp> {
+  bool _firebaseReady = false;
+  Object? _firebaseError;
+  bool _initializing = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _initialize();
+  }
+
+  Future<void> _initialize() async {
+    setState(() {
+      _initializing = true;
+      _firebaseError = null;
+      _firebaseReady = false;
+    });
+    try {
+      await FirebaseService.initializeFirebase();
+      // Initialize notifications in background - don't block on errors.
+      unawaited(NotificationService().initialize().catchError((_) {}));
+      if (!mounted) return;
+      setState(() {
+        _firebaseReady = true;
+        _initializing = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _firebaseError = e;
+        _initializing = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_firebaseReady) {
+      return const SmartEatApp();
+    }
+
+    return MaterialApp(
+      title: 'Smart Eat - Eatery Management System',
+      theme: AppTheme.lightTheme,
+      debugShowCheckedModeBanner: false,
+      home: Scaffold(
+        backgroundColor: Colors.white,
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: _initializing
+                ? Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Container(
+                        width: 80,
+                        height: 80,
+                        decoration: BoxDecoration(
+                          color: Colors.grey.shade200,
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                      ),
+                      const SizedBox(height: 24),
+                      const Text(
+                        'SmartEat',
+                        style: TextStyle(
+                          fontSize: 24,
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xFF1E88E5),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      const Text(
+                        'Starting...',
+                        style: TextStyle(fontSize: 14, color: Colors.grey),
+                      ),
+                    ],
+                  )
+                : Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.error_outline,
+                          size: 56, color: Color(0xFF1E88E5)),
+                      const SizedBox(height: 16),
+                      const Text(
+                        'Unable to start SmartEat',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        _firebaseError?.toString() ??
+                            'Failed to initialize required services.',
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(color: Colors.black54),
+                      ),
+                      const SizedBox(height: 20),
+                      FilledButton.icon(
+                        onPressed: _initialize,
+                        icon: const Icon(Icons.refresh),
+                        label: const Text('Retry'),
+                      ),
+                    ],
+                  ),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class SmartEatApp extends StatelessWidget {
@@ -89,6 +206,14 @@ class AIAssistantShell extends StatelessWidget {
 
   final Widget child;
 
+  void _openFromPopup(AIAssistantProvider assistant) {
+    assistant.dismissPopup();
+    assistant.setPanelExpanded(true);
+    if (assistant.activeInsights.isNotEmpty) {
+      assistant.setActivePage(assistant.activeInsights.first.page);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Stack(
@@ -101,28 +226,30 @@ class AIAssistantShell extends StatelessWidget {
             if (assistant.staffDashboardActive) {
               return const SizedBox.shrink();
             }
-            final screenSize = MediaQuery.of(context).size;
-            final safeArea = MediaQuery.of(context).padding;
             final panelOpen = assistant.isExpanded && !assistant.isFullScreen;
-            final panelWidth = panelOpen
-                ? (screenSize.width > 420 ? 380.0 : screenSize.width * 0.85)
-                : 0.0;
-            final usableRect = Rect.fromLTWH(
-              safeArea.left + 12,
-              safeArea.top + 72,
-              (screenSize.width -
-                      panelWidth -
-                      safeArea.left -
-                      safeArea.right -
-                      24)
-                  .clamp(120.0, screenSize.width),
-              (screenSize.height - safeArea.top - safeArea.bottom - 120)
-                  .clamp(120.0, screenSize.height),
-            );
-            assistant.updateWorkspaceBounds(usableRect);
+            final popupContent = assistant.popupContent;
+            final showPopup = !assistant.isFullScreen &&
+                !panelOpen &&
+                !assistant.showSageBriefing &&
+                assistant.showPopup &&
+                assistant.sageAnchorRect != null &&
+                popupContent != null &&
+                popupContent.isNotEmpty;
 
             return Stack(
               children: [
+                // Rendered first so panel, briefing, and full-screen layers
+                // always draw on top of it. The bubble itself clamps to the
+                // MediaQuery safe area.
+                if (showPopup)
+                  Positioned.fill(
+                    child: SagePopupBubble(
+                      anchor: assistant.sageAnchorRect!,
+                      message: popupContent,
+                      onOpen: () => _openFromPopup(assistant),
+                      onDismiss: assistant.dismissPopup,
+                    ),
+                  ),
                 if (assistant.isFullScreen)
                   const Positioned.fill(child: SageFullScreen()),
                 if (panelOpen) ...[
@@ -156,50 +283,6 @@ class AIAssistantShell extends StatelessWidget {
                             content: assistant.sageBriefingContent!,
                             onDismiss: assistant.dismissSageBriefing,
                             onAskSage: assistant.openSageChat,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-
-                // Transient popup anchored to the assistant button
-                if (!assistant.isFullScreen &&
-                    assistant.showPopup &&
-                    assistant.buttonPosition != null)
-                  Positioned(
-                    left: (assistant.buttonPosition!.dx - 260)
-                        .clamp(8.0, MediaQuery.of(context).size.width - 280.0),
-                    top: (assistant.buttonPosition!.dy - 80)
-                        .clamp(8.0, MediaQuery.of(context).size.height - 120.0),
-                    child: Material(
-                      color: Colors.transparent,
-                      child: GestureDetector(
-                        onTap: () {
-                          assistant.setPanelExpanded(true);
-                          if (assistant.activeInsights.isNotEmpty) {
-                            assistant.setActivePage(
-                                assistant.activeInsights.first.page);
-                          }
-                        },
-                        child: Container(
-                          width: 260,
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            color:
-                                const Color(0xFF0B1220).withValues(alpha: 0.95),
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(
-                                color: Colors.white.withValues(alpha: 0.06)),
-                            boxShadow: [
-                              BoxShadow(
-                                  color: Colors.black.withValues(alpha: 0.35),
-                                  blurRadius: 20)
-                            ],
-                          ),
-                          child: Text(
-                            assistant.popupContent ?? '',
-                            style: const TextStyle(
-                                color: Colors.white70, fontSize: 13),
                           ),
                         ),
                       ),

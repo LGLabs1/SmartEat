@@ -4,9 +4,9 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../config/sms_config.dart';
 import '../utils/phone_utils.dart';
 import 'api_service.dart';
+import 'notification_service.dart';
 import 'sms_settings_service.dart';
 
 class SmsSendResult {
@@ -25,15 +25,6 @@ class SmsService {
   SmsService._();
 
   static final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-
-  static String _sanitizeSenderId(String senderId) {
-    String s = senderId.trim();
-    if (s.isEmpty) return SmsConfig.defaultSenderId;
-    s = s.replaceAll(RegExp(r'[^a-zA-Z0-9]'), '');
-    if (s.isEmpty) return SmsConfig.defaultSenderId;
-    if (s.length > 11) s = s.substring(0, 11);
-    return s;
-  }
 
   static String _clampMessage(String message, {int maxLength = 459}) {
     if (message.length <= maxLength) return message;
@@ -94,17 +85,51 @@ class SmsService {
         'type': type,
         'status': status,
         'recipient': _maskPhone(recipient),
-        'messagePreview': preview.length > 160 ? preview.substring(0, 160) : preview,
+        'messagePreview':
+            preview.length > 160 ? preview.substring(0, 160) : preview,
         if (dedupeKey != null) 'dedupeKey': dedupeKey,
-        if (messageId != null && messageId.isNotEmpty) 'providerMessageId': messageId,
-        if (err.isNotEmpty) 'error': err.length > 500 ? err.substring(0, 500) : err,
+        if (messageId != null && messageId.isNotEmpty)
+          'providerMessageId': messageId,
+        if (err.isNotEmpty)
+          'error': err.length > 500 ? err.substring(0, 500) : err,
         'createdAt': FieldValue.serverTimestamp(),
         'updatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
     } catch (_) {}
   }
 
-
+  static Future<void> _recordNotification({
+    required String eateryId,
+    required String type,
+    required String message,
+    String? dedupeKey,
+    String? messageId,
+  }) async {
+    final titles = <String, String>{
+      'test': 'Test SMS Sent',
+      'low_stock': 'Low Stock SMS Sent',
+      'bill_reminder': 'Bill Reminder SMS Sent',
+      'daily_summary': 'Daily Summary SMS Sent',
+    };
+    await NotificationService().persistFeedNotification(
+      title: titles[type] ?? 'SMS Notification Sent',
+      body: message,
+      type: 'sms_$type',
+      source: 'sms',
+      audience: 'admin',
+      eateryId: eateryId,
+      dedupeKey: 'sms_${dedupeKey ?? DateTime.now().millisecondsSinceEpoch}',
+      data: <String, dynamic>{
+        'smsType': type,
+        'providerMessageId': messageId,
+        'target': type == 'low_stock'
+            ? 'inventory'
+            : type == 'bill_reminder'
+                ? 'payables'
+                : 'dashboard',
+      },
+    );
+  }
 
   static Future<SmsSendResult> _send({
     required String eateryId,
@@ -137,7 +162,8 @@ class SmsService {
           error: 'Invalid recipient number',
           dedupeKey: dedupeKey,
         );
-        return const SmsSendResult(status: 'failed', error: 'Invalid recipient number');
+        return const SmsSendResult(
+            status: 'failed', error: 'Invalid recipient number');
       }
 
       final clampedMessage = _clampMessage(message);
@@ -145,8 +171,11 @@ class SmsService {
         final data = await ApiService.sendSmsMessage(
           phoneNumber: normalizedRecipient,
           message: clampedMessage,
+          purpose: type,
         );
-        final messageId = data['message_id']?.toString() ?? data['id']?.toString() ?? data['messageId']?.toString();
+        final messageId = data['message_id']?.toString() ??
+            data['id']?.toString() ??
+            data['messageId']?.toString();
         await _logSms(
           eateryId: eateryId,
           type: type,
@@ -155,6 +184,13 @@ class SmsService {
           messagePreview: clampedMessage,
           messageId: messageId,
           dedupeKey: dedupeKey,
+        );
+        await _recordNotification(
+          eateryId: eateryId,
+          type: type,
+          message: clampedMessage,
+          dedupeKey: dedupeKey,
+          messageId: messageId,
         );
         return SmsSendResult(status: 'sent', messageId: messageId);
       } catch (e) {
@@ -188,12 +224,16 @@ class SmsService {
     try {
       final contact = await _loadAdminContact(eateryId);
       if (contact.phone == null || !PhoneUtils.isValidPhMobile(contact.phone)) {
-        return const SmsSendResult(status: 'failed', error: 'Add a valid mobile number to the admin profile first');
+        return const SmsSendResult(
+            status: 'failed',
+            error: 'Add a valid mobile number to the admin profile first');
       }
       final settings = await _loadSettings(eateryId);
       final now = DateTime.now().toUtc().add(const Duration(hours: 8));
-      final time = '${now.month}/${now.day}/${now.year} ${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
-      final message = 'SmartEat: Test SMS for ${contact.eateryName} at $time. Alerts work.';
+      final time =
+          '${now.month}/${now.day}/${now.year} ${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
+      final message =
+          'SmartEat: Test SMS for ${contact.eateryName} at $time. Alerts work.';
       final result = await _send(
         eateryId: eateryId,
         type: 'test',
@@ -253,10 +293,15 @@ class SmsService {
     if (currentStock <= 0) {
       message = 'SmartEat: OUT OF STOCK - $itemName. Reorder now.';
     } else {
-      final stockStr = currentStock == currentStock.roundToDouble() ? currentStock.toInt().toString() : currentStock.toString();
-      final threshStr = threshold == threshold.roundToDouble() ? threshold.toInt().toString() : threshold.toString();
+      final stockStr = currentStock == currentStock.roundToDouble()
+          ? currentStock.toInt().toString()
+          : currentStock.toString();
+      final threshStr = threshold == threshold.roundToDouble()
+          ? threshold.toInt().toString()
+          : threshold.toString();
       final unitSuffix = unit.isNotEmpty ? ' $unit' : '';
-      message = 'SmartEat: LOW STOCK - $itemName: $stockStr$unitSuffix left (threshold $threshStr$unitSuffix).';
+      message =
+          'SmartEat: LOW STOCK - $itemName: $stockStr$unitSuffix left (threshold $threshStr$unitSuffix).';
     }
 
     final result = await _send(
@@ -265,7 +310,8 @@ class SmsService {
       message: message,
       recipient: contact.phone!,
       senderId: settings.senderId,
-      dedupeKey: 'low_stock_${_safeDocId(itemId)}_${DateTime.now().millisecondsSinceEpoch}',
+      dedupeKey:
+          'low_stock_${_safeDocId(itemId)}_${DateTime.now().millisecondsSinceEpoch}',
     );
     return result;
   }
@@ -325,14 +371,20 @@ class SmsService {
         final name = (bill['name'] as String);
         final shortName = name.length > 28 ? name.substring(0, 28) : name;
         final amount = bill['amount'] is num ? bill['amount'] as num : 0;
-        final amountText = amount > 0 ? ' PHP${amount.toString()}' : ' variable';
+        final amountText =
+            amount > 0 ? ' PHP${amount.toString()}' : ' variable';
         final days = bill['days'] as int;
-        final dueText = days < 0 ? ' overdue ${-days}d' : days == 0 ? ' due today' : ' due in ${days}d';
+        final dueText = days < 0
+            ? ' overdue ${-days}d'
+            : days == 0
+                ? ' due today'
+                : ' due in ${days}d';
         return '$shortName$amountText$dueText';
       }).join('; ');
       final more = bills.length > 3 ? ' +${bills.length - 3} more' : '';
       final verb = bills.length == 1 ? 'needs' : 'need';
-      final message = 'SmartEat: ${bills.length} bill${bills.length == 1 ? '' : 's'} $verb attention. $lines$more.';
+      final message =
+          'SmartEat: ${bills.length} bill${bills.length == 1 ? '' : 's'} $verb attention. $lines$more.';
 
       final result = await _send(
         eateryId: eateryId,
@@ -382,7 +434,8 @@ class SmsService {
           .collection('eateries')
           .doc(eateryId)
           .collection('orders')
-          .where('createdAt', isGreaterThanOrEqualTo: Timestamp.fromDate(startUtc))
+          .where('createdAt',
+              isGreaterThanOrEqualTo: Timestamp.fromDate(startUtc))
           .where('createdAt', isLessThan: Timestamp.fromDate(endUtc))
           .get();
 
@@ -394,13 +447,17 @@ class SmsService {
         final status = (order['status'] ?? '').toString().toLowerCase();
         if (status != 'completed') continue;
         orderCount++;
-        revenue += (order['totalAmount'] is num) ? (order['totalAmount'] as num).toDouble() : 0;
+        revenue += (order['totalAmount'] is num)
+            ? (order['totalAmount'] as num).toDouble()
+            : 0;
         final items = order['items'] as List?;
         if (items != null) {
           for (final item in items) {
             if (item is Map) {
               final name = (item['name'] ?? '').toString();
-              final qty = item['quantity'] is num ? (item['quantity'] as num).toInt() : 0;
+              final qty = item['quantity'] is num
+                  ? (item['quantity'] as num).toInt()
+                  : 0;
               if (name.isNotEmpty && qty > 0) {
                 itemQty[name] = (itemQty[name] ?? 0) + qty;
               }
@@ -412,12 +469,16 @@ class SmsService {
 
       String topText = '';
       if (itemQty.isNotEmpty) {
-        final sorted = itemQty.entries.toList()..sort((a, b) => b.value.compareTo(a.value));
+        final sorted = itemQty.entries.toList()
+          ..sort((a, b) => b.value.compareTo(a.value));
         final top = sorted.first;
         topText = ' Top: ${top.key} (${top.value} sold).';
       }
-      final revenueStr = revenue == revenue.roundToDouble() ? revenue.toInt().toString() : revenue.toStringAsFixed(0);
-      final message = 'SmartEat: Today $orderCount order${orderCount == 1 ? '' : 's'}, PHP$revenueStr.$topText';
+      final revenueStr = revenue == revenue.roundToDouble()
+          ? revenue.toInt().toString()
+          : revenue.toStringAsFixed(0);
+      final message =
+          'SmartEat: Today $orderCount order${orderCount == 1 ? '' : 's'}, PHP$revenueStr.$topText';
 
       final result = await _send(
         eateryId: eateryId,

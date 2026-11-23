@@ -251,12 +251,7 @@ class _RegisterScreenState extends State<RegisterScreen>
 
     final email = _emailController.text.trim();
     if (email.isEmpty || !_isValidEmail(email)) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Please enter a valid email first.'),
-          backgroundColor: errorColor,
-        ),
-      );
+      _showRegistrationError('Please enter a valid email first.');
       return;
     }
 
@@ -493,16 +488,12 @@ class _RegisterScreenState extends State<RegisterScreen>
 
     final email = _emailController.text.trim();
     if (email.isEmpty || !_isValidEmail(email)) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Please enter a valid email first.'),
-          backgroundColor: errorColor,
-        ),
-      );
+      _showRegistrationError('Please enter a valid email first.');
       return;
     }
 
     setState(() {
+      _registrationError = null;
       _isSendingCode = true;
       _isEmailVerified = false;
       _verificationId = null;
@@ -560,13 +551,7 @@ class _RegisterScreenState extends State<RegisterScreen>
         _emailCodeExpiresAt = expiresAt;
       });
     } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Failed to send verification code: $e'),
-          backgroundColor: errorColor,
-        ),
-      );
+      _showRegistrationError('Failed to send verification code: $e');
     } finally {
       if (mounted) {
         setState(() => _isSendingCode = false);
@@ -582,36 +567,24 @@ class _RegisterScreenState extends State<RegisterScreen>
     final verificationId = _verificationId;
 
     if (!_isValidEmail(email)) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Please enter a valid email first.'),
-          backgroundColor: errorColor,
-        ),
-      );
+      _showRegistrationError('Please enter a valid email first.');
       return;
     }
 
     if (verificationId == null || verificationId.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Please request a code first.'),
-          backgroundColor: errorColor,
-        ),
-      );
+      _showRegistrationError('Please request a code first.');
       return;
     }
 
     if (code.length != 6) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Please enter the 6-digit code.'),
-          backgroundColor: errorColor,
-        ),
-      );
+      _showRegistrationError('Please enter the 6-digit code.');
       return;
     }
 
-    setState(() => _isVerifyingCode = true);
+    setState(() {
+      _registrationError = null;
+      _isVerifyingCode = true;
+    });
     try {
       final expectedCode = _generatedEmailCode;
       final expiresAt = _emailCodeExpiresAt;
@@ -635,12 +608,7 @@ class _RegisterScreenState extends State<RegisterScreen>
     } catch (e) {
       if (!mounted) return;
       setState(() => _isEmailVerified = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Failed to verify code: $e'),
-          backgroundColor: errorColor,
-        ),
-      );
+      _showRegistrationError('Failed to verify code: $e');
     } finally {
       if (mounted) {
         setState(() => _isVerifyingCode = false);

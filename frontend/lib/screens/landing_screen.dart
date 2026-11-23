@@ -7,6 +7,7 @@ import '../theme.dart';
 import '../utils/web_download_stub.dart'
     if (dart.library.js_interop) '../utils/web_download_web.dart';
 import '../widgets/app_logo.dart';
+import '../widgets/sage_avatar.dart';
 
 class LandingScreen extends StatefulWidget {
   const LandingScreen({super.key});
@@ -43,8 +44,19 @@ class _LandingScreenState extends State<LandingScreen>
     _downloadsSlide = _stagedSlide(0.3, 0.86, const Offset(0, 0.06));
     _featuresFade = _stagedFade(0.42, 1);
     _featuresSlide = _stagedSlide(0.42, 1, const Offset(0, 0.06));
+  }
 
-    _entryController.forward();
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (MediaQuery.disableAnimationsOf(context)) {
+      if (_entryController.isAnimating) _entryController.stop();
+      if (_entryController.value != 1) _entryController.value = 1;
+      return;
+    }
+    if (!_entryController.isAnimating && !_entryController.isCompleted) {
+      _entryController.forward();
+    }
   }
 
   Animation<double> _stagedFade(double begin, double end) {
@@ -267,6 +279,27 @@ class _LandingScreenState extends State<LandingScreen>
     return Column(
       crossAxisAlignment: alignment,
       children: [
+        SizedBox(
+          width: wide ? 76 : 68,
+          height: wide ? 76 : 68,
+          child: SageAvatar(
+            size: wide ? 76 : 68,
+          ),
+        ),
+        const SizedBox(height: 8),
+        _SageIntroMessages(wide: wide),
+        const SizedBox(height: 8),
+        Text(
+          'MEET SAGE · YOUR AI COMPANION',
+          textAlign: textAlign,
+          style: const TextStyle(
+            color: AppTheme.sageCyan,
+            fontSize: 10,
+            fontWeight: FontWeight.w800,
+            letterSpacing: 1.4,
+          ),
+        ),
+        SizedBox(height: wide ? 20 : 16),
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
           decoration: BoxDecoration(
@@ -317,7 +350,7 @@ class _LandingScreenState extends State<LandingScreen>
         ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 540),
           child: Text(
-            'Orders, inventory, staff attendance, and AI-powered insights in one beautifully simple workspace.',
+            'Orders, POS, inventory, recipes, analytics, finance, payroll, attendance, notifications, and Sage AI — all in one beautifully simple workspace.',
             textAlign: textAlign,
             style: TextStyle(
               color: Colors.white.withValues(alpha: 0.58),
@@ -778,7 +811,15 @@ class _LandingScreenState extends State<LandingScreen>
         color: AppTheme.sageAccent,
         title: 'Orders & menu',
         body:
-            'Keep dine-in and takeaway orders moving with a menu your team can update in seconds.',
+            'Take dine-in and takeaway orders, update prices, and keep every station aligned in real time.',
+      ),
+      _Feature(
+        key: const Key('landing-feature-pos'),
+        icon: Icons.shopping_cart_outlined,
+        color: AppTheme.sageCyan,
+        title: 'Point of sale',
+        body:
+            'Build quick orders, apply discounts, and send tickets to the kitchen without leaving the counter.',
       ),
       _Feature(
         key: const Key('landing-feature-inventory'),
@@ -786,15 +827,80 @@ class _LandingScreenState extends State<LandingScreen>
         color: AppTheme.sageSuccess,
         title: 'Inventory control',
         body:
-            'Track stock and low items before they slow down service or eat into your margin.',
+            'Track stock, low items, movements, purchases, and waste before they slow down service.',
+      ),
+      _Feature(
+        key: const Key('landing-feature-recipes'),
+        icon: Icons.menu_book_outlined,
+        color: const Color(0xFFF59E0B),
+        title: 'Recipes & costing',
+        body:
+            'Store recipes, costing, menu margins, and item performance in one connected place.',
+      ),
+      _Feature(
+        key: const Key('landing-feature-analytics'),
+        icon: Icons.analytics_outlined,
+        color: AppTheme.sageBlue,
+        title: 'Analytics & forecasts',
+        body:
+            'See sales trends, insights, forecasts, and the patterns behind your busiest hours.',
+      ),
+      _Feature(
+        key: const Key('landing-feature-finance'),
+        icon: Icons.account_balance_wallet_outlined,
+        color: AppTheme.sageSuccess,
+        title: 'Finance & reports',
+        body:
+            'Manage expenses, payables, reports, and monthly payroll with clear, trustworthy totals.',
       ),
       _Feature(
         key: const Key('landing-feature-staff'),
         icon: Icons.groups_rounded,
         color: const Color(0xFFE040FB),
-        title: 'Staff & insights',
+        title: 'Staff & attendance',
         body:
-            'Plan shifts, monitor attendance, and let Sage surface what needs attention.',
+            'Plan shifts, track attendance, and keep roles, approvals, and schedules organized.',
+      ),
+      _Feature(
+        key: const Key('landing-feature-payroll'),
+        icon: Icons.payments_outlined,
+        color: const Color(0xFF8B5CF6),
+        title: 'Payroll & meals',
+        body:
+            'Handle staff meals, payroll summaries, and approvals without chasing spreadsheets.',
+      ),
+      _Feature(
+        key: const Key('landing-feature-sage'),
+        icon: Icons.auto_awesome_rounded,
+        color: AppTheme.sageCyan,
+        visual: const SageAvatar(size: 44),
+        title: 'Sage AI assistant',
+        body:
+            'Ask Sage about sales, stock, staff, or what to prepare next, right inside your workspace.',
+      ),
+      _Feature(
+        key: const Key('landing-feature-notifications'),
+        icon: Icons.notifications_active_outlined,
+        color: const Color(0xFFF97316),
+        title: 'Notifications & SMS',
+        body:
+            'Get in-app, device, and SMS alerts for low stock, bills, orders, and attendance.',
+      ),
+      _Feature(
+        key: const Key('landing-feature-settings'),
+        icon: Icons.settings_outlined,
+        color: AppTheme.sagePaleBlue,
+        title: 'Settings & profiles',
+        body:
+            'Manage eatery details, notification preferences, and personal profiles with confidence.',
+      ),
+      _Feature(
+        key: const Key('landing-feature-devices'),
+        icon: Icons.devices_rounded,
+        color: AppTheme.sageBlueDeep,
+        title: 'Every device',
+        body:
+            'Run SmartEat on Android, Windows, or as a home-screen app on iPhone and iPad.',
       ),
     ];
 
@@ -899,6 +1005,130 @@ class _SageGlowOrb extends StatelessWidget {
           gradient: RadialGradient(colors: [color, color.withValues(alpha: 0)]),
         ),
       ),
+    );
+  }
+}
+
+class _SageIntroMessages extends StatefulWidget {
+  const _SageIntroMessages({required this.wide});
+
+  final bool wide;
+
+  @override
+  State<_SageIntroMessages> createState() => _SageIntroMessagesState();
+}
+
+class _SageIntroMessagesState extends State<_SageIntroMessages>
+    with SingleTickerProviderStateMixin {
+  static const List<String> _messages = [
+    'Hi, I’m Sage — your eatery sidekick.',
+    'Ask me what needs attention today.',
+    'I keep stock, sales, and staff in sync.',
+  ];
+
+  late final AnimationController _controller;
+  int _offset = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 9),
+    );
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _syncAnimation();
+  }
+
+  void _syncAnimation() {
+    if (MediaQuery.disableAnimationsOf(context)) {
+      if (_controller.isAnimating) _controller.stop();
+      if (_controller.value != 0) _controller.value = 0;
+      return;
+    }
+    if (!_controller.isAnimating) {
+      _controller.repeat();
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _advance() {
+    setState(() => _offset++);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final animationsDisabled = MediaQuery.disableAnimationsOf(context);
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, _) {
+        final base = (_controller.value * _messages.length)
+            .floor()
+            .clamp(0, _messages.length - 1);
+        final index = (base + _offset) % _messages.length;
+        final message = _messages[index];
+
+        return Semantics(
+          label: message,
+          child: GestureDetector(
+            key: const Key('landing-sage-intro'),
+            onTap: _advance,
+            child: Container(
+              constraints: BoxConstraints(maxWidth: widget.wide ? 430 : 320),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: AppTheme.sageBlue.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(999),
+                border: Border.all(
+                  color: AppTheme.sageAccent.withValues(alpha: 0.3),
+                ),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(
+                    Icons.auto_awesome_rounded,
+                    size: 14,
+                    color: AppTheme.sageAccent,
+                  ),
+                  const SizedBox(width: 8),
+                  Flexible(
+                    child: AnimatedSwitcher(
+                      duration: animationsDisabled
+                          ? Duration.zero
+                          : const Duration(milliseconds: 280),
+                      switchInCurve: Curves.easeOut,
+                      child: Text(
+                        message,
+                        key: ValueKey<int>(index),
+                        textAlign:
+                            widget.wide ? TextAlign.start : TextAlign.center,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: AppTheme.sagePaleBlue,
+                          fontSize: widget.wide ? 12 : 11,
+                          fontWeight: FontWeight.w700,
+                          height: 1.3,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 }
@@ -1085,12 +1315,14 @@ class _Feature extends StatelessWidget {
     required this.color,
     required this.title,
     required this.body,
+    this.visual,
   });
 
   final IconData icon;
   final Color color;
   final String title;
   final String body;
+  final Widget? visual;
 
   @override
   Widget build(BuildContext context) {
@@ -1118,7 +1350,7 @@ class _Feature extends StatelessWidget {
               color: color.withValues(alpha: 0.14),
               borderRadius: BorderRadius.circular(14),
             ),
-            child: Icon(icon, size: 22, color: color),
+            child: visual ?? Icon(icon, size: 22, color: color),
           ),
           const SizedBox(height: 16),
           Text(

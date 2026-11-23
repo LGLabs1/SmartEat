@@ -22,6 +22,16 @@ import 'recipe_editor_page.dart';
 
 import 'recipe_list_page.dart';
 
+Widget menuCompactNavIcon(IconData icon, String label) {
+  return Semantics(
+    label: label,
+    child: Tooltip(
+      message: label,
+      child: Icon(icon),
+    ),
+  );
+}
+
 class MenuScreen extends StatefulWidget {
   const MenuScreen({
     Key? key,
@@ -718,6 +728,7 @@ class _MenuScreenState extends State<MenuScreen>
       ..sort();
 
     final availableFilters = <String>['All', ...categories];
+    final compactTabs = MediaQuery.sizeOf(context).width < 430;
 
     final selectedCategoryFilter =
         availableFilters.contains(_selectedCategoryFilter)
@@ -778,13 +789,17 @@ class _MenuScreenState extends State<MenuScreen>
                   ? null
                   : TabBar(
                       controller: tc,
-                      tabs: const [
+                      tabs: [
                         Tab(
-                            text: 'Menu',
-                            icon: Icon(Icons.restaurant_menu_outlined)),
+                          text: compactTabs ? null : 'Menu',
+                          icon: menuCompactNavIcon(
+                              Icons.restaurant_menu_outlined, 'Menu'),
+                        ),
                         Tab(
-                            text: 'Recipes',
-                            icon: Icon(Icons.menu_book_outlined)),
+                          text: compactTabs ? null : 'Recipes',
+                          icon: menuCompactNavIcon(
+                              Icons.menu_book_outlined, 'Recipes'),
+                        ),
                       ],
                     ),
             )
@@ -823,14 +838,15 @@ class _MenuScreenState extends State<MenuScreen>
               currentIndex: tc.index,
               onTap: tc.animateTo,
               type: BottomNavigationBarType.fixed,
-              items: const [
+              items: [
                 BottomNavigationBarItem(
-                  icon: Icon(Icons.restaurant_menu_outlined),
-                  label: 'Menu',
+                  icon: menuCompactNavIcon(
+                      Icons.restaurant_menu_outlined, 'Menu'),
+                  label: compactTabs ? '' : 'Menu',
                 ),
                 BottomNavigationBarItem(
-                  icon: Icon(Icons.menu_book_outlined),
-                  label: 'Recipes',
+                  icon: menuCompactNavIcon(Icons.menu_book_outlined, 'Recipes'),
+                  label: compactTabs ? '' : 'Recipes',
                 ),
               ],
             ),

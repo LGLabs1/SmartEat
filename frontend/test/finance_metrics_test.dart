@@ -53,6 +53,28 @@ void main() {
       expect(FinanceMetrics.isPayablePayment(e), isFalse);
       expect(FinanceMetrics.isLinkedPurchase(e), isFalse);
     });
+
+    test('payroll payout expenses are detected and carry a linked payout id',
+        () {
+      final paidAt = DateTime(2026, 11, 23, 10, 30);
+      final e = FinanceMetrics.payrollPayoutExpenseData(
+        payoutId: 'eatery_uid_2026-11-16',
+        weekStart: '2026-11-16',
+        staffUid: 'uid',
+        staffName: 'Ana',
+        amount: 3200,
+        paidAt: paidAt,
+        paidByName: 'Admin',
+      );
+
+      expect(e['source'], FinanceMetrics.payrollPayoutSource);
+      expect(FinanceMetrics.isPayrollPayout(e), isTrue);
+      expect(FinanceMetrics.isLinkedPurchase(e), isFalse);
+      expect(FinanceMetrics.isPayablePayment(e), isFalse);
+      expect(e['linkedPayrollPayoutId'], 'eatery_uid_2026-11-16');
+      expect(e['amount'], 3200);
+      expect(e['date'], paidAt.toIso8601String());
+    });
   });
 
   group('FinanceMetrics sums', () {
@@ -62,8 +84,7 @@ void main() {
         _expense(amount: 50, date: DateTime(2025, 3, 25)),
         _expense(amount: 999, date: DateTime(2025, 2, 28)),
       ];
-      expect(FinanceMetrics.monthExpenses(expenses, DateTime(2025, 3, 1)),
-          150);
+      expect(FinanceMetrics.monthExpenses(expenses, DateTime(2025, 3, 1)), 150);
     });
 
     test('monthOverMonth computes percentage change', () {
@@ -91,8 +112,7 @@ void main() {
       final expenses = [
         _expense(amount: 30, date: DateTime(2025, 3, 1), category: 'Rent'),
         _expense(amount: 10, date: DateTime(2025, 3, 1), category: 'Rent'),
-        _expense(
-            amount: 70, date: DateTime(2025, 3, 1), category: 'Utilities'),
+        _expense(amount: 70, date: DateTime(2025, 3, 1), category: 'Utilities'),
       ];
       final grouped = FinanceMetrics.expensesByCategory(expenses);
       expect(grouped.first.key, 'Utilities');
@@ -182,7 +202,8 @@ void main() {
         100,
       );
       expect(
-        FinanceMetrics.estimatedAmountOf({'isVariable': true, 'averageAmount': 90}),
+        FinanceMetrics.estimatedAmountOf(
+            {'isVariable': true, 'averageAmount': 90}),
         90,
       );
       expect(FinanceMetrics.estimatedAmountOf({'amount': 0}), 0);
@@ -241,8 +262,7 @@ void main() {
         _expense(amount: 25, date: DateTime(2025, 3, 15)),
         _expense(amount: 10, date: DateTime(2025, 3, 13)),
       ];
-      final trend =
-          FinanceMetrics.dailyTrend(expenses, days: 3, now: now);
+      final trend = FinanceMetrics.dailyTrend(expenses, days: 3, now: now);
       expect(trend.length, 3);
       expect(trend.first.key, DateTime(2025, 3, 13));
       expect(trend.first.value, 10);

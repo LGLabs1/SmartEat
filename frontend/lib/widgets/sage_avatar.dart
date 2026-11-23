@@ -22,11 +22,34 @@ class _SageAvatarState extends State<SageAvatar>
     _controller = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1500),
-    )..repeat(reverse: true);
+    );
 
     _pulse = Tween<double>(begin: 0.92, end: 1.0).animate(
       CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
     );
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _syncAnimation();
+  }
+
+  @override
+  void didUpdateWidget(covariant SageAvatar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _syncAnimation();
+  }
+
+  void _syncAnimation() {
+    if (MediaQuery.disableAnimationsOf(context)) {
+      if (_controller.isAnimating) _controller.stop();
+      if (_controller.value != 1) _controller.value = 1;
+      return;
+    }
+    if (!_controller.isAnimating) {
+      _controller.repeat(reverse: true);
+    }
   }
 
   @override
@@ -37,6 +60,7 @@ class _SageAvatarState extends State<SageAvatar>
 
   @override
   Widget build(BuildContext context) {
+    final animationsDisabled = MediaQuery.disableAnimationsOf(context);
     final white = widget.size * 6 / 7;
     final lottie = widget.size * 5 / 7;
 
@@ -90,8 +114,8 @@ class _SageAvatarState extends State<SageAvatar>
                   child: Lottie.asset(
                     'assets/animations/E V E.json',
                     fit: BoxFit.cover,
-                    repeat: true,
-                    animate: true,
+                    repeat: !animationsDisabled,
+                    animate: !animationsDisabled,
                   ),
                 ),
               ),

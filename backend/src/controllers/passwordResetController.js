@@ -52,8 +52,7 @@ function requestRef(email) {
 }
 
 function clientIp(req) {
-  const raw = req.ip || req.headers['x-forwarded-for'] || '';
-  return String(raw).split(',')[0].trim() || 'unknown';
+  return String(req.ip || req.socket?.remoteAddress || 'unknown');
 }
 
 async function consumeRateLimit(key, max, windowMs) {

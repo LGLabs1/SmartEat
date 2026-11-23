@@ -685,7 +685,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
     if (_isRoleLoading) {
       return Theme(
         data: AppTheme.dashboardTheme,
-        child: const SkeletonDashboard(),
+        child: const Scaffold(
+          backgroundColor: AppTheme.sageNavy,
+          body: SafeArea(child: SkeletonDashboard()),
+        ),
       );
     }
 
@@ -1925,7 +1928,7 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
     return LayoutBuilder(
       builder: (context, constraints) {
         final width = constraints.maxWidth;
-        final crossAxisCount = width >= 1100 ? 4 : (width >= 560 ? 2 : 1);
+        final crossAxisCount = width >= 1100 ? 4 : (width >= 300 ? 3 : 2);
 
         return GridView.builder(
           shrinkWrap: true,
@@ -1934,8 +1937,7 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
             crossAxisCount: crossAxisCount,
             crossAxisSpacing: 10,
             mainAxisSpacing: 10,
-            // Wider ratio = shorter tiles, closer to Finance/Inventory KPI density.
-            childAspectRatio: crossAxisCount == 1 ? 3.2 : 2.9,
+            childAspectRatio: crossAxisCount == 4 ? 2.6 : 1.45,
           ),
           itemCount: tiles.length,
           itemBuilder: (context, index) => tiles[index],

@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../../../../services/api_service.dart';
 import '../../../../../services/firebase_service.dart';
@@ -9,6 +10,58 @@ import '../models/purchase_receipt.dart';
 import '../models/stock_adjustment.dart';
 import '../models/menu_item_ingredient.dart';
 import 'inventory_repository.dart';
+
+/// Maps a signed stock delta into the whitelisted inventory operation payload.
+/// The adjustment reason belongs in `reasonCode`, never in `operation`.
+Map<String, dynamic> buildDeltaStockMutation(double deltaBase) {
+  return <String, dynamic>{
+    'quantity': deltaBase.abs(),
+    'operation': deltaBase < 0 ? 'subtract' : 'add',
+  };
+}
+
+/// Computes the stock level after applying a signed delta.
+double stockAfterDelta(double currentStock, double deltaBase) =>
+    currentStock + deltaBase;
+
+/// Deterministic movement id for a direct sale when a reference is available,
+/// so retrying the same sale does not append a second movement.
+String directSaleMovementId(String itemId, String? referenceId) {
+  final reference = (referenceId ?? '').trim();
+  if (reference.isEmpty) {
+    return 'sale_${DateTime.now().microsecondsSinceEpoch}_$itemId';
+  }
+  return 'sale_${reference}_$itemId';
+}
+
+dynamic _jsonEncodableValue(dynamic value) {
+  if (value == null || value is String || value is num || value is bool) {
+    return value;
+  }
+  if (value is DateTime) return value.toIso8601String();
+  if (value is Timestamp) return value.toDate().toIso8601String();
+  if (value is Map) {
+    return value.map(
+      (key, dynamic val) => MapEntry(key.toString(), _jsonEncodableValue(val)),
+    );
+  }
+  if (value is Iterable) {
+    return value.map(_jsonEncodableValue).toList();
+  }
+  return value.toString();
+}
+
+List<Map<String, dynamic>> normalizeInventoryCacheRows(
+  List<Map<String, dynamic>> rows,
+) {
+  return rows
+      .map(
+        (row) => Map<String, dynamic>.from(
+          _jsonEncodableValue(row) as Map,
+        ),
+      )
+      .toList();
+}
 
 class InventoryRemoteRepository implements InventoryRepository {
   static const _fifoPrefix = 'inventory_fifo_';
@@ -68,7 +121,10 @@ class InventoryRemoteRepository implements InventoryRepository {
 
   Future<void> _writeCache(String key, List<Map<String, dynamic>> rows) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(await _cacheKey(key), jsonEncode(rows));
+    await prefs.setString(
+      await _cacheKey(key),
+      jsonEncode(normalizeInventoryCacheRows(rows)),
+    );
   }
 
   List<T> _safeParse<T>(
@@ -246,18 +302,17 @@ class InventoryRemoteRepository implements InventoryRepository {
 
   @override
   Future<void> applyAdjustment(StockAdjustment adjustment) async {
+    final mutation = buildDeltaStockMutation(adjustment.deltaBase);
     await ApiService.updateInventoryStock(
       adjustment.itemId,
-      quantity: adjustment.deltaBase,
-      operation: adjustment.reasonCode,
+      quantity: mutation['quantity'] as double,
+      operation: mutation['operation'] as String,
     );
     final items = await getInventoryItems();
     final item = items.firstWhere((x) => x.id == adjustment.itemId,
         orElse: () => throw Exception('Inventory item not found'));
-    final before = adjustment.qtyBeforeBase > 0
-        ? adjustment.qtyBeforeBase
-        : (item.currentStock - adjustment.deltaBase);
     final after = item.currentStock;
+    final before = stockAfterDelta(after, -adjustment.deltaBase);
     await _appendMovement(StockMovement(
       id: DateTime.now().microsecondsSinceEpoch.toString(),
       itemId: adjustment.itemId,
@@ -293,23 +348,27 @@ class InventoryRemoteRepository implements InventoryRepository {
   }) async {
     if (qtyBaseSold <= 0) return;
     final items = await getInventoryItems();
-    final item =
-        items.firstWhere((x) => x.id == itemId, orElse: () => null as dynamic);
+    final itemIndex = items.indexWhere((x) => x.id == itemId);
+    if (itemIndex < 0) return;
+    final item = items[itemIndex];
     if (item.consumptionMode != ConsumptionMode.direct) return;
+    final mutation = buildDeltaStockMutation(-qtyBaseSold);
     await ApiService.updateInventoryStock(
       itemId,
-      quantity: -qtyBaseSold,
-      operation: 'Sale consumption',
+      quantity: mutation['quantity'] as double,
+      operation: mutation['operation'] as String,
     );
-    final afterItem = (await getInventoryItems())
-        .firstWhere((x) => x.id == itemId, orElse: () => item);
+    final refreshed = await getInventoryItems();
+    final afterIndex = refreshed.indexWhere((x) => x.id == itemId);
     final before = item.currentStock;
-    final after = afterItem.currentStock;
+    final after = afterIndex >= 0
+        ? refreshed[afterIndex].currentStock
+        : stockAfterDelta(before, -qtyBaseSold);
     final lots = await getFifoLots(itemId);
     final res = FifoQueueService.consume(lots, qtyBaseSold);
     await saveFifoLots(itemId, res.remainingLots);
     await _appendMovement(StockMovement(
-      id: DateTime.now().microsecondsSinceEpoch.toString(),
+      id: directSaleMovementId(itemId, referenceId),
       itemId: itemId,
       type: StockMovementType.saleConsumption,
       referenceType: StockMovementRefType.order,

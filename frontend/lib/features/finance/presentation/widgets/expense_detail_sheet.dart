@@ -60,8 +60,11 @@ class ExpenseDetailSheet extends StatelessWidget {
     final status = (expense['paymentStatus'] ?? '').toString().trim();
     final source = FinanceMetrics.source(expense);
     final linked = FinanceMetrics.isLinkedPurchase(expense);
+    final payroll = FinanceMetrics.isPayrollPayout(expense);
     final linkedPurchaseId =
         (expense['linkedPurchaseId'] ?? '').toString().trim();
+    final linkedPayrollPayoutId =
+        (expense['linkedPayrollPayoutId'] ?? '').toString().trim();
 
     final title =
         name.trim().isEmpty ? (category.isEmpty ? 'Expense' : category) : name;
@@ -100,10 +103,19 @@ class ExpenseDetailSheet extends StatelessWidget {
                     ),
                   ),
                   FinanceStatusBadge(
-                    label: linked ? 'Inventory' : 'Manual',
-                    color:
-                        linked ? FinanceStatus.linked : FinanceStatus.neutral,
-                    icon: linked ? Icons.link : Icons.edit_note,
+                    label: linked
+                        ? 'Inventory'
+                        : payroll
+                            ? 'Payroll'
+                            : 'Manual',
+                    color: linked || payroll
+                        ? FinanceStatus.linked
+                        : FinanceStatus.neutral,
+                    icon: linked
+                        ? Icons.link
+                        : payroll
+                            ? Icons.payments_outlined
+                            : Icons.edit_note,
                   ),
                 ],
               ),
@@ -127,6 +139,9 @@ class ExpenseDetailSheet extends StatelessWidget {
               FinanceDetailRow('Source', source),
               if (linkedPurchaseId.isNotEmpty)
                 FinanceDetailRow('Linked Purchase', linkedPurchaseId),
+              if (linkedPayrollPayoutId.isNotEmpty)
+                FinanceDetailRow(
+                    'Linked Payroll Payout', linkedPayrollPayoutId),
               if (notes.isNotEmpty) FinanceDetailRow('Notes', notes),
               const SizedBox(height: 16),
               if (linked)

@@ -22,13 +22,14 @@ class FinanceKpi {
   final Color color;
   final double? trendPercent;
   final String? subtitle;
+
   /// Hover helper text explaining this KPI.
   final String? description;
   final VoidCallback? onTap;
 }
 
 /// Lays out [KpiCard] tiles responsively, matching the dashboard grid
-/// breakpoints (>=1100 -> 4 columns, >=560 -> 2, else 1).
+/// breakpoints (>=1100 -> 4 columns, >=300 -> 3, else 2).
 class FinanceKpiGrid extends StatelessWidget {
   const FinanceKpiGrid({super.key, required this.kpis});
 
@@ -39,11 +40,7 @@ class FinanceKpiGrid extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, constraints) {
         final width = constraints.maxWidth;
-        final columns = width >= 1100
-            ? 4
-            : width >= 560
-                ? 2
-                : 1;
+        final columns = width >= 1100 ? 4 : (width >= 300 ? 3 : 2);
         const gap = 12.0;
         final tileWidth = (width - gap * (columns - 1)) / columns;
 

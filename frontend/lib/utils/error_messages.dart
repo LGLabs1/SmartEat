@@ -71,6 +71,14 @@ class ErrorMessageHelper {
   static ErrorSeverity getSeverity(dynamic error) {
     final errorString = _extractErrorString(error).toLowerCase();
 
+    if (_authWarningPatterns.any(errorString.contains)) {
+      return ErrorSeverity.warning;
+    }
+
+    if (_authErrorPatterns.any(errorString.contains)) {
+      return ErrorSeverity.error;
+    }
+
     if (errorString.contains('permission') ||
         errorString.contains('unauthorized') ||
         errorString.contains('denied')) {
@@ -146,8 +154,7 @@ class ErrorMessageHelper {
     final action = showAction ? getSuggestedAction(error) : null;
     final severity = getSeverity(error);
 
-    final showTechDetail =
-        message == 'Something went wrong. Please try again.';
+    final showTechDetail = message == 'Something went wrong. Please try again.';
 
     final backgroundColor = switch (severity) {
       ErrorSeverity.error => Colors.red.shade800,
@@ -370,8 +377,54 @@ class _ErrorPattern {
   }
 }
 
+const List<String> _authErrorPatterns = [
+  'wrong-password',
+  'incorrect password',
+  'user-not-found',
+  'no user found',
+  'no account found',
+  'invalid-email',
+  'invalid email',
+  'weak-password',
+  'password is too weak',
+  'email-already-in-use',
+  'email already exists',
+];
+
+const List<String> _authWarningPatterns = [
+  'too-many-requests',
+  'too many unsuccessful login attempts',
+  'user-disabled',
+  'account has been disabled',
+  'network-request-failed',
+];
+
 /// Common error patterns and their user-friendly messages
 final List<_ErrorPattern> _errorPatterns = [
+  _ErrorPattern(
+    keywords: ['incorrect password', 'wrong-password'],
+    userMessage: 'Incorrect password. Please try again.',
+  ),
+  _ErrorPattern(
+    keywords: ['no user found', 'user-not-found'],
+    userMessage: 'No account found with this email address.',
+  ),
+  _ErrorPattern(
+    keywords: ['invalid email', 'invalid-email'],
+    userMessage: 'Please enter a valid email address.',
+  ),
+  _ErrorPattern(
+    keywords: [
+      'too many unsuccessful login attempts',
+      'too-many-requests',
+    ],
+    userMessage:
+        'Too many unsuccessful login attempts. Please try again later.',
+  ),
+  _ErrorPattern(
+    keywords: ['user disabled', 'user-disabled'],
+    userMessage: 'This account has been disabled. Contact your admin for help.',
+  ),
   _ErrorPattern(
     keywords: ['permission-denied', 'unauthorized', 'not authorized'],
     userMessage: 'You don\'t have permission to perform this action.',

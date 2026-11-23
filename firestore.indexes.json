@@ -13,6 +13,70 @@
           "order": "DESCENDING"
         }
       ]
+    },
+    {
+      "collectionGroup": "notifications",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "eateryId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "allowedRoles",
+          "arrayConfig": "CONTAINS"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "notifications",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "eateryId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "targetUids",
+          "arrayConfig": "CONTAINS"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "notifications",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "eateryId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "allowedRoles",
+          "arrayConfig": "CONTAINS"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "notifications",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "eateryId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "targetUids",
+          "arrayConfig": "CONTAINS"
+        }
+      ]
     }
   ],
   "fieldOverrides": []

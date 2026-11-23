@@ -118,23 +118,23 @@ const setCache = (key, data) => {
 };
 
 // ---------------------------------------------------------------------------
-// eateryId resolution
+// eateryId resolution — only the verified tenant on req.user is trusted
 // ---------------------------------------------------------------------------
-const getEateryId = async (req) => {
-  if (req.user?.eateryId)       return req.user.eateryId;
-  if (req.user?.uid) {
-    try {
-      const doc = await db.collection('users').doc(req.user.uid).get();
-      if (doc.exists) return doc.data().eateryId;
-    } catch (e) {
-      console.error('Error fetching user eateryId:', e);
-    }
+const getEateryId = (req) => {
+  const eateryId = String(req.user?.eateryId || '').trim();
+  if (!eateryId) {
+    const error = new Error('Authenticated user has no eatery tenant');
+    error.status = 403;
+    error.code = 'eatery_required';
+    throw error;
   }
-  if (req.body?.eateryId)            return req.body.eateryId;
-  if (req.query?.eateryId)           return req.query.eateryId;
-  if (req.headers?.['x-eatery-id'])  return req.headers['x-eatery-id'];
-  return null;
+  return eateryId;
 };
+
+const tenantErrorResponse = (res, error) => res.status(error.status || 403).json({
+  error: error.code || 'eatery_required',
+  message: error.message,
+});
 
 // ---------------------------------------------------------------------------
 // Helper: Firestore collection query (supports both subcollection & top-level)
@@ -342,7 +342,7 @@ exports.chat = async (req, res) => {
   if (SAGE_DISABLED) return res.status(200).json(sageDisabledResponse(false));
   try {
     const { message, history = [], context } = req.body;
-    const eateryId = await getEateryId(req);
+    const eateryId = getEateryId(req);
 
     const invalid = validateMessage(message);
     if (invalid) return res.status(400).json(invalid);
@@ -388,6 +388,7 @@ exports.chat = async (req, res) => {
 
   } catch (error) {
     console.error('[Sage] Chat error:', error.code || error.message);
+    if (error.status === 403) return tenantErrorResponse(res, error);
     const mapped = mapGeminiError(error);
     res.status(mapped.status).json({ error: mapped.error, message: mapped.message });
   }
@@ -403,8 +404,14 @@ exports.chat = async (req, res) => {
 //   { type: 'error', error, message }             — failure (stream then ends)
 // ---------------------------------------------------------------------------
 exports.chatStream = async (req, res) => {
+  let eateryId;
+  try {
+    eateryId = getEateryId(req);
+  } catch (error) {
+    return tenantErrorResponse(res, error);
+  }
+
   const { message, history = [], context } = req.body;
-  const eateryId = await getEateryId(req);
 
   // Enable SSE and disable proxy buffering so tokens flush immediately.
   res.setHeader('Content-Type', 'text/event-stream');
@@ -600,8 +607,7 @@ exports.getInsights = async (req, res) => {
     return res.json({ success: false, demoDisabled: true, message: SAGE_DISABLED_MESSAGE, data: null });
   }
   try {
-    const eateryId = await getEateryId(req);
-    if (!eateryId) return res.status(400).json({ error: 'eateryId required' });
+    const eateryId = getEateryId(req);
 
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -685,6 +691,7 @@ STRICT RULE: Use ONLY the exact numbers provided above. Never invent sales numbe
     });
   } catch (error) {
     console.error('[Sage] getInsights error:', error.message);
+    if (error.status === 403) return tenantErrorResponse(res, error);
     res.status(500).json({ error: 'Failed to fetch insights', message: error.message });
   }
 };

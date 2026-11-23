@@ -1,12 +1,16 @@
 const Inventory = require('../models/Inventory');
 const InventoryLog = require('../models/InventoryLog');
 const DamagedItem = require('../models/DamagedItem');
+const { requireTenant } = require('../middleware/auth');
 
 /**
  * Create new inventory item
  */
 exports.createInventoryItem = async (req, res) => {
   try {
+    const eateryId = requireTenant(req, res);
+    if (!eateryId) return;
+
     const {
       name,
       category,
@@ -30,7 +34,7 @@ exports.createInventoryItem = async (req, res) => {
       minStock: Number(minStock),
       unitCost: Number(unitCost),
       supplier: supplier || '',
-      eateryId: req.user.eateryId,
+      eateryId: eateryId,
     };
 
     const inventory = await Inventory.create(inventoryData);
@@ -50,13 +54,16 @@ exports.createInventoryItem = async (req, res) => {
  */
 exports.getInventoryItems = async (req, res) => {
   try {
+    const eateryId = requireTenant(req, res);
+    if (!eateryId) return;
+
     const { category } = req.query;
     let inventory;
 
     if (category) {
-      inventory = await Inventory.getByCategory(req.user.eateryId, category);
+      inventory = await Inventory.getByCategory(eateryId, category);
     } else {
-      inventory = await Inventory.getAll(req.user.eateryId);
+      inventory = await Inventory.getAll(eateryId);
     }
 
     res.json({
@@ -73,6 +80,9 @@ exports.getInventoryItems = async (req, res) => {
  */
 exports.getInventoryItem = async (req, res) => {
   try {
+    const eateryId = requireTenant(req, res);
+    if (!eateryId) return;
+
     const { id } = req.params;
     const inventory = await Inventory.getById(id);
 
@@ -81,7 +91,7 @@ exports.getInventoryItem = async (req, res) => {
     }
 
     // Check if user has access to this eatery's inventory
-    if (inventory.eateryId !== req.user.eateryId) {
+    if (inventory.eateryId !== eateryId) {
       return res.status(403).json({ error: 'Access denied' });
     }
 
@@ -99,8 +109,13 @@ exports.getInventoryItem = async (req, res) => {
  */
 exports.updateInventoryItem = async (req, res) => {
   try {
+    const eateryId = requireTenant(req, res);
+    if (!eateryId) return;
+
     const { id } = req.params;
-    const updateData = req.body;
+    const updateData = { ...req.body };
+    delete updateData.eateryId;
+    delete updateData.tenantId;
 
     // Get existing item to verify ownership
     const existingItem = await Inventory.getById(id);
@@ -108,12 +123,9 @@ exports.updateInventoryItem = async (req, res) => {
       return res.status(404).json({ error: 'Inventory item not found' });
     }
 
-    if (existingItem.eateryId !== req.user.eateryId) {
+    if (existingItem.eateryId !== eateryId) {
       return res.status(403).json({ error: 'Access denied' });
     }
-
-    // Remove eateryId from updateData to prevent changing ownership
-    delete updateData.eateryId;
 
     const updatedInventory = await Inventory.update(id, updateData);
 
@@ -132,6 +144,9 @@ exports.updateInventoryItem = async (req, res) => {
  */
 exports.updateStock = async (req, res) => {
   try {
+    const eateryId = requireTenant(req, res);
+    if (!eateryId) return;
+
     const { id } = req.params;
     const { quantity, operation = 'set', isBadStock = false, badStockQuantity = 0 } = req.body;
 
@@ -145,7 +160,7 @@ exports.updateStock = async (req, res) => {
       return res.status(404).json({ error: 'Inventory item not found' });
     }
 
-    if (existingItem.eateryId !== req.user.eateryId) {
+    if (existingItem.eateryId !== eateryId) {
       return res.status(403).json({ error: 'Access denied' });
     }
 
@@ -183,7 +198,10 @@ exports.updateStock = async (req, res) => {
  */
 exports.getLowStockItems = async (req, res) => {
   try {
-    const lowStockItems = await Inventory.getLowStock(req.user.eateryId);
+    const eateryId = requireTenant(req, res);
+    if (!eateryId) return;
+
+    const lowStockItems = await Inventory.getLowStock(eateryId);
 
     res.json({
       data: lowStockItems,
@@ -199,6 +217,9 @@ exports.getLowStockItems = async (req, res) => {
  */
 exports.markDamaged = async (req, res) => {
   try {
+    const eateryId = requireTenant(req, res);
+    if (!eateryId) return;
+
     const { id } = req.params;
     const { badQuantity, reason = 'Damaged' } = req.body;
 
@@ -208,7 +229,7 @@ exports.markDamaged = async (req, res) => {
 
     const item = await Inventory.getById(id);
     if (!item) return res.status(404).json({ error: 'Inventory item not found' });
-    if (item.eateryId !== req.user.eateryId) return res.status(403).json({ error: 'Access denied' });
+    if (item.eateryId !== eateryId) return res.status(403).json({ error: 'Access denied' });
 
     const qty = Number(badQuantity);
     if (item.currentStock < qty) {
@@ -231,7 +252,7 @@ exports.markDamaged = async (req, res) => {
       unitCost,
       totalCost,
       reason,
-      eateryId: req.user.eateryId,
+      eateryId: eateryId,
       recordedBy: req.user.id,
     });
 
@@ -255,7 +276,10 @@ exports.markDamaged = async (req, res) => {
  */
 exports.getDamagedItems = async (req, res) => {
   try {
-    const damaged = await DamagedItem.getByEatery(req.user.eateryId);
+    const eateryId = requireTenant(req, res);
+    if (!eateryId) return;
+
+    const damaged = await DamagedItem.getByEatery(eateryId);
     res.json({ data: damaged });
   } catch (error) {
     console.error('Get damaged items error:', error);
@@ -268,6 +292,9 @@ exports.getDamagedItems = async (req, res) => {
  */
 exports.recordUsage = async (req, res) => {
   try {
+    const eateryId = requireTenant(req, res);
+    if (!eateryId) return;
+
     const { ingredientId, orderId, quantityUsed, unitCost } = req.body;
 
     if (!ingredientId || !orderId || quantityUsed === undefined || unitCost === undefined) {
@@ -280,7 +307,7 @@ exports.recordUsage = async (req, res) => {
       return res.status(404).json({ error: 'Ingredient not found' });
     }
 
-    if (ingredient.eateryId !== req.user.eateryId) {
+    if (ingredient.eateryId !== eateryId) {
       return res.status(403).json({ error: 'Access denied' });
     }
 
@@ -289,7 +316,7 @@ exports.recordUsage = async (req, res) => {
       orderId,
       quantityUsed: Number(quantityUsed),
       unitCost: Number(unitCost),
-      eateryId: req.user.eateryId,
+      eateryId: eateryId,
     };
 
     const usage = await Inventory.recordUsage(usageData);
@@ -309,6 +336,9 @@ exports.recordUsage = async (req, res) => {
  */
 exports.getUsageHistory = async (req, res) => {
   try {
+    const eateryId = requireTenant(req, res);
+    if (!eateryId) return;
+
     const { startDate, endDate } = req.query;
     
     let start = null;
@@ -321,7 +351,7 @@ exports.getUsageHistory = async (req, res) => {
       end = new Date(endDate);
     }
 
-    const usageHistory = await Inventory.getUsageHistory(req.user.eateryId, start, end);
+    const usageHistory = await Inventory.getUsageHistory(eateryId, start, end);
 
     res.json({
       data: usageHistory,
@@ -337,7 +367,10 @@ exports.getUsageHistory = async (req, res) => {
  */
 exports.getInventoryAnalytics = async (req, res) => {
   try {
-    const analytics = await Inventory.getAnalytics(req.user.eateryId);
+    const eateryId = requireTenant(req, res);
+    if (!eateryId) return;
+
+    const analytics = await Inventory.getAnalytics(eateryId);
 
     res.json({
       data: analytics,
@@ -353,6 +386,9 @@ exports.getInventoryAnalytics = async (req, res) => {
  */
 exports.deleteInventoryItem = async (req, res) => {
   try {
+    const eateryId = requireTenant(req, res);
+    if (!eateryId) return;
+
     const { id } = req.params;
 
     // Get existing item to verify ownership
@@ -361,7 +397,7 @@ exports.deleteInventoryItem = async (req, res) => {
       return res.status(404).json({ error: 'Inventory item not found' });
     }
 
-    if (existingItem.eateryId !== req.user.eateryId) {
+    if (existingItem.eateryId !== eateryId) {
       return res.status(403).json({ error: 'Access denied' });
     }
 

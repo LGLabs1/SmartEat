@@ -86,6 +86,21 @@ double computeAttendanceWorkUnit({
   return 0.0;
 }
 
+double attendancePayrollWorkUnit(Map<String, dynamic> record) {
+  final rawUnit = record['workUnit'];
+  if (rawUnit is num) {
+    final unit = rawUnit.toDouble();
+    if (unit >= 1.0) return 1.0;
+    if (unit > 0) return 0.5;
+    return 0.0;
+  }
+
+  final status = attendanceRecordStatus(record);
+  if (status == attendancePresent) return 1.0;
+  if (status == attendanceHalfDay) return 0.5;
+  return 0.0;
+}
+
 String attendanceStatusForUnit(double workUnit) {
   if (workUnit >= 1.0) return attendancePresent;
   if (workUnit > 0) return attendanceHalfDay;

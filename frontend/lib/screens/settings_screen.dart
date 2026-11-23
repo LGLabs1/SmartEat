@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../config/app_version.dart';
 import '../services/attendance_settings_service.dart';
 import '../services/bluetooth_printer_service.dart';
 import '../services/auth_provider.dart';
@@ -954,13 +955,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ListTile(
             leading: const Icon(Icons.info_outline),
             title: const Text('About Smart Eat'),
-            subtitle: const Text('Version 1.0.0'),
+            subtitle: Text('Version ${AppVersion.display}'),
             trailing: const Icon(Icons.chevron_right),
             onTap: () {
               showAboutDialog(
                 context: context,
                 applicationName: 'Smart Eat',
-                applicationVersion: '1.0.0',
+                applicationVersion: AppVersion.display,
                 applicationIcon: Icon(
                   Icons.restaurant,
                   color: Theme.of(context).colorScheme.primary,

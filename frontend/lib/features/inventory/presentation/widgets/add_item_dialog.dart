@@ -1,14 +1,16 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../../../../services/api_service.dart';
 import '../../../../../models/inventory_item.dart';
 
 class AddItemDialog extends StatefulWidget {
   final String? initialCategory;
+  final InventoryItem? initialItem;
 
   const AddItemDialog({
     Key? key,
     this.initialCategory,
+    this.initialItem,
   }) : super(key: key);
 
   @override
@@ -59,15 +61,34 @@ class _AddItemDialogState extends State<AddItemDialog> {
     'can',
   ];
 
+  bool get isEdit => widget.initialItem != null;
+
+  List<String> get _categoryOptions {
+    final values = <String>{..._categories};
+    final initial = widget.initialItem?.category ?? widget.initialCategory;
+    if (initial != null && initial.isNotEmpty) values.add(initial);
+    return values.toList()..sort();
+  }
+
+  List<String> get _unitOptions {
+    final values = <String>{..._units};
+    final initial = widget.initialItem?.unit;
+    if (initial != null && initial.isNotEmpty) values.add(initial);
+    return values.toList()..sort();
+  }
+
   @override
   void initState() {
     super.initState();
-    final initialCategory = widget.initialCategory;
-    if (initialCategory != null && _categories.contains(initialCategory)) {
+    final item = widget.initialItem;
+    final initialCategory = item?.category ?? widget.initialCategory;
+    if (initialCategory != null && initialCategory.isNotEmpty) {
       _selectedCategory = initialCategory;
       _categoryController.text = initialCategory;
     }
-    _selectedUnit = _units.first;
+    _selectedUnit = (item?.unit ?? _units.first).trim().isNotEmpty
+        ? (item?.unit ?? _units.first).trim()
+        : _units.first;
     _unitController.text = _selectedUnit!;
     _sellingPriceController.text = '0';
     _currentStockController.text = '0';
@@ -76,6 +97,26 @@ class _AddItemDialogState extends State<AddItemDialog> {
     _maxStockController.text = '0';
     _safetyStockController.text = '0';
     _leadTimeController.text = '0';
+
+    if (item != null) {
+      _nameController.text = item.name;
+      _skuController.text = item.sku ?? '';
+      _descriptionController.text = item.description ?? '';
+      _currentStockController.text = item.currentStock.toStringAsFixed(2);
+      _minStockController.text = item.minStock.toStringAsFixed(2);
+      _reorderPointController.text = item.reorderPoint.toStringAsFixed(2);
+      _maxStockController.text = item.maxStock.toStringAsFixed(2);
+      _safetyStockController.text = item.safetyStock.toStringAsFixed(2);
+      _leadTimeController.text = item.leadTimeDays.toString();
+      _unitController.text = item.unit;
+      _unitCostController.text = item.unitCost.toStringAsFixed(2);
+      _sellingPriceController.text = item.sellingPrice.toStringAsFixed(2);
+      _supplierController.text = item.supplier;
+      _notesController.text = item.notes ?? '';
+      _consumptionMode = item.consumptionMode == ConsumptionMode.direct
+          ? 'direct'
+          : 'recipe_pending';
+    }
   }
 
   @override
@@ -126,23 +167,58 @@ class _AddItemDialogState extends State<AddItemDialog> {
         extra['notes'] = _notesController.text.trim();
       }
 
-      final response = await ApiService.createInventoryItem(
-        name: _nameController.text.trim(),
-        category: _categoryController.text.trim().isEmpty
-            ? (_selectedCategory ?? 'Other')
-            : _categoryController.text.trim(),
-        currentStock: double.parse(_currentStockController.text),
-        minStock: double.parse(_minStockController.text),
-        unit: _unitController.text.trim().isEmpty
-            ? (_selectedUnit ?? 'pcs')
-            : _unitController.text.trim(),
-        unitCost: double.parse(_unitCostController.text),
-        sellingPrice: _sellingPriceController.text.isEmpty
-            ? 0.0
-            : double.parse(_sellingPriceController.text),
-        supplier: _supplierController.text.trim(),
-        extra: extra,
-      );
+      final name = _nameController.text.trim();
+      final category = _categoryController.text.trim().isEmpty
+          ? (_selectedCategory ?? 'Other')
+          : _categoryController.text.trim();
+      final unit = _unitController.text.trim().isEmpty
+          ? (_selectedUnit ?? 'pcs')
+          : _unitController.text.trim();
+      final minStock = double.parse(_minStockController.text);
+      final unitCost = double.parse(_unitCostController.text);
+      final sellingPrice = _sellingPriceController.text.isEmpty
+          ? 0.0
+          : double.parse(_sellingPriceController.text);
+      final supplier = _supplierController.text.trim();
+
+      late final Map<String, dynamic> response;
+      if (isEdit) {
+        extra['unit'] = unit;
+        extra['sku'] = _skuController.text.trim();
+        extra['description'] = _descriptionController.text.trim();
+        extra['notes'] = _notesController.text.trim();
+        if (widget.initialItem?.purchaseUnit != null) {
+          extra['purchaseUnit'] = widget.initialItem!.purchaseUnit;
+        }
+        if (widget.initialItem?.saleUnit != null) {
+          extra['saleUnit'] = widget.initialItem!.saleUnit;
+        }
+        if (widget.initialItem?.conversionFactor != null) {
+          extra['conversionFactor'] = widget.initialItem!.conversionFactor;
+        }
+        response = await ApiService.updateInventoryItem(
+          widget.initialItem!.id,
+          name: name,
+          category: category,
+          minStock: minStock,
+          unitCost: unitCost,
+          sellingPrice: sellingPrice,
+          supplier: supplier,
+          extra: extra,
+        );
+      } else {
+        response = await ApiService.createInventoryItem(
+          name: name,
+          category: category,
+          currentStock: double.parse(_currentStockController.text),
+          minStock: minStock,
+          unit: unit,
+          unitCost: unitCost,
+          sellingPrice: sellingPrice,
+          supplier: supplier,
+          extra: extra,
+        );
+      }
 
       if (!mounted) return;
       setState(() => _isLoading = false);
@@ -158,7 +234,11 @@ class _AddItemDialogState extends State<AddItemDialog> {
       if (!mounted) return;
       setState(() => _isLoading = false);
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to add item: ${e.toString()}')),
+        SnackBar(
+          content: Text(
+            'Failed to ${isEdit ? 'update' : 'add'} item: ${e.toString()}',
+          ),
+        ),
       );
     }
   }
@@ -208,25 +288,33 @@ class _AddItemDialogState extends State<AddItemDialog> {
               color: Theme.of(context).colorScheme.primaryContainer,
               child: Row(
                 children: [
-                  Icon(Icons.add_box_outlined,
-                      color: Theme.of(context).colorScheme.onPrimaryContainer),
+                  Icon(
+                    isEdit ? Icons.edit_outlined : Icons.add_box_outlined,
+                    color: Theme.of(context).colorScheme.onPrimaryContainer,
+                  ),
                   const SizedBox(width: 12),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          'Add Inventory Item',
-                          style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                                fontWeight: FontWeight.bold,
-                                color: Theme.of(context).colorScheme.onPrimaryContainer,
-                              ),
+                          isEdit ? 'Edit Inventory Item' : 'Add Inventory Item',
+                          style:
+                              Theme.of(context).textTheme.titleLarge?.copyWith(
+                                    fontWeight: FontWeight.bold,
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .onPrimaryContainer,
+                                  ),
                         ),
                         Text(
                           'Fields marked * are required',
-                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                color: Theme.of(context).colorScheme.onPrimaryContainer,
-                              ),
+                          style:
+                              Theme.of(context).textTheme.bodySmall?.copyWith(
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .onPrimaryContainer,
+                                  ),
                         ),
                       ],
                     ),
@@ -248,14 +336,16 @@ class _AddItemDialogState extends State<AddItemDialog> {
                       return Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          _sectionTitle(context, Icons.info_outline, 'Basic Information'),
+                          _sectionTitle(
+                              context, Icons.info_outline, 'Basic Information'),
                           TextFormField(
                             controller: _nameController,
                             decoration: _dec('Item Name *'),
                             textInputAction: TextInputAction.next,
-                            validator: (value) => value == null || value.trim().isEmpty
-                                ? 'Item name is required'
-                                : null,
+                            validator: (value) =>
+                                value == null || value.trim().isEmpty
+                                    ? 'Item name is required'
+                                    : null,
                           ),
                           const SizedBox(height: 16),
                           Wrap(
@@ -268,8 +358,9 @@ class _AddItemDialogState extends State<AddItemDialog> {
                                   value: _selectedCategory,
                                   decoration: _dec('Category *'),
                                   isExpanded: true,
-                                  items: _categories
-                                      .map((cat) => DropdownMenuItem(value: cat, child: Text(cat)))
+                                  items: _categoryOptions
+                                      .map((cat) => DropdownMenuItem(
+                                          value: cat, child: Text(cat)))
                                       .toList(),
                                   onChanged: (value) {
                                     setState(() {
@@ -278,14 +369,17 @@ class _AddItemDialogState extends State<AddItemDialog> {
                                     });
                                   },
                                   validator: (value) =>
-                                      value == null || value.isEmpty ? 'Category is required' : null,
+                                      value == null || value.isEmpty
+                                          ? 'Category is required'
+                                          : null,
                                 ),
                               ),
                               SizedBox(
                                 width: half,
                                 child: TextFormField(
                                   controller: _skuController,
-                                  decoration: _dec('SKU / Barcode', helper: 'Optional'),
+                                  decoration:
+                                      _dec('SKU / Barcode', helper: 'Optional'),
                                   textInputAction: TextInputAction.next,
                                 ),
                               ),
@@ -294,11 +388,13 @@ class _AddItemDialogState extends State<AddItemDialog> {
                           const SizedBox(height: 16),
                           TextFormField(
                             controller: _descriptionController,
-                            decoration: _dec('Description', helper: 'Optional short description'),
+                            decoration: _dec('Description',
+                                helper: 'Optional short description'),
                             textInputAction: TextInputAction.next,
                           ),
                           const SizedBox(height: 24),
-                          _sectionTitle(context, Icons.straighten, 'Units & Stock Levels'),
+                          _sectionTitle(context, Icons.straighten,
+                              'Units & Stock Levels'),
                           Wrap(
                             spacing: 16,
                             runSpacing: 16,
@@ -309,8 +405,9 @@ class _AddItemDialogState extends State<AddItemDialog> {
                                   value: _selectedUnit,
                                   decoration: _dec('Unit of Measure *'),
                                   isExpanded: true,
-                                  items: _units
-                                      .map((unit) => DropdownMenuItem(value: unit, child: Text(unit)))
+                                  items: _unitOptions
+                                      .map((unit) => DropdownMenuItem(
+                                          value: unit, child: Text(unit)))
                                       .toList(),
                                   onChanged: (value) {
                                     setState(() {
@@ -319,25 +416,36 @@ class _AddItemDialogState extends State<AddItemDialog> {
                                     });
                                   },
                                   validator: (value) =>
-                                      value == null || value.isEmpty ? 'Unit is required' : null,
+                                      value == null || value.isEmpty
+                                          ? 'Unit is required'
+                                          : null,
                                 ),
                               ),
                               SizedBox(
                                 width: half,
                                 child: TextFormField(
                                   controller: _currentStockController,
-                                  decoration: _dec('Current Stock *'),
+                                  enabled: !isEdit,
+                                  decoration: _dec(
+                                    'Current Stock *',
+                                    helper: isEdit
+                                        ? 'Use Adjust Stock to change quantity'
+                                        : null,
+                                  ),
                                   keyboardType:
-                                      const TextInputType.numberWithOptions(decimal: true),
+                                      const TextInputType.numberWithOptions(
+                                          decimal: true),
                                   inputFormatters: [
-                                    FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d*'))
+                                    FilteringTextInputFormatter.allow(
+                                        RegExp(r'^\d*\.?\d*'))
                                   ],
                                   validator: (value) {
                                     if (value == null || value.trim().isEmpty) {
                                       return 'Current stock is required';
                                     }
                                     final d = double.tryParse(value);
-                                    if (d == null || d < 0) return 'Enter valid stock';
+                                    if (d == null || d < 0)
+                                      return 'Enter valid stock';
                                     return null;
                                   },
                                 ),
@@ -349,16 +457,19 @@ class _AddItemDialogState extends State<AddItemDialog> {
                                   decoration: _dec('Min Stock *',
                                       helper: 'Low-stock alert threshold'),
                                   keyboardType:
-                                      const TextInputType.numberWithOptions(decimal: true),
+                                      const TextInputType.numberWithOptions(
+                                          decimal: true),
                                   inputFormatters: [
-                                    FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d*'))
+                                    FilteringTextInputFormatter.allow(
+                                        RegExp(r'^\d*\.?\d*'))
                                   ],
                                   validator: (value) {
                                     if (value == null || value.trim().isEmpty) {
                                       return 'Min stock is required';
                                     }
                                     final d = double.tryParse(value);
-                                    if (d == null || d < 0) return 'Enter valid stock';
+                                    if (d == null || d < 0)
+                                      return 'Enter valid stock';
                                     return null;
                                   },
                                 ),
@@ -368,11 +479,14 @@ class _AddItemDialogState extends State<AddItemDialog> {
                                 child: TextFormField(
                                   controller: _reorderPointController,
                                   decoration: _dec('Reorder Point',
-                                      helper: 'Reorder when stock reaches this'),
+                                      helper:
+                                          'Reorder when stock reaches this'),
                                   keyboardType:
-                                      const TextInputType.numberWithOptions(decimal: true),
+                                      const TextInputType.numberWithOptions(
+                                          decimal: true),
                                   inputFormatters: [
-                                    FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d*'))
+                                    FilteringTextInputFormatter.allow(
+                                        RegExp(r'^\d*\.?\d*'))
                                   ],
                                 ),
                               ),
@@ -380,11 +494,14 @@ class _AddItemDialogState extends State<AddItemDialog> {
                                 width: half,
                                 child: TextFormField(
                                   controller: _maxStockController,
-                                  decoration: _dec('Max Stock', helper: 'Used for restock suggestions'),
+                                  decoration: _dec('Max Stock',
+                                      helper: 'Used for restock suggestions'),
                                   keyboardType:
-                                      const TextInputType.numberWithOptions(decimal: true),
+                                      const TextInputType.numberWithOptions(
+                                          decimal: true),
                                   inputFormatters: [
-                                    FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d*'))
+                                    FilteringTextInputFormatter.allow(
+                                        RegExp(r'^\d*\.?\d*'))
                                   ],
                                 ),
                               ),
@@ -392,12 +509,14 @@ class _AddItemDialogState extends State<AddItemDialog> {
                                 width: half,
                                 child: TextFormField(
                                   controller: _safetyStockController,
-                                  decoration:
-                                      _dec('Safety Stock', helper: 'Buffer above min stock'),
+                                  decoration: _dec('Safety Stock',
+                                      helper: 'Buffer above min stock'),
                                   keyboardType:
-                                      const TextInputType.numberWithOptions(decimal: true),
+                                      const TextInputType.numberWithOptions(
+                                          decimal: true),
                                   inputFormatters: [
-                                    FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d*'))
+                                    FilteringTextInputFormatter.allow(
+                                        RegExp(r'^\d*\.?\d*'))
                                   ],
                                 ),
                               ),
@@ -405,16 +524,19 @@ class _AddItemDialogState extends State<AddItemDialog> {
                                 width: half,
                                 child: TextFormField(
                                   controller: _leadTimeController,
-                                  decoration:
-                                      _dec('Lead Time (days)', helper: 'Supplier delivery time'),
+                                  decoration: _dec('Lead Time (days)',
+                                      helper: 'Supplier delivery time'),
                                   keyboardType: TextInputType.number,
-                                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                                  inputFormatters: [
+                                    FilteringTextInputFormatter.digitsOnly
+                                  ],
                                 ),
                               ),
                             ],
                           ),
                           const SizedBox(height: 24),
-                          _sectionTitle(context, Icons.payments_outlined, 'Pricing'),
+                          _sectionTitle(
+                              context, Icons.payments_outlined, 'Pricing'),
                           Wrap(
                             spacing: 16,
                             runSpacing: 16,
@@ -425,16 +547,19 @@ class _AddItemDialogState extends State<AddItemDialog> {
                                   controller: _unitCostController,
                                   decoration: _dec('Unit Cost *', prefix: '₱ '),
                                   keyboardType:
-                                      const TextInputType.numberWithOptions(decimal: true),
+                                      const TextInputType.numberWithOptions(
+                                          decimal: true),
                                   inputFormatters: [
-                                    FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d*'))
+                                    FilteringTextInputFormatter.allow(
+                                        RegExp(r'^\d*\.?\d*'))
                                   ],
                                   validator: (value) {
                                     if (value == null || value.trim().isEmpty) {
                                       return 'Unit cost is required';
                                     }
                                     final d = double.tryParse(value);
-                                    if (d == null || d < 0) return 'Enter valid cost';
+                                    if (d == null || d < 0)
+                                      return 'Enter valid cost';
                                     return null;
                                   },
                                 ),
@@ -443,18 +568,24 @@ class _AddItemDialogState extends State<AddItemDialog> {
                                 width: half,
                                 child: TextFormField(
                                   controller: _sellingPriceController,
-                                  decoration: _dec('Selling Price', prefix: '₱ ', helper: 'Optional'),
+                                  decoration: _dec('Selling Price',
+                                      prefix: '₱ ', helper: 'Optional'),
                                   keyboardType:
-                                      const TextInputType.numberWithOptions(decimal: true),
+                                      const TextInputType.numberWithOptions(
+                                          decimal: true),
                                   inputFormatters: [
-                                    FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d*'))
+                                    FilteringTextInputFormatter.allow(
+                                        RegExp(r'^\d*\.?\d*'))
                                   ],
                                 ),
                               ),
                             ],
                           ),
                           const SizedBox(height: 24),
-                          _sectionTitle(context, Icons.settings_suggest_outlined, 'Inventory Settings'),
+                          _sectionTitle(
+                              context,
+                              Icons.settings_suggest_outlined,
+                              'Inventory Settings'),
                           Wrap(
                             spacing: 16,
                             runSpacing: 16,
@@ -468,15 +599,18 @@ class _AddItemDialogState extends State<AddItemDialog> {
                                   items: const [
                                     DropdownMenuItem(
                                       value: 'direct',
-                                      child: Text('Direct - decrement stock on sales'),
+                                      child: Text(
+                                          'Direct - decrement stock on sales'),
                                     ),
                                     DropdownMenuItem(
                                       value: 'recipe_pending',
-                                      child: Text('Recipe ingredient - awaiting dish mapping'),
+                                      child: Text(
+                                          'Recipe ingredient - awaiting dish mapping'),
                                     ),
                                   ],
                                   onChanged: (value) {
-                                    if (value != null) setState(() => _consumptionMode = value);
+                                    if (value != null)
+                                      setState(() => _consumptionMode = value);
                                   },
                                 ),
                               ),
@@ -484,7 +618,8 @@ class _AddItemDialogState extends State<AddItemDialog> {
                                 width: half,
                                 child: TextFormField(
                                   controller: _supplierController,
-                                  decoration: _dec('Supplier', helper: 'Optional'),
+                                  decoration:
+                                      _dec('Supplier', helper: 'Optional'),
                                   textInputAction: TextInputAction.next,
                                 ),
                               ),
@@ -493,7 +628,8 @@ class _AddItemDialogState extends State<AddItemDialog> {
                           const SizedBox(height: 16),
                           TextFormField(
                             controller: _notesController,
-                            decoration: _dec('Notes', helper: 'Optional internal notes'),
+                            decoration: _dec('Notes',
+                                helper: 'Optional internal notes'),
                             maxLines: 3,
                             minLines: 2,
                           ),
@@ -511,7 +647,8 @@ class _AddItemDialogState extends State<AddItemDialog> {
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
                   TextButton(
-                    onPressed: _isLoading ? null : () => Navigator.of(context).pop(),
+                    onPressed:
+                        _isLoading ? null : () => Navigator.of(context).pop(),
                     child: const Text('Cancel'),
                   ),
                   const SizedBox(width: 8),
@@ -524,7 +661,7 @@ class _AddItemDialogState extends State<AddItemDialog> {
                             child: CircularProgressIndicator(strokeWidth: 2),
                           )
                         : const Icon(Icons.check),
-                    label: const Text('Add Item'),
+                    label: Text(isEdit ? 'Save Changes' : 'Add Item'),
                   ),
                 ],
               ),

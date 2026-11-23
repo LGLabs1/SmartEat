@@ -17,25 +17,26 @@ class NotificationTriggerManager {
 
   final NotificationService _notificationService = NotificationService();
   Timer? _periodicCheckTimer;
+  StreamSubscription<User?>? _authSubscription;
 
   // Track last notification times to avoid spam
   final Map<String, DateTime> _lastNotifications = {};
   final Map<String, List<String>> _notifiedItemIds = {};
 
-  /// Start periodic checks (runs every 30 minutes when app is active)
+  /// Start periodic checks once auth is ready (every 30 minutes while active)
   void startPeriodicChecks() {
-    if (FirebaseAuth.instance.currentUser == null) {
-      print('===== FIRESTORE STARTUP GUARD =====');
-      print('Notification triggers skipped because auth user is null.');
-      print('Current UID: ${FirebaseAuth.instance.currentUser?.uid ?? 'N/A'}');
-      print('===================================');
-      return;
-    }
+    _authSubscription?.cancel();
+    _authSubscription = FirebaseAuth.instance.authStateChanges().listen((user) {
+      if (user == null) {
+        stopPeriodicChecks();
+        return;
+      }
+      _startForSignedInUser();
+    });
+  }
 
-    // Initial check
+  void _startForSignedInUser() {
     _runAllChecks();
-
-    // Periodic check every 30 minutes
     _periodicCheckTimer?.cancel();
     _periodicCheckTimer = Timer.periodic(
       const Duration(minutes: 30),
@@ -45,6 +46,8 @@ class NotificationTriggerManager {
 
   /// Stop periodic checks
   void stopPeriodicChecks() {
+    _authSubscription?.cancel();
+    _authSubscription = null;
     _periodicCheckTimer?.cancel();
     _periodicCheckTimer = null;
   }
@@ -54,20 +57,14 @@ class NotificationTriggerManager {
     final profile = await _loadCurrentProfile();
     final isAdmin = _profileIsAdmin(profile);
 
-    if (_notificationService.notificationsEnabled) {
-      await Future.wait([
-        _checkPendingOrders(),
-        if (isAdmin) _checkLowStock(),
-        if (isAdmin) _checkUpcomingBills(),
-      ]);
-    }
-    // Attendance reminders persist to the in-app feed even when local
-    // notifications are muted; the dedicated setting controls them.
-    if (_notificationService.attendanceRemindersEnabled) {
-      try {
-        await _checkAttendanceReminders(profile);
-      } catch (_) {}
-    }
+    await Future.wait([
+      _checkPendingOrders(),
+      if (isAdmin) _checkLowStock(),
+      if (isAdmin) _checkUpcomingBills(),
+    ]);
+    try {
+      await _checkAttendanceReminders(profile);
+    } catch (_) {}
     // SMS app-open catch-up (independent of local notification settings)
     try {
       await _checkSmsDailyCatchUp();

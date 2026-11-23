@@ -5,7 +5,11 @@ void main() {
   test('admins see every notification', () {
     expect(
       notificationVisibleToUser(
-        data: {'audience': 'admin', 'type': 'staff_approval'},
+        data: {
+          'audience': 'admin',
+          'allowedRoles': ['admin', 'manager'],
+          'type': 'staff_approval',
+        },
         uid: 'admin',
         isAdmin: true,
       ),
@@ -16,7 +20,11 @@ void main() {
   test('staff see shared and staff notifications', () {
     expect(
       notificationVisibleToUser(
-        data: {'audience': 'all', 'type': 'order'},
+        data: {
+          'audience': 'all',
+          'allowedRoles': ['all', 'staff', 'admin', 'manager'],
+          'type': 'order',
+        },
         uid: 'staff-1',
         isAdmin: false,
       ),
@@ -24,7 +32,11 @@ void main() {
     );
     expect(
       notificationVisibleToUser(
-        data: {'audience': 'staff', 'type': 'attendance'},
+        data: {
+          'audience': 'staff',
+          'allowedRoles': ['staff', 'admin', 'manager'],
+          'type': 'attendance',
+        },
         uid: 'staff-1',
         isAdmin: false,
       ),
@@ -37,6 +49,7 @@ void main() {
       notificationVisibleToUser(
         data: {
           'audience': 'admin',
+          'allowedRoles': ['admin', 'manager'],
           'targetUids': ['staff-1'],
           'type': 'attendance',
         },
@@ -50,7 +63,11 @@ void main() {
   test('staff do not see admin-only or other users targeted notifications', () {
     expect(
       notificationVisibleToUser(
-        data: {'audience': 'admin', 'type': 'low_stock'},
+        data: {
+          'audience': 'admin',
+          'allowedRoles': ['admin', 'manager'],
+          'type': 'low_stock',
+        },
         uid: 'staff-1',
         isAdmin: false,
       ),
@@ -60,6 +77,7 @@ void main() {
       notificationVisibleToUser(
         data: {
           'audience': 'staff',
+          'allowedRoles': ['staff', 'admin', 'manager'],
           'targetUids': ['staff-2'],
           'type': 'attendance',
         },
@@ -70,14 +88,14 @@ void main() {
     );
   });
 
-  test('legacy notifications stay visible except staff approvals', () {
+  test('legacy sensitive notifications are hidden from staff', () {
     expect(
       notificationVisibleToUser(
         data: {'type': 'low_stock'},
         uid: 'staff-1',
         isAdmin: false,
       ),
-      isTrue,
+      isFalse,
     );
     expect(
       notificationVisibleToUser(
@@ -86,6 +104,46 @@ void main() {
         isAdmin: false,
       ),
       isFalse,
+    );
+  });
+
+  test('managers see admin-scoped notifications', () {
+    expect(
+      notificationVisibleToUser(
+        data: {
+          'audience': 'admin',
+          'allowedRoles': ['admin', 'manager'],
+          'type': 'bill_overdue',
+        },
+        uid: 'manager-1',
+        isAdmin: false,
+        isManager: true,
+      ),
+      isTrue,
+    );
+  });
+
+  test('push payloads inherit role metadata from the notification type', () {
+    expect(
+      notificationRolesFromPayload({
+        'type': 'low_stock',
+        'source': 'push',
+      }),
+      contains('admin'),
+    );
+    expect(
+      notificationRolesFromPayload({
+        'type': 'push',
+        'allowedRoles': ['manager', 'staff'],
+      }),
+      equals(['manager', 'staff']),
+    );
+  });
+
+  test('notification document ids stay deterministic and prefixed', () {
+    expect(
+      buildNotificationDocId('eatery-42', 'push_abc:123'),
+      'eatery-42_push_abc_123',
     );
   });
 }

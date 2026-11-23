@@ -1,11 +1,7 @@
 const crypto = require('crypto');
 
 const { onCall, HttpsError } = require('firebase-functions/v2/https');
-const {
-  onDocumentCreated,
-  onDocumentWritten,
-} = require('firebase-functions/v2/firestore');
-const { onSchedule } = require('firebase-functions/v2/scheduler');
+const { onDocumentCreated } = require('firebase-functions/v2/firestore');
 const { defineSecret } = require('firebase-functions/params');
 const admin = require('firebase-admin');
 const { Resend } = require('resend');
@@ -16,6 +12,25 @@ const RESEND_FROM = defineSecret('RESEND_FROM');
 
 function normalizeEmail(email) {
   return String(email || '').trim().toLowerCase();
+}
+
+function normalizePhMobile(value) {
+  let digits = String(value || '').trim().replace(/[^\d+]/g, '');
+  if (digits.startsWith('+')) digits = digits.slice(1);
+  digits = digits.replace(/\D/g, '');
+  if (digits.startsWith('00')) digits = digits.slice(2);
+
+  if (digits.startsWith('63')) {
+    // Already country-coded.
+  } else if (digits.startsWith('0')) {
+    digits = `63${digits.slice(1)}`;
+  } else if (digits.length === 10 && digits.startsWith('9')) {
+    digits = `63${digits}`;
+  } else {
+    return null;
+  }
+
+  return /^639\d{9}$/.test(digits) ? digits : null;
 }
 
 function sha256Hex(input) {
@@ -285,17 +300,18 @@ exports.onOrderCreatedAdjustMenuServings = onDocumentCreated(
       return;
     }
 
-    try {
-      if (String(order.eateryId || '').trim() !== eateryId) {
-        await orderRef.set(
-          {
-            eateryId,
-            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-          },
-          { merge: true }
-        );
-      }
+    if (String(order.eateryId || '').trim() !== eateryId) {
+      await orderRef.set(
+        {
+          eateryId,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+    }
+    return;
 
+    try {
       await admin.firestore().runTransaction(async (tx) => {
         const norm = (s) =>
           String(s || '')
@@ -592,16 +608,4 @@ exports.onOrderCreatedAdjustMenuServings = onDocumentCreated(
       );
     }
   }
-);
-
-Object.assign(
-  exports,
-  createSmsFunctions({
-    admin,
-    onCall,
-    HttpsError,
-    onDocumentWritten,
-    onSchedule,
-    PHILSMS_API_TOKEN,
-  })
 );

@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../../../../../services/api_service.dart';
 import '../../../../../theme.dart';
 import '../../../../../widgets/dashboard/dashboard_back_handler.dart';
+import '../../../../../widgets/skeleton_loaders.dart';
 import '../../data/models/purchase_receipt.dart';
 import '../../data/models/stock_adjustment.dart';
 import '../../presentation/providers/inventory_notifier.dart';
@@ -174,7 +175,15 @@ class _InventoryFeatureScreenState extends State<InventoryFeatureScreen> {
         onItemTap: (item) {
           Navigator.push(
             context,
-            MaterialPageRoute(builder: (_) => ItemDetailScreen(item: item)),
+            MaterialPageRoute(
+              builder: (_) => ItemDetailScreen(
+                item: item,
+                onItemUpdated: (updated) {
+                  if (!mounted) return;
+                  notifier.updateItemInState(updated);
+                },
+              ),
+            ),
           );
         },
         onPurchase: (PurchaseReceipt r) async {
@@ -235,7 +244,12 @@ class _InventoryFeatureScreenState extends State<InventoryFeatureScreen> {
         children: [
           IndexedStack(index: _index, children: screens),
           if (state.loading && items.isEmpty)
-            const Center(child: CircularProgressIndicator()),
+            Positioned.fill(
+              child: Container(
+                color: AppTheme.sageNavy,
+                child: const SkeletonInventory(),
+              ),
+            ),
           if (state.loading && items.isNotEmpty)
             const Positioned(
               top: 0,

@@ -63,7 +63,7 @@ class AuthProvider extends ChangeNotifier {
       _error = _getFirebaseAuthErrorMessage(e);
       _isLoading = false;
       notifyListeners();
-      throw Exception(_error);
+      rethrow;
     } catch (e) {
       _user = null;
       _error = 'An unexpected error occurred: $e';

@@ -11,8 +11,7 @@ class FinanceMetrics {
   static const String inventorySource = 'inventory_purchase';
 
   static String source(Map<String, dynamic> expense) {
-    final src =
-        (expense['source'] ?? '').toString().trim().toLowerCase();
+    final src = (expense['source'] ?? '').toString().trim().toLowerCase();
     if (src.isEmpty || src == manualSource) return manualSource;
     return src;
   }
@@ -24,9 +23,39 @@ class FinanceMetrics {
       (m['amount'] is num) ? (m['amount'] as num).toDouble() : 0.0;
 
   static const String payablePaymentSource = 'payable_payment';
+  static const String payrollPayoutSource = 'payroll_payout';
 
   static bool isPayablePayment(Map<String, dynamic> expense) =>
       source(expense) == payablePaymentSource;
+
+  static bool isPayrollPayout(Map<String, dynamic> expense) =>
+      source(expense) == payrollPayoutSource;
+
+  static Map<String, dynamic> payrollPayoutExpenseData({
+    required String payoutId,
+    required String weekStart,
+    required String staffUid,
+    required String staffName,
+    required double amount,
+    required DateTime paidAt,
+    required String paidByName,
+  }) {
+    return <String, dynamic>{
+      'name': 'Payroll - $staffName',
+      'category': 'Payroll',
+      'amount': amount,
+      'date': paidAt.toIso8601String(),
+      'source': payrollPayoutSource,
+      'linkedPayrollPayoutId': payoutId,
+      'payrollPayoutId': payoutId,
+      'weekStart': weekStart,
+      'staffUid': staffUid,
+      'staffName': staffName,
+      'paidByName': paidByName,
+      'paymentStatus': 'paid',
+      'notes': 'Weekly payroll for week of $weekStart - $staffName',
+    };
+  }
 
   /// Whether a payable has no fixed amount (e.g. utilities billed by usage).
   ///

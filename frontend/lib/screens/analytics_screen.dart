@@ -8,6 +8,20 @@ import '../services/api_service.dart';
 import '../theme.dart';
 import '../widgets/dashboard/dashboard_back_handler.dart';
 
+Widget analyticsCompactTabIcon(
+  IconData icon,
+  String label, {
+  double size = 24,
+}) {
+  return Semantics(
+    label: label,
+    child: Tooltip(
+      message: label,
+      child: Icon(icon, size: size),
+    ),
+  );
+}
+
 class AnalyticsScreen extends StatefulWidget {
   const AnalyticsScreen({
     Key? key,
@@ -344,26 +358,35 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
   }
 
   List<Map<String, dynamic>> _computeTopSellingItems(List<dynamic> orders) {
-    final itemCounts = <String, int>{};
+    final itemCounts = <String, Map<String, dynamic>>{};
 
     for (final order in orders) {
       if (order is! Map) continue;
+      final status = (order['status'] ?? '').toString().toLowerCase();
+      if (status != 'completed') continue;
+
       final items = order['items'] as List<dynamic>? ?? const [];
       for (final item in items) {
         if (item is! Map) continue;
-        final name = (item['name'] ?? 'Unknown').toString();
-        final qty = (item['quantity'] as num?)?.toInt() ?? 1;
-        itemCounts[name] = (itemCounts[name] ?? 0) + qty;
+        final name = (item['name'] ?? item['itemName'] ?? 'Unknown').toString();
+        final rawId = item['menuItemId'] ?? item['id'] ?? item['itemId'];
+        final id = rawId?.toString().trim() ?? '';
+        final key = id.isNotEmpty ? 'id:$id' : 'name:${name.toLowerCase()}';
+        final rawQty = item['quantity'] ?? item['qty'];
+        final qty = rawQty is num ? rawQty.toInt() : 1;
+
+        final entry = itemCounts.putIfAbsent(
+          key,
+          () => {'name': name, 'count': 0},
+        );
+        entry['count'] = (entry['count'] as int) + (qty > 0 ? qty : 1);
       }
     }
 
-    final sorted = itemCounts.entries.toList()
-      ..sort((a, b) => b.value.compareTo(a.value));
+    final sorted = itemCounts.values.toList()
+      ..sort((a, b) => (b['count'] as int).compareTo(a['count'] as int));
 
-    return sorted
-        .map((e) => {'name': e.key, 'count': e.value})
-        .take(10)
-        .toList();
+    return sorted.take(10).toList();
   }
 
   @override
@@ -506,15 +529,15 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
 
       final results = await Future.wait([
         ApiService.getSummaryStats(),
-        (_selectedYear != null || _selectedMonthNumber != null)
-            ? ApiService.getOrdersByDateRange(
-                    startDate: startDate, endDate: endDate)
-                .then((r) {
-                final salesData = _processOrdersToDailySales(
-                    r['data'] as List<dynamic>, days, startDate);
-                return {'data': salesData};
-              })
-            : ApiService.getDailySalesAnalytics(days: days),
+        ordersForRangeFuture.then((r) {
+          final salesData = _processOrdersToDailySales(
+              (r['data'] as List<dynamic>?) ?? const [], days, startDate);
+          return {'data': salesData};
+        }).catchError((_) {
+          final salesData =
+              _processOrdersToDailySales(const [], days, startDate);
+          return {'data': salesData};
+        }),
         ApiService.getItemPerformance(),
         ApiService.getOrdersForecast(days: _selectedRangeDays),
         ApiService.getSalesForecast(days: _selectedRangeDays),
@@ -604,6 +627,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    final compactTabs = MediaQuery.sizeOf(context).width < 430;
     return Scaffold(
       appBar: widget.showAppBar
           ? AppBar(
@@ -699,20 +723,42 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                         fontSize: 12, fontWeight: FontWeight.w700),
                     unselectedLabelStyle: const TextStyle(
                         fontSize: 12, fontWeight: FontWeight.w600),
-                    labelPadding: const EdgeInsets.symmetric(horizontal: 6),
-                    tabs: const [
+                    labelPadding: EdgeInsets.symmetric(
+                      horizontal: compactTabs ? 2 : 6,
+                    ),
+                    tabs: [
                       Tab(
-                          icon: Icon(Icons.show_chart_outlined, size: 20),
-                          text: 'Sales'),
+                        icon: analyticsCompactTabIcon(
+                          Icons.show_chart_outlined,
+                          'Sales',
+                          size: compactTabs ? 24 : 20,
+                        ),
+                        text: compactTabs ? null : 'Sales',
+                      ),
                       Tab(
-                          icon: Icon(Icons.insights_outlined, size: 20),
-                          text: 'Insights'),
+                        icon: analyticsCompactTabIcon(
+                          Icons.insights_outlined,
+                          'Insights',
+                          size: compactTabs ? 24 : 20,
+                        ),
+                        text: compactTabs ? null : 'Insights',
+                      ),
                       Tab(
-                          icon: Icon(Icons.auto_graph_outlined, size: 20),
-                          text: 'Forecast'),
+                        icon: analyticsCompactTabIcon(
+                          Icons.auto_graph_outlined,
+                          'Forecast',
+                          size: compactTabs ? 24 : 20,
+                        ),
+                        text: compactTabs ? null : 'Forecast',
+                      ),
                       Tab(
-                          icon: Icon(Icons.payments_outlined, size: 20),
-                          text: 'Finance'),
+                        icon: analyticsCompactTabIcon(
+                          Icons.payments_outlined,
+                          'Finance',
+                          size: compactTabs ? 24 : 20,
+                        ),
+                        text: compactTabs ? null : 'Finance',
+                      ),
                     ],
                   ),
                 ),
@@ -2309,7 +2355,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      '$totalRecommendations actionable insights based on your data',
+                      '$totalRecommendations actionable insights from the last ${_recommendations?['windowDays'] ?? 30} days of completed orders',
                       style: TextStyle(
                         fontSize: 13,
                         color: Colors.white.withValues(alpha: 0.9),
@@ -2450,7 +2496,6 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
       return null;
     }
 
-    // Sort data by date - earliest first (left to right)
     final sortedSales = List<Map<String, dynamic>>.from(_dailySales)
       ..sort((a, b) {
         final dateA = parseDate(a['date']) ?? DateTime(2000);
@@ -2462,70 +2507,134 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
       return const Center(child: Text('No sales data available'));
     }
 
-    // Get date range from actual data
     final firstDate = parseDate(sortedSales.first['date']) ?? DateTime.now();
     final lastDate = parseDate(sortedSales.last['date']) ?? DateTime.now();
     final totalDays = lastDate.difference(firstDate).inDays + 1;
+    final bucketDays = totalDays <= 31
+        ? 1
+        : totalDays <= 92
+            ? 7
+            : totalDays <= 366
+                ? 30
+                : 365;
+    final bucketCount = ((totalDays + bucketDays - 1) / bucketDays).ceil();
 
-    // Determine number of labels to show based on range
-    final int labelCount = totalDays <= 7 ? totalDays : 10;
-    final int intervalDays =
-        labelCount <= 1 ? 1 : ((totalDays - 1) / (labelCount - 1)).ceil();
+    final buckets = List.generate(bucketCount, (index) {
+      final startOffset = index * bucketDays;
+      final rawEndOffset = (index + 1) * bucketDays - 1;
+      final endOffset =
+          rawEndOffset > totalDays - 1 ? totalDays - 1 : rawEndOffset;
+      return <String, dynamic>{
+        'revenue': 0.0,
+        'orders': 0,
+        'start': firstDate.add(Duration(days: startOffset)),
+        'end': firstDate.add(Duration(days: endOffset)),
+      };
+    });
 
-    // Build chronological date labels at equal intervals
-    final dateLabels = <double, String>{};
-    for (var i = 0; i < labelCount; i++) {
-      final dayOffset = (i * intervalDays).clamp(0, totalDays - 1);
-      final labelDate = firstDate.add(Duration(days: dayOffset));
-      dateLabels[dayOffset.toDouble()] =
-          '${labelDate.month.toString().padLeft(2, '0')}/${labelDate.day.toString().padLeft(2, '0')}';
+    for (final sale in sortedSales) {
+      final date = parseDate(sale['date']);
+      if (date == null) continue;
+      final dayOffset = date.difference(firstDate).inDays;
+      var bucketIndex = dayOffset ~/ bucketDays;
+      if (bucketIndex < 0) bucketIndex = 0;
+      if (bucketIndex >= bucketCount) bucketIndex = bucketCount - 1;
+
+      buckets[bucketIndex]['revenue'] =
+          (buckets[bucketIndex]['revenue'] as double) +
+              ((sale['revenue'] as num?)?.toDouble() ?? 0.0);
+      buckets[bucketIndex]['orders'] = (buckets[bucketIndex]['orders'] as int) +
+          ((sale['orders'] as num?)?.toInt() ?? 0);
     }
 
-    // Create data points with x = days from start
-    final points = <FlSpot>[];
-    final orderBars = <BarChartGroupData>[];
-
-    for (var i = 0; i < sortedSales.length; i++) {
-      final d = sortedSales[i];
-      final date = parseDate(d['date']);
-      if (date == null) continue;
-
-      final daysFromStart = date.difference(firstDate).inDays.toDouble();
-      final revenue = (d['revenue'] as num?)?.toDouble() ?? 0.0;
-      final orders = (d['orders'] as num?)?.toDouble() ?? 0.0;
-
-      points.add(FlSpot(daysFromStart, revenue));
-      orderBars.add(
+    final barGroups = <BarChartGroupData>[];
+    for (var i = 0; i < buckets.length; i++) {
+      final revenue = buckets[i]['revenue'] as double;
+      barGroups.add(
         BarChartGroupData(
-          x: daysFromStart.toInt(),
+          x: i,
           barRods: [
             BarChartRodData(
-              toY: orders,
-              width: 6,
-              borderRadius: BorderRadius.circular(3),
-              color: Colors.indigo,
+              toY: revenue,
+              width: bucketCount > 20 ? 6 : 12,
+              borderRadius: BorderRadius.circular(4),
+              color: AppTheme.sageSuccess,
             ),
           ],
         ),
       );
     }
 
-    final maxRevenue = points.isEmpty
+    final maxRevenue = barGroups.isEmpty
         ? 0.0
-        : points.map((p) => p.y).reduce((a, b) => a > b ? a : b);
+        : barGroups
+            .map((g) => g.barRods.first.toY)
+            .reduce((a, b) => a > b ? a : b);
+    final totalRevenue = buckets.fold<double>(
+        0.0, (sum, bucket) => sum + (bucket['revenue'] as double));
+    final totalOrders =
+        buckets.fold<int>(0, (sum, bucket) => sum + (bucket['orders'] as int));
+    final labelEvery = bucketCount <= 6 ? 1 : (bucketCount / 6).ceil();
+    final bucketUnit = bucketDays == 1
+        ? 'day'
+        : bucketDays == 7
+            ? 'week'
+            : bucketDays == 30
+                ? 'month'
+                : 'year';
+
+    String formatShortMoney(double value) {
+      if (value >= 1000000) return '₱${(value / 1000000).toStringAsFixed(1)}M';
+      if (value >= 1000) return '₱${(value / 1000).toStringAsFixed(1)}k';
+      return '₱${value.toStringAsFixed(0)}';
+    }
+
+    String formatBucketLabel(int index) {
+      final start = buckets[index]['start'] as DateTime;
+      if (bucketDays >= 365) return DateFormat('yyyy').format(start);
+      if (bucketDays >= 30) return DateFormat('MMM').format(start);
+      return DateFormat('MM/dd').format(start);
+    }
+
+    String formatTooltipLabel(int index) {
+      final start = buckets[index]['start'] as DateTime;
+      final end = buckets[index]['end'] as DateTime;
+      if (bucketDays >= 365) return DateFormat('yyyy').format(start);
+      if (bucketDays >= 30) return DateFormat('MMM yyyy').format(start);
+      if (bucketDays == 1) return DateFormat('MMM d, yyyy').format(start);
+      return '${DateFormat('MMM d').format(start)} – ${DateFormat('MMM d, yyyy').format(end)}';
+    }
+
+    final points = barGroups
+        .map((g) => FlSpot(g.x.toDouble(), g.barRods.first.toY))
+        .toList();
+    final orderBars = List.generate(bucketCount, (index) {
+      final orders = (buckets[index]['orders'] as int).toDouble();
+      return BarChartGroupData(
+        x: index,
+        barRods: [
+          BarChartRodData(
+            toY: orders,
+            width: bucketCount > 20 ? 3 : 6,
+            borderRadius: BorderRadius.circular(3),
+            color: Colors.indigo.withValues(alpha: 0.45),
+          ),
+        ],
+      );
+    });
     final maxOrders = orderBars.isEmpty
         ? 0.0
         : orderBars
             .map((g) => g.barRods.first.toY)
             .reduce((a, b) => a > b ? a : b);
+    final intervalDays = labelEvery.toDouble();
 
     String labelAt(double value) {
-      // Find the closest label
-      final closest = dateLabels.entries.reduce(
-          (a, b) => (a.key - value).abs() < (b.key - value).abs() ? a : b);
-      // Only show if within half interval distance
-      if ((closest.key - value).abs() > intervalDays / 2) return '';
-      return closest.value;
+      final index = value.round();
+      if (index < 0 || index >= bucketCount || index % labelEvery != 0) {
+        return '';
+      }
+      return formatBucketLabel(index);
     }
 
     return Container(
@@ -2542,12 +2651,12 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
             children: [
               const Expanded(
                 child: Text(
-                  'Revenue',
+                  'Revenue Trend',
                   style: TextStyle(fontWeight: FontWeight.w800),
                 ),
               ),
               Text(
-                'Max: ${_currency.format(maxRevenue)}',
+                '$totalOrders orders · ${_currency.format(totalRevenue)} · $bucketUnit',
                 style: TextStyle(
                     color: Colors.white.withValues(alpha: 0.7), fontSize: 12),
               ),
@@ -2558,13 +2667,13 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
             child: LineChart(
               LineChartData(
                 minX: 0,
-                maxX: (totalDays - 1).toDouble(),
+                maxX: (bucketCount - 1).toDouble(),
                 minY: 0,
-                maxY: maxRevenue <= 0 ? 1 : maxRevenue * 1.2,
+                maxY: maxRevenue <= 0 ? 1 : maxRevenue * 1.15,
                 gridData: FlGridData(
                   show: true,
-                  drawVerticalLine: true,
-                  verticalInterval: intervalDays.toDouble(),
+                  drawVerticalLine: false,
+                  verticalInterval: intervalDays,
                   getDrawingHorizontalLine: (value) => FlLine(
                     color: Colors.white.withValues(alpha: 0.1),
                     strokeWidth: 1,
@@ -2606,12 +2715,12 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                         BorderSide(color: Colors.white.withValues(alpha: 0.2)),
                     getTooltipItems: (touchedSpots) {
                       return touchedSpots.map((spot) {
-                        final date =
-                            firstDate.add(Duration(days: spot.x.toInt()));
-                        final dateStr =
-                            '${date.month.toString().padLeft(2, '0')}/${date.day.toString().padLeft(2, '0')}/${date.year}';
+                        final index = spot.x.round();
+                        final label = index >= 0 && index < bucketCount
+                            ? formatTooltipLabel(index)
+                            : '';
                         return LineTooltipItem(
-                          '$dateStr\n\u20B1${spot.y.toStringAsFixed(0)}',
+                          '$label\n\u20B1${spot.y.toStringAsFixed(0)}',
                           const TextStyle(
                             color: Colors.white,
                             fontSize: 12,
@@ -2625,24 +2734,14 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                 ),
                 lineBarsData: [
                   LineChartBarData(
-                    isCurved: false,
+                    isCurved: true,
                     spots: points,
-                    dotData: FlDotData(
-                      show: true,
-                      getDotPainter: (spot, percent, bar, index) {
-                        return FlDotCirclePainter(
-                          radius: 3,
-                          color: Colors.green,
-                          strokeWidth: 1,
-                          strokeColor: Colors.white,
-                        );
-                      },
-                    ),
-                    color: Colors.green,
+                    dotData: const FlDotData(show: false),
+                    color: AppTheme.sageSuccess,
                     barWidth: 2,
                     belowBarData: BarAreaData(
                       show: true,
-                      color: Colors.green.withValues(alpha: 0.1),
+                      color: AppTheme.sageSuccess.withValues(alpha: 0.12),
                     ),
                   ),
                 ],
@@ -2662,9 +2761,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                         return Padding(
                           padding: const EdgeInsets.only(right: 4),
                           child: Text(
-                            value >= 1000
-                                ? '\u20B1${(value / 1000).toStringAsFixed(0)}k'
-                                : _currency.format(value),
+                            formatShortMoney(value),
                             style: TextStyle(
                                 fontSize: 10,
                                 color: Colors.white.withValues(alpha: 0.6)),
@@ -2733,11 +2830,12 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                           tooltipBorder: BorderSide(
                               color: Colors.white.withValues(alpha: 0.2)),
                           getTooltipItem: (group, groupIndex, rod, rodIndex) {
-                            final date = firstDate.add(Duration(days: group.x));
-                            final dateStr =
-                                '${date.month.toString().padLeft(2, '0')}/${date.day.toString().padLeft(2, '0')}/${date.year}';
+                            final index = group.x;
+                            final label = index >= 0 && index < bucketCount
+                                ? formatTooltipLabel(index)
+                                : '';
                             return BarTooltipItem(
-                              '$dateStr\n${rod.toY.toInt()} orders',
+                              '$label\n${rod.toY.toInt()} orders',
                               const TextStyle(
                                 color: Colors.white,
                                 fontSize: 12,
@@ -2789,25 +2887,15 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                             reservedSize: 24,
                             interval: 1,
                             getTitlesWidget: (value, meta) {
-                              final day = value.toInt();
-                              if (day < 0 || day >= totalDays) {
-                                return const SizedBox.shrink();
-                              }
-
-                              // Show full label only every 5 days to avoid overlap.
-                              // For other days, show a small dot marker.
-                              final showLabel = day % 5 == 0;
-                              final label =
-                                  '${firstDate.add(Duration(days: day)).month.toString().padLeft(2, '0')}/${firstDate.add(Duration(days: day)).day.toString().padLeft(2, '0')}';
+                              final label = labelAt(value);
+                              if (label.isEmpty) return const SizedBox.shrink();
                               return Padding(
                                 padding: const EdgeInsets.only(top: 6),
                                 child: Text(
-                                  showLabel ? label : '.',
+                                  label,
                                   style: TextStyle(
-                                    fontSize: showLabel ? 9 : 10,
-                                    color: showLabel
-                                        ? Colors.white.withValues(alpha: 0.85)
-                                        : Colors.white.withValues(alpha: 0.5),
+                                    fontSize: 9,
+                                    color: Colors.white.withValues(alpha: 0.7),
                                   ),
                                 ),
                               );

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../theme.dart';
 import '../../../utils/attendance_utils.dart';
 import '../../../utils/staff_utils.dart';
+import '../../../widgets/skeleton_loaders.dart';
 
 class AdminAttendanceCalendar extends StatefulWidget {
   const AdminAttendanceCalendar({
@@ -333,7 +334,7 @@ class _AdminAttendanceCalendarState extends State<AdminAttendanceCalendar> {
               _buildHeader(scheme),
               const SizedBox(height: 16),
               if (widget.isLoading)
-                _buildLoadingState(scheme, wide)
+                _buildLoadingState(wide, compact: compact)
               else ...[
                 _buildSummary(
                   scheme,
@@ -1099,45 +1100,71 @@ class _AdminAttendanceCalendarState extends State<AdminAttendanceCalendar> {
     );
   }
 
-  Widget _buildLoadingState(ColorScheme scheme, bool wide) {
-    final color = scheme.surfaceContainerHighest.withValues(alpha: 0.7);
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        _SkeletonBox(color: color, height: 92),
-        const SizedBox(height: 10),
-        Row(
-          children: [
-            Expanded(child: _SkeletonBox(color: color, height: 58)),
-            const SizedBox(width: 8),
-            Expanded(child: _SkeletonBox(color: color, height: 58)),
-            const SizedBox(width: 8),
-            Expanded(child: _SkeletonBox(color: color, height: 58)),
-          ],
-        ),
-        const SizedBox(height: 16),
-        if (wide)
+  Widget _buildLoadingState(bool wide, {required bool compact}) {
+    return ShimmerLoading(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Semantics(
+            label: 'Loading attendance summary',
+            child: SkeletonBlock(
+              height: 92,
+              borderRadius: 16,
+              padding: const EdgeInsets.all(14),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  const SkeletonCircle(diameter: 40),
+                  const SizedBox(width: 12),
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        SkeletonLine(width: 120, height: 12),
+                        SizedBox(height: 8),
+                        SkeletonLine(width: 88, height: 24),
+                      ],
+                    ),
+                  ),
+                  if (!compact) const SkeletonLine(width: 46, height: 46),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
           Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Expanded(
-                flex: 7,
-                child: _SkeletonBox(color: color, height: 330),
-              ),
-              const SizedBox(width: 18),
-              SizedBox(
-                width: 380,
-                child: _SkeletonBox(color: color, height: 330),
-              ),
+              const Expanded(child: SkeletonBlock(height: 58)),
+              const SizedBox(width: 8),
+              const Expanded(child: SkeletonBlock(height: 58)),
+              const SizedBox(width: 8),
+              const Expanded(child: SkeletonBlock(height: 58)),
             ],
-          )
-        else ...[
-          _SkeletonBox(color: color, height: 330),
-          const SizedBox(height: 14),
-          _SkeletonBox(color: color, height: 230),
+          ),
+          const SizedBox(height: 16),
+          if (wide)
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Expanded(
+                  flex: 7,
+                  child: SkeletonBlock(height: 330, borderRadius: 16),
+                ),
+                const SizedBox(width: 18),
+                SizedBox(
+                  width: 380,
+                  child: SkeletonBlock(height: 330, borderRadius: 16),
+                ),
+              ],
+            )
+          else ...[
+            const SkeletonBlock(height: 330, borderRadius: 16),
+            const SizedBox(height: 14),
+            const SkeletonBlock(height: 230, borderRadius: 16),
+          ],
         ],
-      ],
+      ),
     );
   }
 }
@@ -1706,24 +1733,6 @@ class _StatusPill extends StatelessWidget {
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _SkeletonBox extends StatelessWidget {
-  const _SkeletonBox({required this.color, this.height});
-
-  final Color color;
-  final double? height;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      height: height,
-      decoration: BoxDecoration(
-        color: color,
-        borderRadius: BorderRadius.circular(14),
       ),
     );
   }

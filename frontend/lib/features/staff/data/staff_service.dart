@@ -337,7 +337,7 @@ class StaffService {
     }, SetOptions(merge: true));
   }
 
-  static Future<void> recordPayout({
+  static Future<String> recordPayout({
     required String eateryId,
     required String uid,
     required String weekStartKey,
@@ -345,12 +345,12 @@ class StaffService {
     required String type,
     required String adminUid,
     required String adminName,
-  }) {
+  }) async {
     final payoutId = type == 'weekly'
         ? '${eateryId}_${uid}_$weekStartKey'
         : '${eateryId}_${uid}_${weekStartKey}_advance_${DateTime.now().millisecondsSinceEpoch}';
 
-    return _db
+    await _db
         .collection('eateries')
         .doc(eateryId)
         .collection('payroll_payouts')
@@ -366,6 +366,7 @@ class StaffService {
       'paidAt': FieldValue.serverTimestamp(),
       'createdAt': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
+    return payoutId;
   }
 
   /// Marks every past day in [weekStart]..[weekStart]+6 without an existing

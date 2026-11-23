@@ -35,84 +35,116 @@ class KpiCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final compact = MediaQuery.of(context).size.width < 420;
 
-    final card = SageHoverCard(
-      onTap: onTap,
-      padding: EdgeInsets.symmetric(
-        horizontal: compact ? 10 : 12,
-        vertical: compact ? 8 : 9,
-      ),
-      borderRadius: 14,
-      accent: color,
-      child: Row(
-        children: [
-          Container(
-            width: compact ? 30 : 34,
-            height: compact ? 30 : 34,
-            decoration: BoxDecoration(
-              color: color.withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Icon(icon, color: color, size: compact ? 16 : 18),
+    final card = LayoutBuilder(
+      builder: (context, constraints) {
+        final tileWidth = constraints.maxWidth;
+        final micro = tileWidth < 118;
+        final compact = tileWidth < 170;
+        final showTrend = trendPercent != null && !micro;
+        final showSubtitle = subtitle != null && !compact;
+
+        return SageHoverCard(
+          onTap: onTap,
+          padding: EdgeInsets.symmetric(
+            horizontal: micro
+                ? 7
+                : compact
+                    ? 9
+                    : 12,
+            vertical: micro
+                ? 7
+                : compact
+                    ? 8
+                    : 9,
           ),
-          SizedBox(width: compact ? 8 : 10),
-          Expanded(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
+          borderRadius: 14,
+          accent: color,
+          child: Row(
+            children: [
+              if (!micro) ...[
+                Container(
+                  width: compact ? 24 : 34,
+                  height: compact ? 24 : 34,
+                  decoration: BoxDecoration(
+                    color: color.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Icon(
+                    icon,
+                    color: color,
+                    size: compact ? 14 : 18,
+                  ),
+                ),
+                SizedBox(width: compact ? 6 : 10),
+              ],
+              Expanded(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Flexible(
-                      child: FittedBox(
-                        fit: BoxFit.scaleDown,
-                        alignment: Alignment.centerLeft,
-                        child: Text(
-                          value,
-                          maxLines: 1,
-                          style: TextStyle(
-                            fontSize: compact ? 15 : 17,
-                            fontWeight: FontWeight.w800,
-                            color: scheme.onSurface,
+                    Row(
+                      children: [
+                        Flexible(
+                          child: FittedBox(
+                            fit: BoxFit.scaleDown,
+                            alignment: Alignment.centerLeft,
+                            child: Text(
+                              value,
+                              maxLines: 1,
+                              style: TextStyle(
+                                fontSize: micro
+                                    ? 13
+                                    : compact
+                                        ? 14
+                                        : 17,
+                                fontWeight: FontWeight.w800,
+                                color: scheme.onSurface,
+                              ),
+                            ),
                           ),
                         ),
+                        if (showTrend) ...[
+                          const SizedBox(width: 6),
+                          _TrendBadge(percent: trendPercent!),
+                        ],
+                      ],
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: scheme.onSurfaceVariant,
+                        fontWeight: FontWeight.w600,
+                        fontSize: micro
+                            ? 9
+                            : compact
+                                ? 10
+                                : 11,
                       ),
                     ),
-                    if (trendPercent != null) ...[
-                      const SizedBox(width: 6),
-                      _TrendBadge(percent: trendPercent!),
+                    if (showSubtitle) ...[
+                      const SizedBox(height: 1),
+                      Text(
+                        subtitle!,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color:
+                              scheme.onSurfaceVariant.withValues(alpha: 0.85),
+                          fontSize: 10.5,
+                        ),
+                      ),
                     ],
                   ],
                 ),
-                const SizedBox(height: 2),
-                Text(
-                  title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: scheme.onSurfaceVariant,
-                    fontWeight: FontWeight.w600,
-                    fontSize: compact ? 10.5 : 11,
-                  ),
-                ),
-                if (subtitle != null) ...[
-                  const SizedBox(height: 1),
-                  Text(
-                    subtitle!,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: scheme.onSurfaceVariant.withValues(alpha: 0.85),
-                      fontSize: 10.5,
-                    ),
-                  ),
-                ],
-              ],
-            ),
+              ),
+            ],
           ),
-        ],
-      ),
+        );
+      },
     );
 
     if (description == null || description!.trim().isEmpty) return card;

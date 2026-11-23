@@ -4,6 +4,8 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/foundation.dart';
 import 'dart:async';
 import 'dart:math';
+import '../features/finance/data/finance_metrics.dart';
+import '../features/inventory/domain/services/order_stock_movement.dart';
 import '../features/inventory/domain/services/recipe_consumption.dart';
 import '../utils/order_query_key.dart';
 import 'business_context_builder.dart';
@@ -20,6 +22,97 @@ class _OrderDeductionResult {
   final RecipeConsumptionPlan plan;
   final Map<String, double> nextStockById;
   final List<Map<String, dynamic>> lowStockItems;
+}
+
+const Set<String> allowedInventoryStockOperations = {
+  'add',
+  'subtract',
+  'set',
+};
+
+/// Pure stock math shared by the Firestore transaction and its unit tests.
+double computeStockAfterOperation({
+  required double currentStock,
+  required double quantity,
+  required String operation,
+}) {
+  if (!allowedInventoryStockOperations.contains(operation)) {
+    throw ArgumentError.value(
+      operation,
+      'operation',
+      'Unsupported inventory stock operation',
+    );
+  }
+  if (quantity < 0) {
+    throw ArgumentError.value(
+        quantity, 'quantity', 'Quantity cannot be negative');
+  }
+  final nextStock = switch (operation) {
+    'add' => currentStock + quantity,
+    'subtract' => currentStock - quantity,
+    _ => quantity,
+  };
+  if (nextStock < 0) {
+    throw ArgumentError.value(
+      quantity,
+      'quantity',
+      'Resulting stock cannot be negative',
+    );
+  }
+  return nextStock;
+}
+
+class CreateOrderIdempotency {
+  const CreateOrderIdempotency({
+    required this.existingOrder,
+    required this.deductStock,
+  });
+
+  final Map<String, dynamic>? existingOrder;
+  final bool deductStock;
+
+  bool get isDuplicate => existingOrder != null;
+}
+
+/// Decides whether a create request is a replay. An existing document is
+/// returned as-is and never deducts stock; the deduction guard mirrors
+/// [FirebaseService.completeOrder].
+CreateOrderIdempotency planCreateOrderIdempotency({
+  required bool documentExists,
+  required String documentId,
+  Map<String, dynamic>? existingData,
+  required bool requestedCompleted,
+  required bool inventoryDeducted,
+  required bool hasDeductionSnapshot,
+}) {
+  if (documentExists) {
+    return CreateOrderIdempotency(
+      existingOrder: <String, dynamic>{...?existingData, 'id': documentId},
+      deductStock: false,
+    );
+  }
+  final alreadyDeducted = inventoryDeducted || hasDeductionSnapshot;
+  return CreateOrderIdempotency(
+    existingOrder: null,
+    deductStock: requestedCompleted && !alreadyDeducted,
+  );
+}
+
+List<String> recordedAddRequestIds(List<dynamic>? raw) => raw == null
+    ? const <String>[]
+    : raw.whereType<String>().toList(growable: false);
+
+bool isDuplicateAddRequest(List<String> requestIds, String requestId) =>
+    requestId.isNotEmpty && requestIds.contains(requestId);
+
+/// Keeps the idempotency log bounded while preserving insertion order.
+List<String> appendAddRequestId(List<String> requestIds, String requestId) {
+  if (requestId.isEmpty || requestIds.contains(requestId)) return requestIds;
+  final next = [...requestIds, requestId];
+  const maxEntries = 20;
+  return next.length > maxEntries
+      ? next.sublist(next.length - maxEntries)
+      : next;
 }
 
 class FirebaseService {
@@ -268,6 +361,56 @@ class FirebaseService {
       });
     } catch (e) {
       throw Exception('Failed to post purchase to expenses: $e');
+    }
+  }
+
+  static Future<Map<String, dynamic>?> findExpenseByLinkedPayrollPayout(
+    String payoutId,
+  ) async {
+    final id = payoutId.trim();
+    if (id.isEmpty) return null;
+    try {
+      final eateryId = await _requireCurrentEateryId();
+      final querySnapshot = await _withRetry(
+        () => _eaterySubcollection(eateryId, expensesCollection)
+            .where('linkedPayrollPayoutId', isEqualTo: id)
+            .limit(1)
+            .get(),
+      );
+      if (querySnapshot.docs.isEmpty) return null;
+      final doc = querySnapshot.docs.first;
+      return {'id': doc.id, ...doc.data()};
+    } catch (e) {
+      throw Exception('Failed to look up linked payroll expense: $e');
+    }
+  }
+
+  static Future<Map<String, dynamic>> createExpenseFromPayrollPayout({
+    required String payoutId,
+    required String weekStart,
+    required String staffUid,
+    required String staffName,
+    required double amount,
+    required DateTime paidAt,
+    required String paidByName,
+  }) async {
+    try {
+      final existing = await findExpenseByLinkedPayrollPayout(payoutId);
+      if (existing != null) return existing;
+
+      return await _writeExpense(
+        FinanceMetrics.payrollPayoutExpenseData(
+          payoutId: payoutId,
+          weekStart: weekStart,
+          staffUid: staffUid,
+          staffName: staffName,
+          amount: amount,
+          paidAt: paidAt,
+          paidByName: paidByName,
+        ),
+      );
+    } catch (e) {
+      throw Exception('Failed to post payroll to expenses: $e');
     }
   }
 
@@ -1726,8 +1869,10 @@ class FirebaseService {
   static Future<_OrderDeductionResult> _applyOrderDeduction({
     required Transaction tx,
     required String eateryId,
+    required String orderId,
     required List<Map<String, dynamic>> orderItems,
     required List<Map<String, dynamic>> inventory,
+    String? performedBy,
   }) async {
     final menuIds = <String>{};
     for (final item in orderItems) {
@@ -1878,7 +2023,9 @@ class FirebaseService {
 
     for (final entry in plan.requiredByInventoryId.entries) {
       final inventoryItemId = entry.key;
+      final required = entry.value;
       final inventoryItem = txInventoryById[inventoryItemId]!;
+      final currentStock = _asDouble(inventoryItem['currentStock'], 0.0);
       final nextStock = nextStockById[inventoryItemId] ?? 0.0;
       tx.update(
         _eaterySubcollection(eateryId, inventoryCollection)
@@ -1888,6 +2035,31 @@ class FirebaseService {
           'updatedAt': FieldValue.serverTimestamp(),
         },
       );
+
+      final movementId = orderConsumptionMovementId(orderId, inventoryItemId);
+      final movementRef =
+          _eaterySubcollection(eateryId, stockMovementsCollection)
+              .doc(movementId);
+      final movementSnap = await tx.get(movementRef);
+      if (!movementSnap.exists) {
+        final unitCostAtEvent = _asDouble(inventoryItem['unitCost'], 0.0);
+        final serverTime = FieldValue.serverTimestamp();
+        tx.set(
+          movementRef,
+          buildOrderConsumptionMovement(
+            orderId: orderId,
+            eateryId: eateryId,
+            itemId: inventoryItemId,
+            qtyBeforeBase: currentStock,
+            qtyAfterBase: nextStock,
+            changeBase: -required,
+            unitCostAtEvent: unitCostAtEvent,
+            timestamp: serverTime,
+            performedBy: performedBy,
+          ),
+        );
+      }
+
       final minStock = _asDouble(inventoryItem['minStock'], 5.0);
       if (nextStock <= minStock) {
         lowStockItems.add({
@@ -1948,6 +2120,11 @@ class FirebaseService {
     try {
       final eateryId = await _requireCurrentEateryId();
       final ordersRef = _eaterySubcollection(eateryId, ordersCollection);
+      // Resolved before the transaction so the same reference is checked and
+      // written, even when Firestore retries the transaction.
+      final docRef = orderId != null && orderId.trim().isNotEmpty
+          ? ordersRef.doc(orderId.trim())
+          : ordersRef.doc();
 
       final orderStatus =
           status.trim().toLowerCase() == 'completed' ? 'completed' : 'pending';
@@ -1968,26 +2145,50 @@ class FirebaseService {
       final currentUser = _auth.currentUser;
       final createdByUid = currentUser?.uid ?? '';
       final userProfile = await _requireCurrentUserProfile();
-      final createdByName = (userProfile['name'] ??
-              userProfile['displayName'] ??
-              currentUser?.displayName ??
-              'Unknown')
-          .toString();
+      final firstName = (userProfile['firstName'] ?? '').toString().trim();
+      final lastName = (userProfile['lastName'] ?? '').toString().trim();
+      final createdByName = [
+        (userProfile['name'] ?? '').toString().trim(),
+        '$firstName $lastName'.trim(),
+        (userProfile['displayName'] ?? '').toString().trim(),
+        (currentUser?.displayName ?? '').toString().trim(),
+        (userProfile['email'] ?? currentUser?.email ?? '').toString().trim(),
+      ].firstWhere((value) => value.isNotEmpty, orElse: () => 'Unknown');
 
       final inventory = isCompleted
           ? await _loadInventoryForDeduction(eateryId)
           : const <Map<String, dynamic>>[];
 
       final transactionResult = await _firestore.runTransaction((tx) async {
+        final existingSnap = await tx.get(docRef);
+        final incomingDeductions = orderData['inventoryDeductions'];
+        final decision = planCreateOrderIdempotency(
+          documentExists: existingSnap.exists,
+          documentId: docRef.id,
+          existingData: existingSnap.data(),
+          requestedCompleted: isCompleted,
+          inventoryDeducted: orderData['inventoryDeducted'] == true,
+          hasDeductionSnapshot:
+              incomingDeductions is List && incomingDeductions.isNotEmpty,
+        );
+        if (decision.isDuplicate) {
+          return {
+            'duplicate': true,
+            'existingOrder': decision.existingOrder,
+          };
+        }
+
         var lowStockItems = <Map<String, dynamic>>[];
         RecipeConsumptionPlan? plan;
 
-        if (isCompleted) {
+        if (decision.deductStock) {
           final deduction = await _applyOrderDeduction(
             tx: tx,
             eateryId: eateryId,
+            orderId: docRef.id,
             orderItems: items,
             inventory: inventory,
+            performedBy: createdByUid,
           );
           lowStockItems = deduction.lowStockItems;
           plan = deduction.plan;
@@ -2002,23 +2203,23 @@ class FirebaseService {
           'createdBy': createdByUid,
           'createdByName': createdByName,
           'inventoryDeducted': isCompleted,
-          if (isCompleted) 'inventoryDeductions': plan?.toJsonLines() ?? [],
-          if (isCompleted)
+          if (decision.deductStock)
+            'inventoryDeductions': plan?.toJsonLines() ?? [],
+          if (decision.deductStock)
             'inventoryPerServing': plan?.perServingByMenuId ?? {},
           if (isCompleted) 'completedAt': FieldValue.serverTimestamp(),
           'updatedAt': FieldValue.serverTimestamp(),
         };
 
-        final DocumentReference<Map<String, dynamic>> docRef;
-        if (orderId != null && orderId.trim().isNotEmpty) {
-          docRef = ordersRef.doc(orderId.trim());
-        } else {
-          docRef = ordersRef.doc();
-        }
         tx.set(docRef, orderFields);
 
         return {'docRef': docRef, 'lowStockItems': lowStockItems};
       });
+
+      if (transactionResult['duplicate'] == true) {
+        return Map<String, dynamic>.from(
+            transactionResult['existingOrder'] as Map<String, dynamic>);
+      }
 
       final result = transactionResult['docRef'] as DocumentReference;
       final lowStockItems =
@@ -2126,8 +2327,9 @@ class FirebaseService {
 
   static Future<Map<String, dynamic>> addItemsToPendingOrder(
     String orderId,
-    List<Map<String, dynamic>> itemsToAdd,
-  ) async {
+    List<Map<String, dynamic>> itemsToAdd, {
+    String? addRequestId,
+  }) async {
     if (orderId.trim().isEmpty) {
       throw Exception('Order ID is required');
     }
@@ -2177,6 +2379,15 @@ class FirebaseService {
             plugin: 'cloud_firestore',
             message: 'Access denied (eatery mismatch)',
           );
+        }
+
+        final requestIds = recordedAddRequestIds(order['addRequestIds']);
+        if (isDuplicateAddRequest(requestIds, addRequestId ?? '')) {
+          return {
+            'id': orderRef.id,
+            ...order,
+            'duplicateRequest': true,
+          };
         }
 
         final status = (order['status'] ?? '').toString().trim().toLowerCase();
@@ -2271,12 +2482,18 @@ class FirebaseService {
           totalAmount += sub;
         }
 
+        final nextRequestIds =
+            appendAddRequestId(requestIds, addRequestId ?? '');
         tx.update(orderRef, {
           'items': mergedItems,
           'totalAmount': totalAmount,
           'updatedAt': FieldValue.serverTimestamp(),
           'lastAddedItems': sanitizedAddedItems,
           'lastAddedAt': FieldValue.serverTimestamp(),
+          if (addRequestId != null && addRequestId.trim().isNotEmpty)
+            'addRequestIds': nextRequestIds,
+          if (addRequestId != null && addRequestId.trim().isNotEmpty)
+            'lastAddRequestId': addRequestId,
         });
 
         return {
@@ -2285,6 +2502,8 @@ class FirebaseService {
           'items': mergedItems,
           'totalAmount': totalAmount,
           'lastAddedItems': sanitizedAddedItems,
+          if (addRequestId != null && addRequestId.trim().isNotEmpty)
+            'duplicateRequest': false,
         };
       });
 
@@ -2381,8 +2600,10 @@ class FirebaseService {
           final deduction = await _applyOrderDeduction(
             tx: tx,
             eateryId: eateryId,
+            orderId: orderId,
             orderItems: items,
             inventory: inventory,
+            performedBy: _auth.currentUser?.uid,
           );
 
           tx.set(
@@ -3319,39 +3540,30 @@ class FirebaseService {
       final eateryId = await _requireCurrentEateryId();
       final docRef =
           _eaterySubcollection(eateryId, inventoryCollection).doc(id);
-      final docSnapshot = await docRef.get();
 
-      if (!docSnapshot.exists) {
-        throw Exception('Inventory item not found');
-      }
+      // Read-modify-write inside a transaction so concurrent sales cannot
+      // overwrite each other's stock delta.
+      await _withRetry(() => _firestore.runTransaction((tx) async {
+            final docSnapshot = await tx.get(docRef);
+            if (!docSnapshot.exists) {
+              throw Exception('Inventory item not found');
+            }
+            final data = docSnapshot.data() ?? <String, dynamic>{};
+            final existingEateryId = (data['eateryId'] ?? '').toString().trim();
+            if (existingEateryId.isNotEmpty && existingEateryId != eateryId) {
+              throw Exception('Access denied');
+            }
 
-      final existingEateryId =
-          (docSnapshot.data()?['eateryId'] ?? '').toString().trim();
-      if (existingEateryId.isNotEmpty && existingEateryId != eateryId) {
-        throw Exception('Access denied');
-      }
-
-      final currentStock =
-          (docSnapshot.data()!['currentStock'] as num).toDouble();
-      double newStock;
-
-      switch (operation) {
-        case 'add':
-          newStock = currentStock + quantity;
-          break;
-        case 'subtract':
-          newStock = currentStock - quantity;
-          break;
-        case 'set':
-        default:
-          newStock = quantity;
-          break;
-      }
-
-      await docRef.update({
-        'currentStock': newStock,
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
+            final newStock = computeStockAfterOperation(
+              currentStock: _asDouble(data['currentStock']),
+              quantity: quantity,
+              operation: operation,
+            );
+            tx.update(docRef, {
+              'currentStock': newStock,
+              'updatedAt': FieldValue.serverTimestamp(),
+            });
+          }));
 
       final updatedSnapshot = await docRef.get();
       BusinessContextBuilder.invalidate();

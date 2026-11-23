@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 import '../services/auth_provider.dart' as app_auth;
 import '../theme.dart';
 import '../widgets/app_logo.dart';
+import '../widgets/inline_error_banner.dart';
 import 'auth_ui.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -22,6 +23,7 @@ class _LoginScreenState extends State<LoginScreen>
   final _passwordController = TextEditingController();
   bool _isLoading = false;
   bool _obscurePassword = true;
+  Object? _inlineAuthError;
 
   late FocusNode _emailFocusNode;
   late FocusNode _passwordFocusNode;
@@ -91,7 +93,27 @@ class _LoginScreenState extends State<LoginScreen>
     setState(() => _obscurePassword = !_obscurePassword);
   }
 
+  void _clearInlineAuthError() {
+    if (!mounted) return;
+    setState(() => _inlineAuthError = null);
+  }
+
+  void _focusFieldForAuthError(FirebaseAuthException error) {
+    switch (error.code) {
+      case 'invalid-email':
+      case 'user-not-found':
+        _emailFocusNode.requestFocus();
+        break;
+      case 'wrong-password':
+        _passwordFocusNode.requestFocus();
+        break;
+    }
+  }
+
   void _submit() {
+    if (_inlineAuthError != null) {
+      setState(() => _inlineAuthError = null);
+    }
     if (_formKey.currentState!.validate()) {
       _login();
     }
@@ -188,7 +210,10 @@ class _LoginScreenState extends State<LoginScreen>
   Future<void> _login() async {
     if (!_formKey.currentState!.validate()) return;
 
-    setState(() => _isLoading = true);
+    setState(() {
+      _isLoading = true;
+      _inlineAuthError = null;
+    });
 
     try {
       await context.read<app_auth.AuthProvider>().login(
@@ -197,21 +222,12 @@ class _LoginScreenState extends State<LoginScreen>
           );
     } on FirebaseAuthException catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Login failed: ${e.message}'),
-            backgroundColor: errorColor,
-          ),
-        );
+        setState(() => _inlineAuthError = e);
+        _focusFieldForAuthError(e);
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Login failed: ${e.toString()}'),
-            backgroundColor: errorColor,
-          ),
-        );
+        setState(() => _inlineAuthError = e);
       }
     } finally {
       if (mounted) {
@@ -598,6 +614,17 @@ class _LoginScreenState extends State<LoginScreen>
               ),
             ),
             const SizedBox(height: 24),
+            if (_inlineAuthError != null)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 16),
+                child: InlineErrorBanner(
+                  key: const Key('login-inline-error'),
+                  error: _inlineAuthError!,
+                  operationContext: 'auth',
+                  onRetry: _clearInlineAuthError,
+                  actionLabel: 'Dismiss',
+                ),
+              ),
             _buildAnimatedTextField(
               controller: _emailController,
               label: 'Email',

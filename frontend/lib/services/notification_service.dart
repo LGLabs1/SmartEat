@@ -1,10 +1,16 @@
 import 'dart:async';
+import 'dart:convert';
+
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+import '../utils/notification_visibility.dart';
+import 'api_service.dart';
 
 @pragma('vm:entry-point')
 Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
@@ -12,32 +18,8 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
     if (Firebase.apps.isEmpty) {
       await Firebase.initializeApp();
     }
-    final notification = message.notification;
-    final title = (notification?.title ?? message.data['title'] ?? 'Smart Eat')
-        .toString();
-    final body = (notification?.body ?? message.data['body'] ?? '').toString();
-    final type = (message.data['type'] ?? 'push').toString();
-    final messageId = message.messageId;
     final service = NotificationService();
-    final payloadEateryId = (message.data['eateryId'] ?? '').toString().trim();
-    await service.persistFeedNotification(
-      title: title,
-      body: body,
-      type: type,
-      source: (message.data['source'] ?? 'push').toString(),
-      audience: (message.data['audience'] ?? 'all').toString(),
-      targetUids: service._stringList(message.data['targetUids']),
-      eateryId: payloadEateryId.isEmpty ? null : payloadEateryId,
-      dedupeKey: messageId != null && messageId.isNotEmpty
-          ? 'push_$messageId'
-          : 'push_${DateTime.now().millisecondsSinceEpoch}',
-      data: {
-        ...message.data,
-        if (messageId != null) 'messageId': messageId,
-        'target': message.data['target'] ?? message.data['route'],
-        'background': true,
-      },
-    );
+    await service.persistPushNotification(message, background: true);
   } catch (_) {}
 }
 
@@ -46,14 +28,24 @@ class NotificationService {
   factory NotificationService() => _instance;
   NotificationService._internal();
 
+  static const _pendingNotificationsKey = 'smarteat_pending_notifications_v2';
+  static const _cachedEateryIdKey = 'smarteat_cached_eatery_id';
+  static const _cachedNotificationUidKey = 'smarteat_cached_notification_uid';
+  static const _pendingTtl = Duration(days: 7);
+
   final FirebaseMessaging _messaging = FirebaseMessaging.instance;
   final FlutterLocalNotificationsPlugin _localNotifications =
       FlutterLocalNotificationsPlugin();
 
   String? _fcmToken;
   String? _preferencesUid;
+  bool _initialized = false;
+  bool _initializing = false;
+  StreamSubscription<String>? _tokenRefreshSubscription;
   StreamSubscription<RemoteMessage>? _onMessageSubscription;
   StreamSubscription<RemoteMessage>? _onMessageOpenedAppSubscription;
+  StreamSubscription<User?>? _authSubscription;
+  bool _flushingPending = false;
 
   // Settings
   bool _notificationsEnabled = true;
@@ -74,11 +66,20 @@ class NotificationService {
 
   /// Initialize the notification service
   Future<void> initialize() async {
+    if (_initialized || _initializing) return;
+    _initializing = true;
     // Firebase Messaging and the local notifications plugin do not support
     // Windows/Linux desktop, so skip initialization there.
     if (!kIsWeb &&
         (defaultTargetPlatform == TargetPlatform.windows ||
             defaultTargetPlatform == TargetPlatform.linux)) {
+      await loadPreferences(force: true);
+      _authSubscription ??=
+          FirebaseAuth.instance.authStateChanges().listen((user) {
+        unawaited(_handleAuthChanged(user));
+      });
+      _initialized = true;
+      _initializing = false;
       return;
     }
     try {
@@ -97,7 +98,7 @@ class NotificationService {
       _fcmToken = await _messaging.getToken();
 
       // Listen for token refresh
-      _messaging.onTokenRefresh.listen((token) {
+      _tokenRefreshSubscription ??= _messaging.onTokenRefresh.listen((token) {
         _fcmToken = token;
       });
 
@@ -105,16 +106,24 @@ class NotificationService {
       await _setupLocalNotifications();
 
       // Set up foreground message handler
-      _onMessageSubscription =
+      _onMessageSubscription ??=
           FirebaseMessaging.onMessage.listen(_handleForegroundMessage);
 
       // Set up notification tap handler
-      _onMessageOpenedAppSubscription =
+      _onMessageOpenedAppSubscription ??=
           FirebaseMessaging.onMessageOpenedApp.listen(_handleMessageOpenedApp);
 
       await loadPreferences(force: true);
+      await _flushPendingNotifications();
+      _authSubscription ??=
+          FirebaseAuth.instance.authStateChanges().listen((user) {
+        unawaited(_handleAuthChanged(user));
+      });
+      _initialized = true;
     } catch (e) {
       // Don't rethrow - notifications are not critical to app function
+    } finally {
+      _initializing = false;
     }
   }
 
@@ -156,35 +165,19 @@ class NotificationService {
   }
 
   /// Handle foreground messages
-  void _handleForegroundMessage(RemoteMessage message) {
+  Future<void> _handleForegroundMessage(RemoteMessage message) async {
     final notification = message.notification;
     final title = (notification?.title ?? message.data['title'] ?? 'Smart Eat')
         .toString();
     final body = (notification?.body ?? message.data['body'] ?? '').toString();
-    final type = (message.data['type'] ?? 'push').toString();
     final messageId = message.messageId;
 
-    persistFeedNotification(
-      title: title,
-      body: body,
-      type: type,
-      source: 'push',
-      audience: (message.data['audience'] ?? 'all').toString(),
-      targetUids: _stringList(message.data['targetUids']),
-      dedupeKey: messageId != null && messageId.isNotEmpty
-          ? 'push_$messageId'
-          : 'push_${DateTime.now().millisecondsSinceEpoch}',
-      data: {
-        ...message.data,
-        if (messageId != null) 'messageId': messageId,
-        'target': message.data['target'] ?? message.data['route'],
-      },
-    );
+    await persistPushNotification(message);
 
     if (!_notificationsEnabled) return;
     if (title.isEmpty && body.isEmpty) return;
 
-    _showLocalNotification(
+    await _showLocalNotification(
       id: messageId?.hashCode ?? DateTime.now().millisecond,
       title: title,
       body: body,
@@ -193,31 +186,8 @@ class NotificationService {
   }
 
   /// Handle notification tap when app is in background
-  void _handleMessageOpenedApp(RemoteMessage message) {
-    final notification = message.notification;
-    final title = (notification?.title ?? message.data['title'] ?? 'Smart Eat')
-        .toString();
-    final body = (notification?.body ?? message.data['body'] ?? '').toString();
-    final type = (message.data['type'] ?? 'push').toString();
-    final messageId = message.messageId;
-
-    persistFeedNotification(
-      title: title,
-      body: body,
-      type: type,
-      source: 'push',
-      audience: (message.data['audience'] ?? 'all').toString(),
-      targetUids: _stringList(message.data['targetUids']),
-      dedupeKey: messageId != null && messageId.isNotEmpty
-          ? 'push_$messageId'
-          : 'push_opened_${DateTime.now().millisecondsSinceEpoch}',
-      data: {
-        ...message.data,
-        if (messageId != null) 'messageId': messageId,
-        'target': message.data['target'] ?? message.data['route'],
-        'openedFromNotification': true,
-      },
-    );
+  Future<void> _handleMessageOpenedApp(RemoteMessage message) async {
+    await persistPushNotification(message, opened: true);
   }
 
   /// Handle local notification tap
@@ -225,10 +195,47 @@ class NotificationService {
     // Navigation can be handled here based on payload
   }
 
-  String _safeDocId(String raw) {
-    final safe = raw.replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '_');
-    if (safe.isEmpty) return 'notif_${DateTime.now().millisecondsSinceEpoch}';
-    return safe.length > 180 ? safe.substring(0, 180) : safe;
+  Future<void> persistPushNotification(
+    RemoteMessage message, {
+    bool opened = false,
+    bool background = false,
+  }) async {
+    final notification = message.notification;
+    final title = (notification?.title ?? message.data['title'] ?? 'Smart Eat')
+        .toString();
+    final body = (notification?.body ?? message.data['body'] ?? '').toString();
+    final type = (message.data['type'] ?? 'push').toString();
+    final messageId = message.messageId;
+    final targets = notificationStringList(message.data['targetUids']);
+    final payload = Map<String, dynamic>.from(message.data);
+    payload['type'] = type;
+    final roles = notificationRolesFromPayload(payload);
+    final eateryId = (message.data['eateryId'] ?? '').toString().trim();
+    final dedupeKey = messageId != null && messageId.isNotEmpty
+        ? 'push_$messageId'
+        : 'push_${opened ? 'opened_' : ''}${DateTime.now().millisecondsSinceEpoch}';
+
+    await persistFeedNotification(
+      title: title,
+      body: body,
+      type: type,
+      source: (message.data['source'] ?? 'push').toString(),
+      audience: (message.data['audience'] ?? notificationDefaultAudience(type))
+          .toString(),
+      allowedRoles: roles,
+      targetUids: targets,
+      eateryId: eateryId.isEmpty ? null : eateryId,
+      dedupeKey: dedupeKey,
+      data: {
+        ...message.data,
+        'type': type,
+        'allowedRoles': roles,
+        if (messageId != null) 'messageId': messageId,
+        'target': message.data['target'] ?? message.data['route'],
+        if (opened) 'openedFromNotification': true,
+        if (background) 'background': true,
+      },
+    );
   }
 
   List<String> _stringList(dynamic value) {
@@ -242,67 +249,372 @@ class NotificationService {
     return single.isEmpty ? const <String>[] : <String>[single];
   }
 
-  Future<String?> _resolveEateryId() async {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return null;
+  Future<void> _handleAuthChanged(User? user) async {
+    final previousUid = _preferencesUid;
+    if (previousUid != user?.uid) {
+      await _clearPendingNotificationsForUserChange(
+        previousUid: previousUid,
+        nextUid: user?.uid,
+      );
+      if (user == null) {
+        _preferencesUid = null;
+        try {
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.remove(_cachedEateryIdKey);
+          await prefs.remove(_cachedNotificationUidKey);
+        } catch (_) {}
+      } else {
+        await loadPreferences(force: true);
+      }
+    }
+    if (user != null) {
+      await _flushPendingNotifications();
+      unawaited(ApiService.syncSystemNotifications().catchError((_) => 0));
+    }
+  }
+
+  Future<String?> _resolveEateryId({bool waitForAuth = true}) async {
+    User? user = FirebaseAuth.instance.currentUser;
+    final attempts = waitForAuth && user == null ? 10 : 1;
+    for (var index = 0; index < attempts && user == null; index++) {
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+      user = FirebaseAuth.instance.currentUser;
+    }
+
+    final prefs = await SharedPreferences.getInstance();
+    final cachedUid = (prefs.getString(_cachedNotificationUidKey) ?? '').trim();
+    final cachedEateryId = (prefs.getString(_cachedEateryIdKey) ?? '').trim();
+
+    if (user == null) {
+      return null;
+    }
+
     try {
       final doc = await FirebaseFirestore.instance
           .collection('users')
           .doc(user.uid)
           .get();
       final eateryId = (doc.data()?['eateryId'] ?? '').toString().trim();
-      return eateryId.isEmpty ? null : eateryId;
+      if (eateryId.isNotEmpty) {
+        await prefs.setString(_cachedEateryIdKey, eateryId);
+        await prefs.setString(_cachedNotificationUidKey, user.uid);
+        return eateryId;
+      }
+    } catch (_) {}
+
+    if (cachedUid == user.uid && cachedEateryId.isNotEmpty) {
+      return cachedEateryId;
+    }
+    return null;
+  }
+
+  Future<void> _queuePendingNotification({
+    required String title,
+    required String body,
+    required String type,
+    required String source,
+    required String audience,
+    required List<String> allowedRoles,
+    required List<String> targetUids,
+    required String? dedupeKey,
+    required String? eateryId,
+    required DateTime? createdAt,
+    required Map<String, dynamic>? data,
+    required bool preserveReadState,
+  }) async {
+    try {
+      final ownerUid = (FirebaseAuth.instance.currentUser?.uid ?? '').trim();
+      if (ownerUid.isEmpty && (eateryId ?? '').trim().isEmpty) return;
+      final prefs = await SharedPreferences.getInstance();
+      final queued = <String, dynamic>{
+        'ownerUid': ownerUid,
+        'title': title,
+        'body': body,
+        'type': type,
+        'source': source,
+        'audience': audience,
+        'allowedRoles': allowedRoles,
+        'targetUids': targetUids,
+        'dedupeKey': dedupeKey,
+        'eateryId': eateryId,
+        'createdAt': createdAt?.toIso8601String(),
+        'data': data ?? <String, dynamic>{},
+        'preserveReadState': preserveReadState,
+        'queuedAt': DateTime.now().toIso8601String(),
+      };
+      final encoded = jsonEncode(
+        queued,
+        toEncodable: (value) => value.toString(),
+      );
+      final pending =
+          (prefs.getStringList(_pendingNotificationsKey) ?? <String>[])
+              .toList();
+      pending.add(encoded);
+      while (pending.length > 100) {
+        pending.removeAt(0);
+      }
+      await prefs.setStringList(_pendingNotificationsKey, pending);
+    } catch (_) {}
+  }
+
+  Future<void> _clearPendingNotificationsForUserChange({
+    required String? previousUid,
+    required String? nextUid,
+  }) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final pending =
+          prefs.getStringList(_pendingNotificationsKey) ?? <String>[];
+      if (pending.isEmpty) return;
+      if (nextUid == null || nextUid.isEmpty || previousUid != nextUid) {
+        final kept = pending.where((encoded) {
+          try {
+            final decoded = jsonDecode(encoded) as Map<String, dynamic>;
+            final ownerUid = (decoded['ownerUid'] ?? '').toString().trim();
+            return nextUid != null &&
+                nextUid.isNotEmpty &&
+                ownerUid.isNotEmpty &&
+                ownerUid == nextUid;
+          } catch (_) {
+            return false;
+          }
+        }).toList();
+        if (kept.isEmpty) {
+          await prefs.remove(_pendingNotificationsKey);
+        } else {
+          await prefs.setStringList(_pendingNotificationsKey, kept);
+        }
+      }
+    } catch (_) {}
+  }
+
+  Future<void> removePendingByDedupeKey(String dedupeKey) async {
+    final key = dedupeKey.trim();
+    if (key.isEmpty) return;
+    await removeQueuedItem(
+        (decoded) => (decoded['dedupeKey'] ?? '').toString().trim() == key);
+  }
+
+  Future<void> removeQueuedItem(
+    bool Function(Map<String, dynamic> item) predicate,
+  ) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final pending =
+          prefs.getStringList(_pendingNotificationsKey) ?? <String>[];
+      if (pending.isEmpty) return;
+      final kept = <String>[];
+      for (final encoded in pending) {
+        try {
+          final decoded = jsonDecode(encoded) as Map<String, dynamic>;
+          if (predicate(decoded)) continue;
+        } catch (_) {}
+        kept.add(encoded);
+      }
+      if (kept.length == pending.length) return;
+      if (kept.isEmpty) {
+        await prefs.remove(_pendingNotificationsKey);
+      } else {
+        await prefs.setStringList(_pendingNotificationsKey, kept);
+      }
+    } catch (_) {}
+  }
+
+  bool _isQueuedItemExpired(Map<String, dynamic> decoded, DateTime now) {
+    final queuedAtRaw = (decoded['queuedAt'] ?? '').toString().trim();
+    final queuedAt = DateTime.tryParse(queuedAtRaw);
+    if (queuedAt == null) return true;
+    return now.difference(queuedAt) > _pendingTtl;
+  }
+
+  Future<void> _flushPendingNotifications() async {
+    if (_flushingPending) return;
+    _flushingPending = true;
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) return;
+
+      final prefs = await SharedPreferences.getInstance();
+      final pending =
+          prefs.getStringList(_pendingNotificationsKey) ?? <String>[];
+      if (pending.isEmpty) return;
+
+      final resolvedEateryId =
+          (await _resolveEateryId(waitForAuth: false) ?? '').toString().trim();
+      final now = DateTime.now();
+      final saved = <String>{};
+      final dropped = <String>{};
+      for (final encoded in pending) {
+        try {
+          final decoded = jsonDecode(encoded) as Map<String, dynamic>;
+          final ownerUid = (decoded['ownerUid'] ?? '').toString().trim();
+          final payloadEateryId = (decoded['eateryId'] ?? '').toString().trim();
+          final targetUids = _stringList(decoded['targetUids']);
+          if (_isQueuedItemExpired(decoded, now) ||
+              (ownerUid.isNotEmpty && ownerUid != user.uid) ||
+              (ownerUid.isEmpty &&
+                  (payloadEateryId.isEmpty ||
+                      payloadEateryId != resolvedEateryId)) ||
+              (targetUids.isNotEmpty && !targetUids.contains(user.uid))) {
+            dropped.add(encoded);
+            continue;
+          }
+          if (payloadEateryId.isNotEmpty &&
+              resolvedEateryId.isNotEmpty &&
+              payloadEateryId != resolvedEateryId) {
+            dropped.add(encoded);
+            continue;
+          }
+          final targetEateryId =
+              payloadEateryId.isNotEmpty ? payloadEateryId : resolvedEateryId;
+          if (targetEateryId.isEmpty) {
+            continue;
+          }
+
+          final rawData = decoded['data'];
+          final savedNotification = await _writeFeedNotification(
+            title: (decoded['title'] ?? '').toString(),
+            body: (decoded['body'] ?? '').toString(),
+            type: (decoded['type'] ?? 'general').toString(),
+            source: (decoded['source'] ?? 'system').toString(),
+            audience: (decoded['audience'] ?? 'all').toString(),
+            allowedRoles: notificationStringList(decoded['allowedRoles']),
+            targetUids: targetUids,
+            dedupeKey: (decoded['dedupeKey'] ?? '').toString(),
+            eateryId: targetEateryId,
+            resolvedEateryId: targetEateryId,
+            createdAt: DateTime.tryParse(
+              (decoded['createdAt'] ?? '').toString(),
+            ),
+            data: rawData is Map
+                ? Map<String, dynamic>.from(rawData)
+                : <String, dynamic>{},
+            preserveReadState: decoded['preserveReadState'] == true,
+          );
+          if (savedNotification) {
+            saved.add(encoded);
+          }
+        } catch (_) {
+          dropped.add(encoded);
+        }
+      }
+
+      if (saved.isEmpty && dropped.isEmpty) return;
+      final latest = prefs.getStringList(_pendingNotificationsKey) ?? pending;
+      final remaining = latest
+          .where((item) => !saved.contains(item) && !dropped.contains(item))
+          .toList();
+      if (remaining.isEmpty) {
+        await prefs.remove(_pendingNotificationsKey);
+      } else {
+        await prefs.setStringList(_pendingNotificationsKey, remaining);
+      }
     } catch (_) {
-      return null;
+    } finally {
+      _flushingPending = false;
     }
   }
 
-  Future<void> persistFeedNotification({
+  Future<bool> persistFeedNotification({
     required String title,
     required String body,
     required String type,
     String source = 'system',
     String audience = 'all',
+    List<String> allowedRoles = const <String>[],
     List<String> targetUids = const <String>[],
     String? dedupeKey,
     String? eateryId,
+    DateTime? createdAt,
     Map<String, dynamic>? data,
     bool preserveReadState = false,
   }) async {
+    final effectiveRoles = allowedRoles.isEmpty
+        ? notificationRolesFor(
+            audience: audience,
+            type: type,
+            targetUids: targetUids,
+          )
+        : allowedRoles;
+    final saved = await _writeFeedNotification(
+      title: title,
+      body: body,
+      type: type,
+      source: source,
+      audience: audience,
+      allowedRoles: effectiveRoles,
+      targetUids: targetUids,
+      dedupeKey: dedupeKey,
+      eateryId: eateryId,
+      createdAt: createdAt,
+      data: data,
+      preserveReadState: preserveReadState,
+    );
+    if (saved) return true;
+    await _queuePendingNotification(
+      title: title,
+      body: body,
+      type: type,
+      source: source,
+      audience: audience,
+      allowedRoles: effectiveRoles,
+      targetUids: targetUids,
+      dedupeKey: dedupeKey,
+      eateryId: eateryId,
+      createdAt: createdAt,
+      data: data,
+      preserveReadState: preserveReadState,
+    );
+    return false;
+  }
+
+  Future<bool> _writeFeedNotification({
+    required String title,
+    required String body,
+    required String type,
+    required String source,
+    required String audience,
+    required List<String> allowedRoles,
+    required List<String> targetUids,
+    required String? dedupeKey,
+    required String? eateryId,
+    String? resolvedEateryId,
+    DateTime? createdAt,
+    required Map<String, dynamic>? data,
+    required bool preserveReadState,
+  }) async {
     try {
-      final resolvedEateryId = eateryId ?? await _resolveEateryId();
-      if (resolvedEateryId == null || resolvedEateryId.isEmpty) return;
+      final providedEateryId = (eateryId ?? '').trim();
+      final preResolvedEateryId = (resolvedEateryId ?? '').trim();
+      final effectiveEateryId = preResolvedEateryId.isNotEmpty
+          ? preResolvedEateryId
+          : (providedEateryId.isNotEmpty
+              ? providedEateryId
+              : await _resolveEateryId());
+      if (effectiveEateryId == null || effectiveEateryId.isEmpty) return false;
       final effectiveDedupeKey = (dedupeKey != null && dedupeKey.isNotEmpty)
           ? dedupeKey
           : '${source}_${type}_${DateTime.now().millisecondsSinceEpoch}';
-      final docId = _safeDocId('${resolvedEateryId}_$effectiveDedupeKey');
-      final ref =
-          FirebaseFirestore.instance.collection('notifications').doc(docId);
-      final existing = await ref.get();
-      if (existing.exists && preserveReadState) return;
-      final payload = <String, dynamic>{
-        'eateryId': resolvedEateryId,
+      final effectiveAudience = audience.trim().isEmpty
+          ? notificationDefaultAudience(type)
+          : audience.trim();
+      return await ApiService.recordSystemNotification({
+        'eateryId': effectiveEateryId,
         'title': title,
         'body': body,
         'type': type,
         'source': source,
-        'audience': audience.trim().isEmpty ? 'all' : audience.trim(),
+        'audience': effectiveAudience,
+        'allowedRoles': allowedRoles,
         'targetUids': targetUids,
         'dedupeKey': effectiveDedupeKey,
+        'createdAt': createdAt?.toIso8601String(),
         'data': data ?? <String, dynamic>{},
-        'active': true,
-        'resolvedAt': FieldValue.delete(),
-        'updatedAt': FieldValue.serverTimestamp(),
-      };
-      if (!existing.exists) {
-        payload['createdAt'] = FieldValue.serverTimestamp();
-        payload['readBy'] = <String, dynamic>{};
-        payload['isRead'] = false;
-      } else if (existing.data()?['readBy'] is! Map) {
-        payload['readBy'] = <String, dynamic>{};
-      }
-      await ref.set(payload, SetOptions(merge: true));
-    } catch (_) {}
+        'preserveReadState': preserveReadState,
+      });
+    } catch (_) {
+      return false;
+    }
   }
 
   /// Show a local notification
@@ -344,6 +656,7 @@ class NotificationService {
     String type = 'general',
     String source = 'local',
     String audience = 'all',
+    List<String> allowedRoles = const <String>[],
     List<String> targetUids = const <String>[],
     String? dedupeKey,
     bool preserveReadState = false,
@@ -357,6 +670,7 @@ class NotificationService {
         type: type,
         source: source,
         audience: audience,
+        allowedRoles: allowedRoles,
         targetUids: targetUids,
         dedupeKey: dedupeKey,
         preserveReadState: preserveReadState,
@@ -402,8 +716,7 @@ class NotificationService {
       _lowStockEnabled = data['lowStockEnabled'] ?? true;
       _billRemindersEnabled = data['billRemindersEnabled'] ?? true;
       _orderAlertsEnabled = data['orderAlertsEnabled'] ?? true;
-      _attendanceRemindersEnabled =
-          data['attendanceRemindersEnabled'] ?? true;
+      _attendanceRemindersEnabled = data['attendanceRemindersEnabled'] ?? true;
       _billReminderDays = data['billReminderDays'] ?? 3;
     } catch (_) {}
   }
@@ -577,20 +890,17 @@ class NotificationService {
         },
       );
     }
-
-    if (!_notificationsEnabled || !_orderAlertsEnabled) return;
-
-    await _showLocalNotification(
-      id: orderId.hashCode,
-      title: title,
-      body: body,
-      payload: 'orders',
-    );
   }
 
   /// Dispose
   void dispose() {
+    _tokenRefreshSubscription?.cancel();
+    _tokenRefreshSubscription = null;
     _onMessageSubscription?.cancel();
+    _onMessageSubscription = null;
     _onMessageOpenedAppSubscription?.cancel();
+    _onMessageOpenedAppSubscription = null;
+    _authSubscription?.cancel();
+    _authSubscription = null;
   }
 }

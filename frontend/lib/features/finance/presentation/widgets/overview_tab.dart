@@ -656,6 +656,7 @@ class _ExpenseRow extends StatelessWidget {
     final amount = FinanceMetrics.amountOf(expense);
     final date = FinanceMetrics.expenseDate(expense);
     final linked = FinanceMetrics.isLinkedPurchase(expense);
+    final payroll = FinanceMetrics.isPayrollPayout(expense);
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(12),
@@ -687,6 +688,11 @@ class _ExpenseRow extends StatelessWidget {
                   if (linked) ...[
                     const SizedBox(width: 6),
                     const Icon(Icons.link, size: 12, color: AppTheme.sageAccent)
+                  ],
+                  if (payroll) ...[
+                    const SizedBox(width: 6),
+                    const Icon(Icons.payments_outlined,
+                        size: 12, color: AppTheme.sageAccent)
                   ]
                 ]),
                 Text(

@@ -1,6 +1,4 @@
-﻿import '../../data/models/stock_movement.dart';
-import '../../../../../models/inventory_item.dart';
-import '../../domain/services/fifo_queue.dart';
+﻿import '../../../../../models/inventory_item.dart';
 
 class RestockSuggestion {
   final InventoryItem item;
@@ -9,13 +7,28 @@ class RestockSuggestion {
   RestockSuggestion({required this.item, required this.suggestedQtyBase});
 }
 
+double suggestedRestockQty(InventoryItem item) {
+  if (item.maxStock > item.currentStock) {
+    return item.maxStock - item.currentStock;
+  }
+
+  final reorderLevel =
+      item.reorderPoint > 0 ? item.reorderPoint : item.minStock;
+  if (reorderLevel > item.currentStock) {
+    return reorderLevel - item.currentStock;
+  }
+
+  if (item.currentStock <= 0) return 1;
+  return 0;
+}
+
 class RestockSuggestionsUseCase {
   List<RestockSuggestion> compute(List<InventoryItem> items) {
     final list = <RestockSuggestion>[];
     for (final i in items.where((e) => e.isActive)) {
-      final s = i.maxStock - i.currentStock;
-      if (s > 0) {
-        list.add(RestockSuggestion(item: i, suggestedQtyBase: s));
+      final qty = suggestedRestockQty(i);
+      if (qty > 0) {
+        list.add(RestockSuggestion(item: i, suggestedQtyBase: qty));
       }
     }
     return list;

@@ -1,14 +1,15 @@
 const express = require('express');
-const { verifyToken, optionalAuth } = require('../middleware/auth');
+const { verifyToken } = require('../middleware/auth');
 const chatbotController = require('../controllers/chatbotController');
 
 const router = express.Router();
 
-// Public/optional-auth routes
+router.use(verifyToken);
+
 router.get('/status', chatbotController.getStatus);
-router.post('/chat', optionalAuth, chatbotController.chat);
+router.post('/chat', chatbotController.chat);
 // SSE streaming variant — returns tokens progressively for a faster UI.
-router.post('/chat/stream', optionalAuth, chatbotController.chatStream);
-router.get('/insights', optionalAuth, chatbotController.getInsights);
+router.post('/chat/stream', chatbotController.chatStream);
+router.get('/insights', chatbotController.getInsights);
 
 module.exports = router;

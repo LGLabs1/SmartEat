@@ -4,7 +4,8 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "npm run rules:test",
+    "rules:test": "firebase emulators:exec --only firestore --project demo-smarteat-rules --non-interactive \"node --test tests/rules/rules.test.js\""
   },
   "repository": {
     "type": "git",

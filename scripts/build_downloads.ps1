@@ -4,6 +4,7 @@ param(
     [switch]$SkipWindows,
     [switch]$SkipDeploy,
     [switch]$SkipRelease,
+    [switch]$SkipVersionBump,
     [string]$Tag
 )
 
@@ -15,6 +16,8 @@ $frontend = Join-Path $repoRoot 'frontend'
 $downloads = Join-Path $frontend 'build\downloads'
 $apkPath = Join-Path $downloads 'smarteat-android.apk'
 $zipPath = Join-Path $downloads 'smarteat-windows.zip'
+$script:AppVersion = $null
+$script:DownloadUrls = $null
 
 # Native tools (flutter, firebase) write progress and warnings to stderr.
 # Windows PowerShell 5.1 turns that into a terminating error while
@@ -61,22 +64,183 @@ function Get-RepoSlug {
     throw "Could not parse a GitHub repository from origin: $url"
 }
 
-function Publish-GitHubRelease {
-    $token = Get-GitHubToken
-    $slug = Get-RepoSlug
-    $releaseTag = $Tag
-    if (-not $releaseTag) {
-        $pubspec = Get-Content (Join-Path $frontend 'pubspec.yaml') -Raw
-        $match = [regex]::Match($pubspec, '(?m)^version:\s*([0-9]+\.[0-9]+\.[0-9]+)')
-        $version = if ($match.Success) { $match.Groups[1].Value } else { '1.0.0' }
-        $releaseTag = "v$version"
+function New-AppVersion {
+    param(
+        [int]$Major,
+        [int]$Minor,
+        [int]$Patch,
+        [int]$Build
+    )
+
+    $display = "$Major.$Minor.$Patch"
+    return @{
+        Major   = $Major
+        Minor   = $Minor
+        Patch   = $Patch
+        Build   = $Build
+        Display = $display
+        Full    = "$display+$Build"
+        Tag     = "v$display"
     }
+}
+
+function Get-AppVersionInfo {
+    $pubspecPath = Join-Path $frontend 'pubspec.yaml'
+    $pubspec = Get-Content -LiteralPath $pubspecPath -Raw
+    $match = [regex]::Match(
+        $pubspec,
+        '(?m)^version:\s*(?<major>[0-9]+)\.(?<minor>[0-9]+)\.(?<patch>[0-9]+)\+(?<build>[0-9]+)'
+    )
+    if (-not $match.Success) {
+        throw "Could not read app version from $pubspecPath"
+    }
+
+    return @{
+        Major = [int]$match.Groups['major'].Value
+        Minor = [int]$match.Groups['minor'].Value
+        Patch = [int]$match.Groups['patch'].Value
+        Build = [int]$match.Groups['build'].Value
+    }
+}
+
+function Set-AppVersion {
+    param([hashtable]$Version)
+
+    $pubspecPath = Join-Path $frontend 'pubspec.yaml'
+    $pubspec = Get-Content -LiteralPath $pubspecPath -Raw
+    $versionMatch = [regex]::Match(
+        $pubspec,
+        '(?m)^version:[ \t]*[0-9]+\.[0-9]+\.[0-9]+\+[0-9]+[ \t]*\r?$'
+    )
+    if (-not $versionMatch.Success) {
+        throw "Could not read app version from $pubspecPath"
+    }
+    $eol = if ($versionMatch.Value.EndsWith("`r")) { "`r" } else { '' }
+    $updatedPubspec = $pubspec.Replace(
+        $versionMatch.Value,
+        "version: $($Version.Full)$eol"
+    )
+    if ($updatedPubspec -ne $pubspec) {
+        Set-Content -LiteralPath $pubspecPath -Value $updatedPubspec -NoNewline
+    }
+
+    $appVersionPath = Join-Path $frontend 'lib\config\app_version.dart'
+    $appVersionContent = @"
+class AppVersion {
+  AppVersion._();
+
+  static const String version = '$($Version.Display)';
+  static const int buildNumber = $($Version.Build);
+  static const String display = '$($Version.Display) ($($Version.Build))';
+}
+"@
+    $existingContent = Get-Content -LiteralPath $appVersionPath -Raw
+    if ($existingContent -ne $appVersionContent) {
+        Set-Content -LiteralPath $appVersionPath -Value $appVersionContent -NoNewline
+    }
+}
+
+function Set-DownloadUrls {
+    param(
+        [string]$Slug,
+        [hashtable]$Version
+    )
+
+    $path = Join-Path $frontend 'lib\config\app_downloads.dart'
+    $original = @(Get-Content -LiteralPath $path)
+    $lines = @($original)
+    $assetVersion = $Version.Display
+    $baseUrl = "https://github.com/$Slug/releases/download/$($Version.Tag)"
+    $androidUrl = "$baseUrl/smarteat-android-$assetVersion.apk"
+    $windowsUrl = "$baseUrl/smarteat-windows-$assetVersion.zip"
+    $script:DownloadUrls = @{
+        AndroidApk = $androidUrl
+        WindowsZip = $windowsUrl
+    }
+
+    for ($index = 0; $index -lt $lines.Count; $index++) {
+        if ($lines[$index] -match '^\s*static const String androidApk\s*=') {
+            $lines[$index] = '  static const String androidApk ='
+            if ($index + 1 -lt $lines.Count) {
+                $lines[$index + 1] = "      '$androidUrl';"
+                $index++
+            }
+        }
+        elseif ($lines[$index] -match '^\s*static const String windowsZip\s*=') {
+            $lines[$index] = '  static const String windowsZip ='
+            if ($index + 1 -lt $lines.Count) {
+                $lines[$index + 1] = "      '$windowsUrl';"
+                $index++
+            }
+        }
+    }
+
+    if (($lines -join "`n") -ne ($original -join "`n")) {
+        Set-Content -LiteralPath $path -Value $lines
+    }
+}
+
+function Assert-VersionFilesCommitted {
+    $versionFiles = @(
+        'frontend\pubspec.yaml',
+        'frontend\lib\config\app_version.dart',
+        'frontend\lib\config\app_downloads.dart'
+    )
+    $dirty = @(& git -C $repoRoot status --porcelain -- $versionFiles)
+    if ($dirty.Count -gt 0) {
+        throw "Version files have uncommitted changes; commit and push them before publishing:`n$($dirty -join "`n")"
+    }
+}
+
+function Test-DownloadUrls {
+    if (-not $script:DownloadUrls) {
+        throw 'Download URLs were not generated.'
+    }
+
+    $urls = @()
+    if (-not $SkipAndroid) { $urls += $script:DownloadUrls.AndroidApk }
+    if (-not $SkipWindows) { $urls += $script:DownloadUrls.WindowsZip }
+    if ($urls.Count -eq 0) { return }
+
+    foreach ($url in $urls) {
+        $verified = $false
+        $lastError = $null
+        for ($attempt = 1; $attempt -le 3 -and -not $verified; $attempt++) {
+            try {
+                $response = Invoke-WebRequest -Uri $url -Method Head `
+                    -UseBasicParsing -MaximumRedirection 5 -TimeoutSec 30
+                if ($response.StatusCode -lt 200 -or $response.StatusCode -ge 400) {
+                    throw "HTTP $($response.StatusCode)"
+                }
+                $verified = $true
+            }
+            catch {
+                $lastError = $_.Exception.Message
+                if ($attempt -lt 3) { Start-Sleep -Seconds 3 }
+            }
+        }
+        if (-not $verified) {
+            throw "Download URL verification failed for $url : $lastError"
+        }
+        Write-Host "Verified download URL: $url"
+    }
+}
+
+function Publish-GitHubRelease {
+    param(
+        [string]$Slug,
+        [hashtable]$Version
+    )
+
+    $token = Get-GitHubToken
+    $releaseTag = $Version.Tag
+    $assetVersion = $Version.Display
 
     $headers = @{
         Authorization = "token $token"
         'User-Agent'  = 'SmartEat-Release'
     }
-    $api = "https://api.github.com/repos/$slug"
+    $api = "https://api.github.com/repos/$Slug"
 
     $release = $null
     try {
@@ -104,14 +268,26 @@ function Publish-GitHubRelease {
     $assets = @()
     if (-not $SkipAndroid -and (Test-Path -LiteralPath $apkPath)) {
         $assets += @{
-            Name = 'smarteat-android.apk'
-            Type = 'application/vnd.android.package-archive'
+            Name   = "smarteat-android-$assetVersion.apk"
+            Source = 'smarteat-android.apk'
+            Type   = 'application/vnd.android.package-archive'
+        }
+        $assets += @{
+            Name   = 'smarteat-android.apk'
+            Source = 'smarteat-android.apk'
+            Type   = 'application/vnd.android.package-archive'
         }
     }
     if (-not $SkipWindows -and (Test-Path -LiteralPath $zipPath)) {
         $assets += @{
-            Name = 'smarteat-windows.zip'
-            Type = 'application/zip'
+            Name   = "smarteat-windows-$assetVersion.zip"
+            Source = 'smarteat-windows.zip'
+            Type   = 'application/zip'
+        }
+        $assets += @{
+            Name   = 'smarteat-windows.zip'
+            Source = 'smarteat-windows.zip'
+            Type   = 'application/zip'
         }
     }
 
@@ -126,20 +302,55 @@ function Publish-GitHubRelease {
         }
 
         Write-Host "Uploading $($asset.Name)..."
-        $upload = "https://uploads.github.com/repos/$slug/releases/$($release.id)/assets?name=$($asset.Name)"
+        $upload = "https://uploads.github.com/repos/$Slug/releases/$($release.id)/assets?name=$($asset.Name)"
         Invoke-RestMethod -Uri $upload -Method Post -Headers $headers `
-            -ContentType $asset.Type -InFile (Join-Path $downloads $asset.Name) `
+            -ContentType $asset.Type -InFile (Join-Path $downloads $asset.Source) `
             -TimeoutSec 900 | Out-Null
     }
 
-    Write-Host "Release ready: https://github.com/$slug/releases/tag/$releaseTag"
+    Test-DownloadUrls
+
+    Write-Host "Release ready: https://github.com/$Slug/releases/tag/$releaseTag"
 }
+
+$repoSlug = Get-RepoSlug
+$currentVersion = Get-AppVersionInfo
+
+if ($Tag -and $Tag -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+$') {
+    throw "-Tag must look like v1.0.0 (got '$Tag')."
+}
+
+if ($SkipVersionBump) {
+    $script:AppVersion = New-AppVersion `
+        -Major $currentVersion.Major `
+        -Minor $currentVersion.Minor `
+        -Patch $currentVersion.Patch `
+        -Build $currentVersion.Build
+    Write-Host "Using version $($script:AppVersion.Full)"
+}
+else {
+    $script:AppVersion = New-AppVersion `
+        -Major $currentVersion.Major `
+        -Minor $currentVersion.Minor `
+        -Patch ($currentVersion.Patch + 1) `
+        -Build ($currentVersion.Build + 1)
+    Write-Host "Version bumped to $($script:AppVersion.Full)"
+}
+
+if ($Tag -and $Tag -ne $script:AppVersion.Tag) {
+    throw "-Tag '$Tag' does not match the release version '$($script:AppVersion.Tag)'. Refusing to write version files."
+}
+
+Set-AppVersion $script:AppVersion
+Set-DownloadUrls -Slug $repoSlug -Version $script:AppVersion
 
 Push-Location $frontend
 try {
     if (-not $SkipWeb) {
         Write-Host 'Building web...'
-        Invoke-Native 'flutter build web' 'flutter' @('build', 'web', '--release')
+        Invoke-Native 'flutter build web' 'flutter' @(
+            'build', 'web', '--release', '--base-href', '/', '--no-wasm-dry-run', '-O2'
+        )
     }
 
     New-Item -ItemType Directory -Force -Path $downloads | Out-Null
@@ -169,7 +380,8 @@ try {
     Write-Host "Installers staged in $downloads"
 
     if (-not $SkipRelease) {
-        Publish-GitHubRelease
+        Assert-VersionFilesCommitted
+        Publish-GitHubRelease -Slug $repoSlug -Version $script:AppVersion
     }
 
     if (-not $SkipDeploy) {

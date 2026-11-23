@@ -1,18 +1,23 @@
 import 'dart:async';
 
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart' hide AuthProvider;
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
+import '../models/notification_item.dart';
 import '../services/api_service.dart';
 import '../services/auth_provider.dart';
+import '../services/notification_repository.dart';
+import '../services/notification_trigger_manager.dart';
 import '../theme.dart';
 import '../utils/notification_visibility.dart';
 import '../widgets/sage_header_button.dart';
 import '../widgets/smart_eat_header.dart';
 import 'staff_management_screen.dart';
+
+String notificationDocId(String eateryId, String key) =>
+    buildNotificationDocId(eateryId, key);
 
 class NotificationsScreen extends StatefulWidget {
   const NotificationsScreen({Key? key}) : super(key: key);
@@ -32,19 +37,31 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     'Push',
   ];
 
+  final NotificationRepository _repository = NotificationRepository();
+  Timer? _pollTimer;
   bool _isProfileLoading = true;
+  bool _isLoading = false;
   bool _isWorking = false;
   String? _error;
+  String? _bannerError;
   String _filter = 'All';
   String _eateryId = '';
   String _uid = '';
   bool _isAdmin = false;
-  Stream<List<NotificationItem>>? _notificationStream;
+  bool _isManager = false;
+  List<NotificationItem> _notifications = const <NotificationItem>[];
+  bool _hasLoaded = false;
 
   @override
   void initState() {
     super.initState();
     _loadIdentity();
+  }
+
+  @override
+  void dispose() {
+    _pollTimer?.cancel();
+    super.dispose();
   }
 
   bool get _canDelete => _isAdmin;
@@ -78,15 +95,17 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
           profile?['isAdmin'] == true ||
           profile?['isAdmin'] == 'true' ||
           profile?['isAdmin'] == 1;
+      final isManager = role == 'manager' || role == 'owner';
       if (!mounted) return;
       setState(() {
         _eateryId = eateryId;
         _uid = uid;
         _isAdmin = isAdmin;
+        _isManager = isManager;
         _isProfileLoading = false;
       });
-      _resetStream();
-      if (isAdmin) _runAdminSync(eateryId);
+      _initializeFeed();
+      _runSystemSync();
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -96,345 +115,103 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     }
   }
 
-  void _runAdminSync(String eateryId) {
-    Future.wait([
-      _syncInventoryAlerts(eateryId),
-      _syncPayableAlerts(eateryId),
-    ]).then((_) {}, onError: (_) {});
+  Future<void> _initializeFeed() async {
+    final cached = await _repository.readCache(_uid);
+    if (!mounted) return;
+    setState(() {
+      _notifications = cached;
+      _hasLoaded = cached.isNotEmpty;
+    });
+    await _loadNotifications();
+    _pollTimer?.cancel();
+    _pollTimer = Timer.periodic(const Duration(seconds: 20), (_) {
+      _loadNotifications(silent: true);
+    });
   }
 
-  void _resetStream() {
-    if (_eateryId.isEmpty) return;
-    _notificationStream = _watchStoredNotifications();
-  }
-
-  bool _isIndexError(dynamic error) {
-    final text = error.toString();
-    return text.contains('failed-precondition') || text.contains('index');
-  }
-
-  Query<Map<String, dynamic>> _notificationQuery({required bool ordered}) {
-    Query<Map<String, dynamic>> query = FirebaseFirestore.instance
-        .collection('notifications')
-        .where('eateryId', isEqualTo: _eateryId);
-    if (ordered) {
-      query = query.orderBy('createdAt', descending: true).limit(200);
-    } else {
-      query = query.limit(250);
+  Future<void> _loadNotifications({bool silent = false}) async {
+    if (_uid.isEmpty) return;
+    if (!silent && mounted) {
+      setState(() {
+        _isLoading = true;
+        _error = null;
+      });
     }
-    return query;
-  }
-
-  Stream<List<NotificationItem>> _watchStoredNotifications() async* {
     try {
-      await for (final snapshot
-          in _notificationQuery(ordered: true).snapshots()) {
-        yield _mapSnapshot(snapshot);
-      }
+      final items = await _repository.fetch();
+      if (!mounted) return;
+      setState(() {
+        _notifications = items;
+        _hasLoaded = true;
+        _bannerError = null;
+        _isLoading = false;
+      });
+      await _repository.writeCache(_uid, items);
     } catch (e) {
-      if (!_isIndexError(e)) rethrow;
-      await for (final snapshot
-          in _notificationQuery(ordered: false).snapshots()) {
-        yield _mapSnapshot(snapshot);
-      }
+      if (!mounted) return;
+      setState(() {
+        _isLoading = false;
+        if (_hasLoaded) {
+          _bannerError = 'Showing saved notifications. ${e.toString()}';
+        } else {
+          _error = e.toString();
+        }
+      });
     }
   }
 
-  List<NotificationItem> _mapSnapshot(
-      QuerySnapshot<Map<String, dynamic>> snapshot) {
-    final items = snapshot.docs.map((doc) {
-      final data = Map<String, dynamic>.from(doc.data());
-      final readByRaw = data['readBy'];
-      final readBy = readByRaw is Map
-          ? readByRaw.map((k, v) => MapEntry(k.toString(), v))
-          : <String, dynamic>{};
-      final legacyRead = data['isRead'] == true;
-      final isRead = _uid.isNotEmpty
-          ? (readBy.containsKey(_uid) || (readBy.isEmpty && legacyRead))
-          : legacyRead;
-      final createdAt = (data['createdAt'] as Timestamp?)?.toDate() ??
-          (data['updatedAt'] as Timestamp?)?.toDate() ??
-          (data['resolvedAt'] as Timestamp?)?.toDate() ??
-          DateTime.now();
-      return NotificationItem(
-        id: doc.id,
-        title: (data['title'] ?? 'Notification').toString(),
-        body: (data['body'] ?? '').toString(),
-        type: (data['type'] ?? 'general').toString(),
-        source:
-            (data['source'] ?? data['data']?['source'] ?? 'system').toString(),
-        isRead: isRead,
-        createdAt: createdAt,
-        data: data,
-      );
-    }).toList();
-    items.sort((a, b) => b.createdAt.compareTo(a.createdAt));
-    return items;
-  }
-
-  String _safeDocId(String raw) {
-    final safe = raw.replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '_');
-    if (safe.isEmpty) return 'notif_${DateTime.now().millisecondsSinceEpoch}';
-    return safe.length > 180 ? safe.substring(0, 180) : safe;
-  }
-
-  Future<void> _upsertNotification({
-    required String docId,
-    required String eateryId,
-    required String title,
-    required String body,
-    required String type,
-    required String source,
-    required String dedupeKey,
-    String audience = 'admin',
-    List<String> targetUids = const <String>[],
-    Map<String, dynamic>? data,
-    DateTime? createdAt,
-  }) async {
-    final ref =
-        FirebaseFirestore.instance.collection('notifications').doc(docId);
-    final existing = await ref.get();
-    final payload = <String, dynamic>{
-      'eateryId': eateryId,
-      'title': title,
-      'body': body,
-      'type': type,
-      'source': source,
-      'audience': audience,
-      'targetUids': targetUids,
-      'dedupeKey': dedupeKey,
-      'data': data ?? <String, dynamic>{},
-      'updatedAt': FieldValue.serverTimestamp(),
-      'active': true,
-      'resolvedAt': FieldValue.delete(),
-    };
-    if (!existing.exists) {
-      payload['createdAt'] = createdAt == null
-          ? FieldValue.serverTimestamp()
-          : Timestamp.fromDate(createdAt);
-      payload['readBy'] = <String, dynamic>{};
-      payload['isRead'] = false;
-    } else if (existing.data()?['readBy'] is! Map) {
-      payload['readBy'] = <String, dynamic>{};
-    }
-    await ref.set(payload, SetOptions(merge: true));
-  }
-
-  Future<void> _resolveDocIfExists(String docId) async {
-    final ref =
-        FirebaseFirestore.instance.collection('notifications').doc(docId);
-    final existing = await ref.get();
-    if (!existing.exists) return;
-    final data = Map<String, dynamic>.from(existing.data() as Map? ?? const {});
-    if (data['active'] == false) return;
-    await ref.set({
-      'active': false,
-      'resolvedAt': FieldValue.serverTimestamp(),
-      'updatedAt': FieldValue.serverTimestamp(),
-    }, SetOptions(merge: true));
-  }
-
-  Future<void> _syncInventoryAlerts(String eateryId) async {
-    try {
-      final result = await ApiService.getInventoryItems();
-      final items = result['data'] as List<dynamic>? ?? [];
-      for (final raw in items) {
-        if (raw is! Map) continue;
-        final item = Map<String, dynamic>.from(raw);
-        final id = (item['id'] ?? '').toString();
-        final name = (item['name'] ?? 'Unknown Item').toString();
-        final currentStock = (item['currentStock'] as num?)?.toDouble() ?? 0;
-        final minStock = (item['minStock'] as num?)?.toDouble() ?? 0;
-        final unit = (item['unit'] ?? '').toString();
-        if (id.isEmpty) continue;
-
-        final outId = _safeDocId('out_of_stock_${eateryId}_$id');
-        final lowId = _safeDocId('low_stock_${eateryId}_$id');
-
-        if (currentStock <= 0) {
-          await _upsertNotification(
-            docId: outId,
-            eateryId: eateryId,
-            title: 'Out of Stock: $name',
-            body:
-                '$name is currently out of stock. Please restock immediately.',
-            type: 'out_of_stock',
-            source: 'inventory',
-            dedupeKey: 'out_of_stock:$id',
-            data: {
-              'itemId': id,
-              'itemName': name,
-              'currentStock': currentStock,
-              'minStock': minStock,
-              'unit': unit,
-              'target': 'inventory',
-              'priority': 'high'
-            },
-          );
-          await _resolveDocIfExists(lowId);
-        } else if (currentStock <= minStock && minStock > 0) {
-          await _upsertNotification(
-            docId: lowId,
-            eateryId: eateryId,
-            title: 'Low Stock: $name',
-            body:
-                '$name is running low. Current: $currentStock $unit (Min: $minStock $unit)',
-            type: 'low_stock',
-            source: 'inventory',
-            dedupeKey: 'low_stock:$id',
-            data: {
-              'itemId': id,
-              'itemName': name,
-              'currentStock': currentStock,
-              'minStock': minStock,
-              'unit': unit,
-              'target': 'inventory',
-              'priority': 'medium'
-            },
-          );
-          await _resolveDocIfExists(outId);
-        } else {
-          await _resolveDocIfExists(outId);
-          await _resolveDocIfExists(lowId);
-        }
-      }
-    } catch (_) {}
-  }
-
-  Future<void> _syncPayableAlerts(String eateryId) async {
-    try {
-      final result = await ApiService.getPayables();
-      final items = result['data'] as List<dynamic>? ?? [];
-      final now = DateTime.now();
-      for (final raw in items) {
-        if (raw is! Map) continue;
-        final item = Map<String, dynamic>.from(raw);
-        final id = (item['id'] ?? '').toString();
-        final name = (item['name'] ?? 'Unknown Bill').toString();
-        final dueDateStr = item['dueDate']?.toString();
-        final status = (item['status'] ?? 'unpaid').toString().toLowerCase();
-        final amount = (item['amount'] as num?)?.toDouble() ?? 0.0;
-        if (id.isEmpty) continue;
-
-        final overdueId = _safeDocId('bill_overdue_${eateryId}_$id');
-        final dueSoonId = _safeDocId('bill_due_soon_${eateryId}_$id');
-
-        if (status == 'paid' || dueDateStr == null || dueDateStr.isEmpty) {
-          await _resolveDocIfExists(overdueId);
-          await _resolveDocIfExists(dueSoonId);
-          continue;
-        }
-        final dueDate = DateTime.tryParse(dueDateStr);
-        if (dueDate == null) {
-          await _resolveDocIfExists(overdueId);
-          await _resolveDocIfExists(dueSoonId);
-          continue;
-        }
-        final daysUntil = dueDate.difference(now).inDays;
-        final amountText = amount > 0
-            ? ' Amount: \u20B1${amount.toStringAsFixed(2)}'
-            : ' Variable amount.';
-        if (daysUntil < 0) {
-          await _upsertNotification(
-            docId: overdueId,
-            eateryId: eateryId,
-            title: 'Overdue Bill: $name',
-            body: '$name is overdue by ${daysUntil.abs()} days.$amountText',
-            type: 'bill_overdue',
-            source: 'payable',
-            dedupeKey: 'bill_overdue:$id',
-            createdAt: dueDate,
-            data: {
-              'payableId': id,
-              'payableName': name,
-              'amount': amount,
-              'dueDate': dueDate.toIso8601String(),
-              'target': 'payables',
-              'priority': 'high'
-            },
-          );
-          await _resolveDocIfExists(dueSoonId);
-        } else if (daysUntil <= 3) {
-          final dueText = daysUntil == 0
-              ? 'today'
-              : daysUntil == 1
-                  ? 'tomorrow'
-                  : 'in $daysUntil days';
-          await _upsertNotification(
-            docId: dueSoonId,
-            eateryId: eateryId,
-            title: 'Bill Due Soon: $name',
-            body: '$name is due $dueText.$amountText',
-            type: 'bill_due_soon',
-            source: 'payable',
-            dedupeKey: 'bill_due_soon:$id',
-            createdAt: dueDate,
-            data: {
-              'payableId': id,
-              'payableName': name,
-              'amount': amount,
-              'dueDate': dueDate.toIso8601String(),
-              'daysUntil': daysUntil,
-              'target': 'payables',
-              'priority': 'medium'
-            },
-          );
-          await _resolveDocIfExists(overdueId);
-        } else {
-          await _resolveDocIfExists(overdueId);
-          await _resolveDocIfExists(dueSoonId);
-        }
-      }
-    } catch (_) {}
+  void _runSystemSync() {
+    ApiService.syncSystemNotifications().catchError((_) => 0);
+    NotificationTriggerManager().runImmediateCheck('all').catchError((_) {});
   }
 
   Future<void> _refresh() async {
     if (_eateryId.isEmpty) return;
-    if (_isAdmin) _runAdminSync(_eateryId);
-    if (!mounted) return;
-    setState(() {
-      _error = null;
-      _resetStream();
-    });
-    await Future<void>.delayed(const Duration(milliseconds: 250));
+    NotificationTriggerManager().runImmediateCheck('all').catchError((_) {});
+    await ApiService.syncSystemNotifications().catchError((_) => 0);
+    await _loadNotifications();
   }
 
   Future<void> _markAsRead(NotificationItem notification) async {
     if (_uid.isEmpty || notification.isRead) return;
+    final previous = _notifications;
+    final updated = previous
+        .map((item) =>
+            item.id == notification.id ? item.copyWith(isRead: true) : item)
+        .toList();
+    if (!mounted) return;
+    setState(() => _notifications = updated);
+    await _repository.writeCache(_uid, updated);
     try {
-      await FirebaseFirestore.instance
-          .collection('notifications')
-          .doc(notification.id)
-          .set({
-        'readBy': {_uid: FieldValue.serverTimestamp()},
-        'readAt': FieldValue.serverTimestamp(),
-        'updatedAt': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
-    } catch (_) {}
+      await ApiService.markNotificationRead(notification.id);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _notifications = previous);
+      await _repository.writeCache(_uid, previous);
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('Failed to update: $e')));
+    }
   }
 
   Future<void> _markAllAsRead(List<NotificationItem> unread) async {
     if (_uid.isEmpty || unread.isEmpty) return;
-    setState(() => _isWorking = true);
+    final previous = _notifications;
+    final ids = unread.map((item) => item.id).toSet();
+    final updated = previous
+        .map((item) =>
+            ids.contains(item.id) ? item.copyWith(isRead: true) : item)
+        .toList();
+    setState(() {
+      _isWorking = true;
+      _notifications = updated;
+    });
+    await _repository.writeCache(_uid, updated);
     try {
-      for (var i = 0; i < unread.length; i += 400) {
-        final chunk = unread.sublist(i, (i + 400).clamp(0, unread.length));
-        final batch = FirebaseFirestore.instance.batch();
-        for (final n in chunk) {
-          batch.set(
-            FirebaseFirestore.instance.collection('notifications').doc(n.id),
-            {
-              'readBy': {_uid: FieldValue.serverTimestamp()},
-              'readAt': FieldValue.serverTimestamp(),
-              'updatedAt': FieldValue.serverTimestamp(),
-            },
-            SetOptions(merge: true),
-          );
-        }
-        await batch.commit();
-      }
+      await ApiService.markAllNotificationsRead();
     } catch (e) {
       if (!mounted) return;
+      setState(() => _notifications = previous);
+      await _repository.writeCache(_uid, previous);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Failed to mark all as read: $e')),
       );
@@ -444,13 +221,18 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   }
 
   Future<void> _deleteNotification(NotificationItem notification) async {
+    final previous = _notifications;
+    final updated =
+        previous.where((item) => item.id != notification.id).toList();
+    if (!mounted) return;
+    setState(() => _notifications = updated);
+    await _repository.writeCache(_uid, updated);
     try {
-      await FirebaseFirestore.instance
-          .collection('notifications')
-          .doc(notification.id)
-          .delete();
+      await ApiService.deleteNotification(notification.id);
     } catch (e) {
       if (!mounted) return;
+      setState(() => _notifications = previous);
+      await _repository.writeCache(_uid, previous);
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text('Failed to delete: $e')));
     }
@@ -556,52 +338,58 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final visible = _notifications
+        .where((n) => notificationVisibleToUser(
+              data: n.data,
+              uid: _uid,
+              isAdmin: _isAdmin,
+              isManager: _isManager,
+            ))
+        .toList();
+    final unread = visible.where((n) => !n.isRead).toList();
+    final filtered = _applyFilter(visible);
     return Theme(
       data: AppTheme.dashboardTheme,
-      child: StreamBuilder<List<NotificationItem>>(
-        stream: _notificationStream,
-        builder: (context, snapshot) {
-          final visible = (snapshot.data ?? <NotificationItem>[])
-              .where((n) => notificationVisibleToUser(
-                    data: n.data,
-                    uid: _uid,
-                    isAdmin: _isAdmin,
-                  ))
-              .toList();
-          final unread = visible.where((n) => !n.isRead).toList();
-          final filtered = _applyFilter(visible);
-          return Scaffold(
-            backgroundColor: AppTheme.sageNavy,
-            appBar: _buildAppBar(unread),
-            body: Column(
-              children: [
-                _buildFilterBar(unread.length),
-                if (_isWorking)
-                  const LinearProgressIndicator(
-                    minHeight: 2,
-                    color: AppTheme.sageAccent,
-                  ),
-                Expanded(
-                  child: _isProfileLoading
-                      ? const Center(child: CircularProgressIndicator())
-                      : _error != null
-                          ? _buildErrorState(_error)
-                          : (snapshot.hasError && !snapshot.hasData)
-                              ? _buildErrorState(snapshot.error)
-                              : !snapshot.hasData
-                                  ? const Center(
-                                      child: CircularProgressIndicator())
-                                  : filtered.isEmpty
-                                      ? _buildEmptyState(
-                                          filteredBy: _filter,
-                                          hasAny: visible.isNotEmpty,
-                                        )
-                                      : _buildNotificationList(filtered),
+      child: Scaffold(
+        backgroundColor: AppTheme.sageNavy,
+        appBar: _buildAppBar(unread),
+        body: Column(
+          children: [
+            _buildFilterBar(unread.length),
+            if (_bannerError != null)
+              Container(
+                width: double.infinity,
+                color: AppTheme.warning.withValues(alpha: 0.16),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 8,
                 ),
-              ],
+                child: Text(
+                  _bannerError!,
+                  style: const TextStyle(color: AppTheme.warning),
+                ),
+              ),
+            if (_isWorking || _isLoading)
+              const LinearProgressIndicator(
+                minHeight: 2,
+                color: AppTheme.sageAccent,
+              ),
+            Expanded(
+              child: _isProfileLoading
+                  ? const Center(child: CircularProgressIndicator())
+                  : _error != null
+                      ? _buildErrorState(_error)
+                      : (_isLoading && !_hasLoaded)
+                          ? const Center(child: CircularProgressIndicator())
+                          : filtered.isEmpty
+                              ? _buildEmptyState(
+                                  filteredBy: _filter,
+                                  hasAny: visible.isNotEmpty,
+                                )
+                              : _buildNotificationList(filtered),
             ),
-          );
-        },
+          ],
+        ),
       ),
     );
   }
@@ -842,23 +630,17 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
 
   Widget _buildErrorState(Object? error) {
     final scheme = Theme.of(context).colorScheme;
-    final isIndexError = error != null
-        ? _isIndexError(error)
-        : (_error?.contains('index') ?? false);
+    final message = error?.toString() ?? 'Unknown notification service error';
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(24),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(isIndexError ? Icons.build_outlined : Icons.error_outline,
-                size: 64,
-                color: isIndexError ? AppTheme.warning : scheme.error),
+            Icon(Icons.cloud_off_outlined, size: 64, color: scheme.error),
             const SizedBox(height: 16),
             Text(
-              isIndexError
-                  ? 'Notifications are getting set up'
-                  : "We couldn't load notifications",
+              "We couldn't load notifications",
               style: TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.w700,
@@ -867,9 +649,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
             ),
             const SizedBox(height: 8),
             Text(
-              isIndexError
-                  ? 'Please try again in a moment. This usually settles right after setup.'
-                  : 'Please check your connection and try again.',
+              message,
               textAlign: TextAlign.center,
               style: TextStyle(
                 color: scheme.onSurface.withValues(alpha: 0.7),
@@ -877,7 +657,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
             ),
             const SizedBox(height: 16),
             FilledButton.icon(
-              onPressed: _loadIdentity,
+              onPressed: _refresh,
               icon: const Icon(Icons.refresh),
               label: const Text('Retry'),
             ),
@@ -922,50 +702,6 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
           ],
         ),
       ),
-    );
-  }
-}
-
-class NotificationItem {
-  final String id;
-  final String title;
-  final String body;
-  final String type;
-  final String source;
-  final bool isRead;
-  final DateTime createdAt;
-  final Map<String, dynamic> data;
-
-  const NotificationItem({
-    required this.id,
-    required this.title,
-    required this.body,
-    required this.type,
-    required this.source,
-    required this.isRead,
-    required this.createdAt,
-    required this.data,
-  });
-
-  NotificationItem copyWith({
-    String? id,
-    String? title,
-    String? body,
-    String? type,
-    String? source,
-    bool? isRead,
-    DateTime? createdAt,
-    Map<String, dynamic>? data,
-  }) {
-    return NotificationItem(
-      id: id ?? this.id,
-      title: title ?? this.title,
-      body: body ?? this.body,
-      type: type ?? this.type,
-      source: source ?? this.source,
-      isRead: isRead ?? this.isRead,
-      createdAt: createdAt ?? this.createdAt,
-      data: data ?? this.data,
     );
   }
 }

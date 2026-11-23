@@ -15,6 +15,7 @@ import '../widgets/dashboard/empty_state.dart';
 import '../widgets/dashboard/kpi_card.dart';
 import '../widgets/dashboard/section_card.dart';
 import '../widgets/dashboard/dashboard_back_handler.dart';
+import '../widgets/inline_error_banner.dart';
 import '../widgets/payment_method_dialog.dart';
 // Shares the incomplete-order row with the admin dashboard. It lives in
 // dashboard_screen.dart rather than a widget file because it is already
@@ -63,6 +64,55 @@ class _OrdersScreenState extends State<OrdersScreen> {
   List<Map<String, dynamic>> _incomplete = const [];
   String _completingOrderId = '';
   bool _completingAll = false;
+
+  Object? _inlineError;
+  String? _inlineErrorContext;
+  VoidCallback? _inlineErrorRetry;
+
+  void _showInlineError(
+    Object error, {
+    String? operationContext,
+    VoidCallback? onRetry,
+  }) {
+    if (!mounted) return;
+    setState(() {
+      _inlineError = error;
+      _inlineErrorContext = operationContext;
+      _inlineErrorRetry = onRetry;
+    });
+  }
+
+  void _clearInlineError() {
+    if (!mounted || _inlineError == null) return;
+    setState(() {
+      _inlineError = null;
+      _inlineErrorContext = null;
+      _inlineErrorRetry = null;
+    });
+  }
+
+  Widget _buildInlineErrorBanner() {
+    final error = _inlineError;
+    if (error == null) return const SizedBox.shrink();
+    final isMessage = error is String;
+    final retry = _inlineErrorRetry;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: InlineErrorBanner(
+        key: const Key('orders-inline-error'),
+        message: isMessage ? error : null,
+        error: isMessage ? null : error,
+        operationContext: _inlineErrorContext,
+        onRetry: retry != null
+            ? () {
+                _clearInlineError();
+                retry();
+              }
+            : _clearInlineError,
+        actionLabel: retry != null ? 'Retry' : 'Dismiss',
+      ),
+    );
+  }
 
   @override
   void initState() {
@@ -124,9 +174,10 @@ class _OrdersScreenState extends State<OrdersScreen> {
         const SnackBar(content: Text('Order completed. Stocks updated.')),
       );
     } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to complete order: $e')),
+      _showInlineError(
+        e,
+        operationContext: 'order',
+        onRetry: () => _completeIncomplete(orderId),
       );
     } finally {
       if (mounted) setState(() => _completingOrderId = '');
@@ -260,6 +311,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
         child: ListView(
           padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
           children: [
+            _buildInlineErrorBanner(),
             _buildViewSwitch(),
             const SizedBox(height: 16),
             _buildIncompleteSection(),
@@ -293,6 +345,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
           child: ListView(
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
             children: [
+              _buildInlineErrorBanner(),
               if (widget.isAdmin) _buildViewSwitch(),
               if (widget.isAdmin) const SizedBox(height: 16),
               _buildKpiRow(orders),
@@ -1002,9 +1055,9 @@ class _OrdersScreenState extends State<OrdersScreen> {
                       ));
                     }
                   } catch (e) {
-                    ScaffoldMessenger.of(dialogContext).showSnackBar(
-                      SnackBar(content: Text('Failed to complete order: $e')),
-                    );
+                    Navigator.of(dialogContext).pop();
+                    if (!mounted) return;
+                    _showInlineError(e, operationContext: 'order');
                   }
                 },
                 icon: const Icon(Icons.check_circle),
@@ -1070,9 +1123,11 @@ class _OrdersScreenState extends State<OrdersScreen> {
                           content: Text('Order voided successfully.')),
                     );
                   } catch (e) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('Failed to void order: $e')),
-                    );
+                    if (dialogContext.mounted) {
+                      Navigator.of(dialogContext).pop();
+                    }
+                    if (!mounted) return;
+                    _showInlineError(e, operationContext: 'order');
                   } finally {
                     controller.dispose();
                   }
@@ -1085,6 +1140,9 @@ class _OrdersScreenState extends State<OrdersScreen> {
             if (isCompleted)
               TextButton.icon(
                 onPressed: () {
+                  // Close the details dialog first so a print failure shows
+                  // the inline error on the visible orders screen.
+                  Navigator.of(dialogContext).pop();
                   unawaited(_printCompletedOrderReceipt(
                     orderId: id,
                     order: order,
@@ -1139,12 +1197,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
   }) async {
     final printer = await PrinterAvailabilityService.resolve();
     if (!printer.available) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Printer unavailable: ${printer.message}'),
-        ),
-      );
+      _showInlineError('Printer unavailable: ${printer.message}');
       return;
     }
 
@@ -1165,22 +1218,22 @@ class _OrdersScreenState extends State<OrdersScreen> {
       paymentStatus: details?.paymentStatus ??
           (order['paymentStatus'] ?? 'paid').toString(),
       createdAt: _createdAtOf(order) ?? DateTime.now(),
-      cashierName: (order['createdByName'] ?? '').toString(),
     );
     if (!mounted) return;
+    if (result.printed) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Receipt printed.')),
+      );
+      return;
+    }
     final error = result.error ?? 'Unknown error';
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          result.printed ? 'Receipt printed.' : 'Receipt did not print: $error',
-        ),
-      ),
-    );
+    _showInlineError('Receipt did not print: $error');
   }
 
   Future<void> _showEditOrderDialog(Map<String, dynamic> order) async {
     final orderId = (order['id'] ?? '').toString();
     if (orderId.isEmpty) return;
+    final addRequestId = 'edit_${DateTime.now().microsecondsSinceEpoch}';
 
     // Get current items
     final itemsRaw = order['items'] as List<dynamic>? ?? [];
@@ -1200,11 +1253,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
             .toList();
       }
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to load menu: $e')),
-        );
-      }
+      _showInlineError('Failed to load menu: $e');
       return;
     }
 
@@ -1421,15 +1470,16 @@ class _OrdersScreenState extends State<OrdersScreen> {
 
     if (result == true && itemsToAdd.isNotEmpty && mounted) {
       try {
-        await ApiService.addItemsToOrder(orderId, itemsToAdd);
+        await ApiService.addItemsToOrder(
+          orderId,
+          itemsToAdd,
+          addRequestId: addRequestId,
+        );
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Items added to order successfully')),
         );
       } catch (e) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to add items: $e')),
-        );
+        _showInlineError('Failed to add items: $e');
       }
     }
   }

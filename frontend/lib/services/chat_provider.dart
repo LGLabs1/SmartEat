@@ -42,6 +42,7 @@ class ChatProvider extends ChangeNotifier {
   bool _sageOnline = false;
   bool _isCheckingStatus = true;
   String? _lastError;
+  bool _disposed = false;
 
   List<ChatMessage> get messages => _messages;
   bool get isLoading => _isLoading;
@@ -59,8 +60,7 @@ class ChatProvider extends ChangeNotifier {
     if (_messages.isEmpty) {
       _messages.add(ChatMessage(
         role: 'assistant',
-        content:
-            "Hey, I'm Sage 🌿 — great to have you here!\n\n"
+        content: "Hey, I'm Sage 🌿 — great to have you here!\n\n"
             "I keep an eye on your numbers so you don't have to. Ask me "
             "anything — for example:\n\n"
             "\"How did we do this week?\"\n"
@@ -72,18 +72,32 @@ class ChatProvider extends ChangeNotifier {
     }
   }
 
+  @override
+  void notifyListeners() {
+    if (_disposed) return;
+    super.notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    super.dispose();
+  }
+
   // OPTIMIZATION: Check Sage status with retry
   Future<void> checkStatus({
     int retries = 2,
     Duration timeout = const Duration(seconds: 5),
   }) async {
+    if (_disposed) return;
     _isCheckingStatus = true;
     notifyListeners();
 
     int attempts = retries;
-    while (attempts > 0) {
+    while (attempts > 0 && !_disposed) {
       try {
         final status = await ApiService.getChatbotStatus().timeout(timeout);
+        if (_disposed) return;
         if (status['online'] == true) {
           _sageOnline = true;
           _offlineReason = null;
@@ -128,10 +142,13 @@ class ChatProvider extends ChangeNotifier {
           _lastError = _offlineReason;
           print('Sage status check failed: $e');
         }
-        await Future.delayed(const Duration(milliseconds: 500));
+        if (attempts > 0 && !_disposed) {
+          await Future.delayed(const Duration(milliseconds: 500));
+        }
       }
     }
 
+    if (_disposed) return;
     _isCheckingStatus = false;
     notifyListeners();
   }
@@ -194,6 +211,7 @@ class ChatProvider extends ChangeNotifier {
 
   // OPTIMIZATION: Send message with better error handling and timeouts
   Future<void> sendMessage(String text) async {
+    if (_disposed) return;
     final trimmedText = text.trim();
     if (trimmedText.isEmpty) return;
 
@@ -201,8 +219,8 @@ class ChatProvider extends ChangeNotifier {
     // (backend still booting, AI service blip), never give the user a
     // permanent wall of errors. Re-check quickly before giving up.
     if (!_sageOnline) {
-      await checkStatus(
-          retries: 1, timeout: const Duration(seconds: 2));
+      await checkStatus(retries: 1, timeout: const Duration(seconds: 2));
+      if (_disposed) return;
       if (!_sageOnline) {
         _messages.add(ChatMessage(
           role: 'assistant',
@@ -219,7 +237,8 @@ class ChatProvider extends ChangeNotifier {
     // no intent detection, no data fetch, no AI round-trip.
     final smallTalk = IntentDetector.smallTalkReply(trimmedText);
     if (smallTalk != null) {
-      _messages.add(ChatMessage(role: 'user', content: trimmedText, timestamp: DateTime.now()));
+      _messages.add(ChatMessage(
+          role: 'user', content: trimmedText, timestamp: DateTime.now()));
       _messages.add(ChatMessage(
         role: 'assistant',
         content: smallTalk,
@@ -242,9 +261,8 @@ class ChatProvider extends ChangeNotifier {
     try {
       // OPTIMIZATION: Send only recent history (last 5 exchanges) for faster
       // processing — and never re-send our own error notices to the model.
-      final allMessages = _messages
-          .where((m) => m.role != 'system' && !m.isError)
-          .toList();
+      final allMessages =
+          _messages.where((m) => m.role != 'system' && !m.isError).toList();
       final historyStartIdx =
           allMessages.length > 10 ? allMessages.length - 10 : 0;
       final history = allMessages.sublist(historyStartIdx);
@@ -276,6 +294,7 @@ class ChatProvider extends ChangeNotifier {
 
         if (intent != IntentDetector.intentNavigation) {
           final ctx = await BusinessContextBuilder.build();
+          if (_disposed) return;
           contextString = SmartSnapshotBuilder.build(
             ctx,
             intent,
@@ -294,6 +313,7 @@ class ChatProvider extends ChangeNotifier {
         print('⚠️ Snapshot build failed, sending without context: $e');
       }
 
+      if (_disposed) return;
       final response = await ApiService.sendChatMessage(
         message: trimmedText,
         history: historyJson,
@@ -304,6 +324,7 @@ class ChatProvider extends ChangeNotifier {
             throw TimeoutException('AI response took too long (>125s)'),
       );
 
+      if (_disposed) return;
       final assistantContent = response['response'] ??
           'Hmm, that came back empty — want to try that again?';
       final wasCached = response['cached'] == true;
@@ -319,6 +340,7 @@ class ChatProvider extends ChangeNotifier {
         print('✓ Got cached response');
       }
     } catch (e) {
+      if (_disposed) return;
       _lastError = '${e.runtimeType}';
       print('❌ Chat error: $e');
       _messages.add(ChatMessage(
@@ -330,24 +352,28 @@ class ChatProvider extends ChangeNotifier {
       // Connection-type failures may be a blip (backend restarting, AI
       // service recovering) — refresh status in the background so Sage
       // recovers on its own instead of serving stale "offline" state.
-      if (e is ChatApiException &&
+      if (!_disposed &&
+          e is ChatApiException &&
           (e.code == 'gemini_error' ||
               e.code == 'gemini_unreachable' ||
               e.code == 'network_unavailable' ||
               e.statusCode == 503)) {
-        checkStatus(retries: 1, timeout: const Duration(seconds: 2));
+        unawaited(checkStatus(retries: 1, timeout: const Duration(seconds: 2)));
       }
     } finally {
-      _isLoading = false;
-      notifyListeners();
+      if (!_disposed) {
+        _isLoading = false;
+        notifyListeners();
+      }
     }
   }
 
   // OPTIMIZATION: Get insights with better error messages
   Future<void> getAIInsights() async {
+    if (_disposed) return;
     if (!_sageOnline) {
-      await checkStatus(
-          retries: 1, timeout: const Duration(seconds: 2));
+      await checkStatus(retries: 1, timeout: const Duration(seconds: 2));
+      if (_disposed) return;
       if (!_sageOnline) {
         _messages.add(ChatMessage(
           role: 'assistant',
@@ -372,6 +398,7 @@ class ChatProvider extends ChangeNotifier {
         onTimeout: () => throw TimeoutException('Insights request timeout'),
       );
 
+      if (_disposed) return;
       final data = response['data'];
       if (data == null) {
         throw Exception('No data returned');
@@ -392,6 +419,7 @@ class ChatProvider extends ChangeNotifier {
 
       print('✓ Insights loaded successfully');
     } on TimeoutException catch (_) {
+      if (_disposed) return;
       _lastError = 'insights_timeout';
       _messages.add(ChatMessage(
         role: 'assistant',
@@ -403,6 +431,7 @@ class ChatProvider extends ChangeNotifier {
         isError: true,
       ));
     } catch (e) {
+      if (_disposed) return;
       _lastError = '${e.runtimeType}';
       print('❌ Insights error: $e');
 
@@ -414,8 +443,10 @@ class ChatProvider extends ChangeNotifier {
         isError: true,
       ));
     } finally {
-      _isLoading = false;
-      notifyListeners();
+      if (!_disposed) {
+        _isLoading = false;
+        notifyListeners();
+      }
     }
   }
 

@@ -3,6 +3,7 @@ import 'package:intl/intl.dart';
 
 import '../../../../../models/inventory_item.dart';
 import '../../../../../services/api_service.dart';
+import '../../../../../services/receipt_printer_service.dart';
 import '../../../../../theme.dart';
 import '../../data/models/stock_movement.dart';
 import '../../domain/usecases/cogs.dart';
@@ -53,6 +54,97 @@ class _ReportsScreenState extends State<ReportsScreen> {
     final d = (v ?? 0).toDouble();
     final s = d % 1 == 0 ? d.toStringAsFixed(0) : d.toStringAsFixed(2);
     return unit.trim().isEmpty ? s : '$s $unit';
+  }
+
+  Future<void> _printReport() async {
+    final items = widget.items;
+    final movements = widget.movements;
+    final health = InventoryHealthScoreUseCase()
+        .compute(items: items, movements: movements);
+    final lowStock = LowStockReportUseCase().compute(items);
+    final value = InventoryValueUseCase().computeTotalValue(items, null);
+    final cogs = CogsUseCase().compute(movements);
+    final restock = RestockSuggestionsUseCase().compute(items);
+
+    double wasteQty = 0;
+    double wasteCost = 0;
+    double consumptionQty = 0;
+    double consumptionCost = 0;
+    for (final movement in movements) {
+      final qty = movement.changeBase.abs();
+      final cost = movement.totalCostImpact.abs();
+      if (movement.type == StockMovementType.saleConsumption) {
+        consumptionQty += qty;
+        consumptionCost += cost;
+      } else if (movement.type == StockMovementType.damaged ||
+          movement.type == StockMovementType.writeOff) {
+        wasteQty += qty;
+        wasteCost += cost;
+      }
+    }
+
+    final lines = <String>[
+      'Generated: ${DateFormat('MMM d, yyyy h:mm a').format(DateTime.now())}',
+      '${ReceiptPrinterService.documentSection}KEY METRICS',
+      'Health score: ${health.score.toStringAsFixed(0)}/100 (${health.band})',
+      'Inventory value: ${_formatCurrency(value)}',
+      'Actual COGS: ${_formatCurrency(cogs)}',
+      'Consumption: ${_qty(consumptionQty)} / ${_formatCurrency(consumptionCost)}',
+      'Waste: ${_qty(wasteQty)} / ${_formatCurrency(wasteCost)}',
+      ReceiptPrinterService.documentDivider,
+      '${ReceiptPrinterService.documentSection}LOW STOCK (${lowStock.length})',
+      if (lowStock.isEmpty)
+        'None'
+      else
+        ...lowStock.take(8).map(
+              (entry) =>
+                  '${entry.isOutOfStock ? "OUT" : "LOW"} ${entry.item.name}: '
+                  '${_qty(entry.item.currentStock, entry.item.effectiveBaseUnit)} '
+                  '(min ${_qty(entry.item.minStock, entry.item.effectiveBaseUnit)})',
+            ),
+      ReceiptPrinterService.documentDivider,
+      '${ReceiptPrinterService.documentSection}RESTOCK (${restock.length})',
+      if (restock.isEmpty)
+        'None'
+      else
+        ...restock.take(8).map(
+              (entry) =>
+                  '${entry.item.name}: +${_qty(entry.suggestedQtyBase, entry.item.effectiveBaseUnit)}',
+            ),
+    ];
+
+    final ingredients = (_usage['ingredients'] as List?) ?? const [];
+    if (ingredients.isNotEmpty) {
+      lines
+        ..add(ReceiptPrinterService.documentDivider)
+        ..add(
+            '${ReceiptPrinterService.documentSection}TOP INGREDIENT USAGE (30D)');
+      for (final raw in ingredients.take(6)) {
+        if (raw is! Map) continue;
+        final name = (raw['name'] ?? '').toString();
+        final qty =
+            _qty(raw['usedQty'] as num?, (raw['unit'] ?? '').toString());
+        final cost = (raw['estimatedCost'] as num?)?.toDouble() ?? 0;
+        lines.add('$name: $qty / ${_formatCurrency(cost)}');
+      }
+    }
+
+    final result = await ReceiptPrinterService.printDocument(
+      title: 'Inventory Report',
+      subtitle: 'Stock health, value, and consumption summary',
+      lines: lines,
+      footer: 'SmartEat Inventory Reports',
+    );
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          result.printed
+              ? 'Inventory report sent to printer.'
+              : result.error ?? 'Could not print inventory report.',
+        ),
+      ),
+    );
   }
 
   @override
@@ -108,7 +200,16 @@ class _ReportsScreenState extends State<ReportsScreen> {
     }
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Inventory Reports')),
+      appBar: AppBar(
+        title: const Text('Inventory Reports'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.print_outlined),
+            tooltip: 'Print report',
+            onPressed: _printReport,
+          ),
+        ],
+      ),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
@@ -287,11 +388,11 @@ class _ReportsScreenState extends State<ReportsScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('Restock Suggestions (Max - Current)',
+                  Text('Restock Suggestions (Reorder Target - Current)',
                       style: Theme.of(context).textTheme.titleMedium),
                   const SizedBox(height: 8),
                   Text(
-                    'Recommended reorder quantities based on max stock levels.',
+                    'Recommended reorder quantities based on max stock, reorder point, or minimum stock levels.',
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
                           color: Theme.of(context).colorScheme.onSurfaceVariant,
                         ),

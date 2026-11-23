@@ -207,6 +207,24 @@ void main() {
     expect(attendanceStatusCountsAsWork(attendanceAbsent), isFalse);
   });
 
+  test('attendancePayrollWorkUnit maps stored units and statuses to pay units',
+      () {
+    expect(attendancePayrollWorkUnit({'workUnit': 1}), 1.0);
+    expect(attendancePayrollWorkUnit({'workUnit': 0.5}), 0.5);
+    expect(attendancePayrollWorkUnit({'workUnit': 0.25}), 0.5);
+    expect(attendancePayrollWorkUnit({'workUnit': 0}), 0.0);
+    expect(
+      attendancePayrollWorkUnit({'status': attendancePresent}),
+      1.0,
+    );
+    expect(
+      attendancePayrollWorkUnit({'status': attendanceHalfDay}),
+      0.5,
+    );
+    expect(attendancePayrollWorkUnit({'status': attendanceAbsent}), 0.0);
+    expect(attendancePayrollWorkUnit({}), 0.0);
+  });
+
   test('attendanceScheduledStartFor parses valid HH:mm values', () {
     expect(
       attendanceScheduledStartFor(DateTime(2026, 1, 5, 18), '09:30'),

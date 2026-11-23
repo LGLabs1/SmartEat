@@ -161,7 +161,7 @@ class InventoryOverviewScreen extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'Recommended reorder quantities based on max stock levels.',
+                    'Recommended reorder quantities based on max stock, reorder point, or minimum stock levels.',
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
                           color: Theme.of(context).colorScheme.onSurfaceVariant,
                         ),

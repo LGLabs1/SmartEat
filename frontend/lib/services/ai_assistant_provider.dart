@@ -30,6 +30,12 @@ class AIAssistantProvider extends ChangeNotifier {
   Offset? _buttonPosition;
   Offset? get buttonPosition => _buttonPosition;
 
+  /// Live bounds of the Sage avatar currently visible in the AppBar. Kept
+  /// separate from [buttonPosition], which only serves the legacy draggable
+  /// button and is no longer used to place passive messages.
+  Rect? _sageAnchorRect;
+  Rect? get sageAnchorRect => _sageAnchorRect;
+
   Rect _workspaceBounds = const Rect.fromLTWH(12, 24, 800, 600);
   Rect get workspaceBounds => _workspaceBounds;
 
@@ -37,6 +43,8 @@ class AIAssistantProvider extends ChangeNotifier {
   bool get showPopup => _showPopup;
   String? _popupContent;
   String? get popupContent => _popupContent;
+
+  final Set<String> _shownPassiveMessages = <String>{};
 
   // ── Active screen ────────────────────────────────────────────────────────
   String _activePage = 'dashboard';
@@ -121,6 +129,8 @@ class AIAssistantProvider extends ChangeNotifier {
 
   String? _scopedUid;
   String? _scopedEateryId;
+  Timer? _popupTimer;
+  bool _disposed = false;
 
   // ── Access gating ────────────────────────────────────────────────────────
 
@@ -140,6 +150,8 @@ class AIAssistantProvider extends ChangeNotifier {
       _sageBriefingContent = null;
       _showPopup = false;
       _popupContent = null;
+      _sageAnchorRect = null;
+      _shownPassiveMessages.clear();
       _hasNewImportantInsight = false;
       _activeSageTab = 0;
     }
@@ -159,18 +171,9 @@ class AIAssistantProvider extends ChangeNotifier {
   Future<void> _initializeAsync() async {
     await _loadButtonPosition();
     await _loadBriefingHistory();
-    if (FirebaseAuth.instance.currentUser == null) {
-      print('===== FIRESTORE STARTUP GUARD =====');
-      print(
-          'AIAssistantProvider startup refresh skipped because auth user is null.');
-      print('Current UID: ${FirebaseAuth.instance.currentUser?.uid ?? 'N/A'}');
-      print('Current eateryId: N/A');
-      print('===================================');
-      return;
-    }
-    await refreshData();
+    await _syncScope();
 
-    _authStateSub =
+    _authStateSub ??=
         FirebaseAuth.instance.authStateChanges().listen((user) async {
       await _syncScope();
       if (user != null) {
@@ -178,15 +181,25 @@ class AIAssistantProvider extends ChangeNotifier {
         await refreshBriefingHistory();
       }
     });
+
+    if (FirebaseAuth.instance.currentUser != null) {
+      await refreshData();
+      await refreshBriefingHistory();
+    }
   }
 
   Future<void> _syncScope() async {
     final uid = FirebaseAuth.instance.currentUser?.uid;
-    final eateryId = await FirebaseService.getCurrentEateryId();
+    String? eateryId;
+    if (uid != null) {
+      eateryId = await FirebaseService.getCurrentEateryId();
+    }
     if (uid == _scopedUid && eateryId == _scopedEateryId) return;
 
     _scopedUid = uid;
     _scopedEateryId = eateryId;
+    _popupTimer?.cancel();
+    _popupTimer = null;
     BusinessContextBuilder.invalidate(eateryId: eateryId);
     _businessContext = null;
     _activeInsights = [];
@@ -195,6 +208,7 @@ class AIAssistantProvider extends ChangeNotifier {
     _showSageBriefing = false;
     _showPopup = false;
     _popupContent = null;
+    _shownPassiveMessages.clear();
     _hasNewImportantInsight = false;
     _chatHistory.clear();
     await _loadLocalBriefingHistory();
@@ -212,9 +226,19 @@ class AIAssistantProvider extends ChangeNotifier {
   }
 
   @override
+  void notifyListeners() {
+    if (_disposed) return;
+    super.notifyListeners();
+  }
+
+  @override
   void dispose() {
+    _disposed = true;
     _stopRefreshTimer();
+    _popupTimer?.cancel();
+    _popupTimer = null;
     _authStateSub?.cancel();
+    _authStateSub = null;
     _navigationController.close();
     super.dispose();
   }
@@ -232,9 +256,26 @@ class AIAssistantProvider extends ChangeNotifier {
   }
 
   void dismissPopup() {
-    if (!_showPopup) return;
+    _popupTimer?.cancel();
+    _popupTimer = null;
+    if (!_showPopup && _popupContent == null) return;
     _showPopup = false;
     _popupContent = null;
+    notifyListeners();
+  }
+
+  /// Called by the header button after it lays out (and again on resize).
+  void updateSageAnchor(Rect rect) {
+    if (_staffDashboardActive || _sageAnchorRect == rect) return;
+    _sageAnchorRect = rect;
+    notifyListeners();
+  }
+
+  /// Only clears the anchor published by the widget that is going away, so a
+  /// second header button on another route cannot wipe the live one.
+  void clearSageAnchor(Rect rect) {
+    if (_sageAnchorRect != rect) return;
+    _sageAnchorRect = null;
     notifyListeners();
   }
 
@@ -365,11 +406,16 @@ class AIAssistantProvider extends ChangeNotifier {
   }
 
   void displayPopup(String content,
-      {Duration duration = const Duration(seconds: 5)}) {
+      {Duration duration = const Duration(seconds: 5), bool passive = false}) {
+    if (passive && !_shownPassiveMessages.add('$_activePage|$content')) {
+      return;
+    }
+    _popupTimer?.cancel();
     _popupContent = content;
     _showPopup = true;
     notifyListeners();
-    Future.delayed(duration, () {
+    _popupTimer = Timer(duration, () {
+      if (_disposed) return;
       _showPopup = false;
       _popupContent = null;
       notifyListeners();
@@ -388,7 +434,9 @@ class AIAssistantProvider extends ChangeNotifier {
 
   /// Full refresh: rebuilds the BusinessContext then derives insights from it.
   Future<void> refreshData() async {
+    if (_disposed) return;
     await _syncScope();
+    if (_disposed || FirebaseAuth.instance.currentUser == null) return;
     await Future.wait([
       _buildBusinessContext(),
       _loadPageInsights(),
@@ -696,7 +744,7 @@ class AIAssistantProvider extends ChangeNotifier {
           .map((i) => i['name'] as String)
           .join(', ');
       displayPopup('⚠️ $names ran out of stock. Restock immediately.',
-          duration: const Duration(seconds: 6));
+          duration: const Duration(seconds: 6), passive: true);
       _hasNewImportantInsight = true;
       return;
     }
@@ -706,7 +754,8 @@ class AIAssistantProvider extends ChangeNotifier {
       final names =
           ctx.lowStockItems.take(2).map((i) => i['name'] as String).join(', ');
       displayPopup(
-          '🔶 Low stock: $names and ${ctx.lowStockCount - 2} more. Reorder soon.');
+          '🔶 Low stock: $names and ${ctx.lowStockCount - 2} more. Reorder soon.',
+          passive: true);
       _hasNewImportantInsight = true;
       return;
     }
@@ -714,14 +763,16 @@ class AIAssistantProvider extends ChangeNotifier {
     // Priority 3 — strong revenue day
     if (ctx.dayChangePercent >= 15) {
       displayPopup(
-          '📈 Revenue is up ${ctx.dayChangePercent.toStringAsFixed(0)}% today vs yesterday!');
+          '📈 Revenue is up ${ctx.dayChangePercent.toStringAsFixed(0)}% today vs yesterday!',
+          passive: true);
       return;
     }
 
     // Priority 4 — declining revenue
     if (ctx.dayChangePercent <= -20) {
       displayPopup(
-          '📉 Revenue dropped ${ctx.dayChangePercent.abs().toStringAsFixed(0)}% vs yesterday. Check for issues.');
+          '📉 Revenue dropped ${ctx.dayChangePercent.abs().toStringAsFixed(0)}% vs yesterday. Check for issues.',
+          passive: true);
       _hasNewImportantInsight = true;
       return;
     }
@@ -729,7 +780,8 @@ class AIAssistantProvider extends ChangeNotifier {
     // Priority 5 — today's best seller surfaced on open
     if (ctx.todayBestSeller != 'None' && ctx.todayBestSellerQty > 0) {
       displayPopup(
-          '⭐ ${ctx.todayBestSeller} is today\'s top seller (${ctx.todayBestSellerQty} sold).');
+          '⭐ ${ctx.todayBestSeller} is today\'s top seller (${ctx.todayBestSellerQty} sold).',
+          passive: true);
     }
   }
 
@@ -763,7 +815,7 @@ class AIAssistantProvider extends ChangeNotifier {
         final important = _activeInsights.where((i) => i.isImportant).toList();
         if (important.isNotEmpty) {
           _hasNewImportantInsight = true;
-          displayPopup(important.first.message);
+          displayPopup(important.first.message, passive: true);
         }
       }
     } catch (_) {}

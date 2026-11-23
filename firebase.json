@@ -61,6 +61,42 @@
             "value": "no-cache"
           }
         ]
+      },
+      {
+        "source": "/favicon.png",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-cache, max-age=0, must-revalidate"
+          }
+        ]
+      },
+      {
+        "source": "/favicon-smarteat-v4.png",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-cache, max-age=0, must-revalidate"
+          }
+        ]
+      },
+      {
+        "source": "/manifest.json",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-cache, max-age=0, must-revalidate"
+          }
+        ]
+      },
+      {
+        "source": "/icons/**",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-cache, max-age=0, must-revalidate"
+          }
+        ]
       }
     ],
     "rewrites": [
@@ -69,5 +105,14 @@
         "destination": "/index.html"
       }
     ]
+  },
+  "emulators": {
+    "firestore": {
+      "host": "127.0.0.1",
+      "port": 8085
+    },
+    "ui": {
+      "enabled": false
+    }
   }
 }

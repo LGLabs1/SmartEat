@@ -9,14 +9,16 @@ import '../services/attendance_settings_service.dart';
 import '../services/auth_provider.dart';
 import '../services/api_service.dart';
 import '../services/firebase_service.dart';
+import '../services/notification_service.dart';
 import '../theme.dart';
 import '../widgets/confirmation_dialogs.dart';
 import '../widgets/dashboard/dashboard_back_handler.dart';
+import '../widgets/inline_error_banner.dart';
 import '../widgets/pending_approvals_card.dart';
 import '../widgets/skeleton_loaders.dart';
 import '../utils/attendance_utils.dart';
-import '../utils/error_messages.dart';
 import '../utils/haptic_feedback.dart';
+import '../utils/notification_visibility.dart';
 import '../utils/staff_utils.dart';
 
 part '../features/staff/widgets/staff_profile_dialog.dart';
@@ -47,6 +49,17 @@ class StaffManagementScreen extends StatefulWidget {
 
 class _StaffManagementScreenState extends State<StaffManagementScreen> {
   DateTime _weekStart = _startOfWeek(DateTime.now());
+  Object? _inlineError;
+
+  void _showInlineError(Object error) {
+    if (!mounted) return;
+    setState(() => _inlineError = error);
+  }
+
+  void _clearInlineError() {
+    if (!mounted) return;
+    setState(() => _inlineError = null);
+  }
 
   // Cached so the profile is fetched once instead of on every rebuild (the
   // FutureBuilder below used to call the provider inline in build()).
@@ -126,18 +139,32 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
         const SnackBar(content: Text('Staff approved')),
       );
     } catch (e) {
-      if (!context.mounted) return;
-      ErrorMessageHelper.showSnackBar(context, e, operationContext: 'staff');
+      _showInlineError(e);
     }
   }
 
   Future<void> _clearPendingApprovalNotification(String uid) async {
+    final dedupeKey = 'pending_staff_$uid';
+    await NotificationService().removePendingByDedupeKey(dedupeKey);
+    String? eateryId;
     try {
-      await FirebaseFirestore.instance
-          .collection('notifications')
-          .doc('pending_staff_$uid')
-          .delete();
-    } catch (_) {}
+      final profile =
+          await context.read<AuthProvider>().getCurrentUserProfile();
+      eateryId = (profile?['eateryId'] ?? '').toString().trim();
+    } catch (e) {
+      _showInlineError(e);
+      return;
+    }
+    if (eateryId.isEmpty) return;
+    final docId = buildNotificationDocId(eateryId, dedupeKey);
+    try {
+      await ApiService.deleteNotification(docId);
+    } on NotificationApiException catch (e) {
+      if (e.statusCode == 404) return;
+      _showInlineError(e);
+    } catch (e) {
+      _showInlineError(e);
+    }
   }
 
   Future<void> _removeStaff(
@@ -185,14 +212,11 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
       FirebaseService.invalidateUserProfileCache(uid);
       if (!context.mounted) return;
       HapticHelper.success();
-      ErrorMessageHelper.showSnackBar(
-        context,
-        Exception('Staff removed successfully'),
-        operationContext: 'staff',
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Staff removed successfully')),
       );
     } catch (e) {
-      if (!context.mounted) return;
-      ErrorMessageHelper.showSnackBar(context, e, operationContext: 'staff');
+      _showInlineError(e);
     }
   }
 
@@ -216,10 +240,7 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
       final snap = await profileRef.get();
       existing = snap.data() ?? const <String, dynamic>{};
     } catch (e) {
-      if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to load profile: $e')),
-      );
+      _showInlineError(e);
       return;
     }
 
@@ -726,7 +747,7 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
 
     final weekKey = _fmtDate(weekStart);
     try {
-      await StaffService.recordPayout(
+      final payoutId = await StaffService.recordPayout(
         eateryId: eateryId,
         uid: uid,
         weekStartKey: weekKey,
@@ -736,17 +757,85 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
         adminName: adminName,
       );
 
+      if (type == 'weekly') {
+        await ApiService.postPayrollPayoutExpense(
+          payoutId: payoutId,
+          weekStart: weekKey,
+          staffUid: uid,
+          staffName: userLabel,
+          amount: amount,
+          paidAt: DateTime.now(),
+          paidByName: adminName,
+        );
+      }
+
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content:
-              Text(type == 'advance' ? 'Advance recorded' : 'Payout recorded'),
+          content: Text(
+            type == 'advance'
+                ? 'Advance recorded'
+                : 'Payout recorded and added to Finance expenses',
+          ),
         ),
       );
     } catch (e) {
-      if (!context.mounted) return;
-      ErrorMessageHelper.showSnackBar(context, e, operationContext: 'staff');
+      _showInlineError(e);
     }
+  }
+
+  Widget? _buildShellLeading(BuildContext context) {
+    if (widget.onOpenDrawer != null) {
+      return IconButton(
+        icon: const Icon(Icons.menu),
+        tooltip: 'Menu',
+        onPressed: widget.onOpenDrawer,
+      );
+    }
+    if (Navigator.of(context).canPop()) {
+      return IconButton(
+        icon: const Icon(Icons.arrow_back),
+        onPressed: () => Navigator.of(context).maybePop(),
+      );
+    }
+    return null;
+  }
+
+  Widget _buildStaffSkeleton({bool includeHeader = false, int rows = 5}) {
+    return ShimmerLoading(
+      child: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          if (includeHeader) ...[
+            const SkeletonBlock(height: 80, borderRadius: 16),
+            const SizedBox(height: 16),
+          ],
+          ...List.generate(rows, (index) {
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: Row(
+                children: [
+                  const SkeletonCircle(diameter: 48),
+                  const SizedBox(width: 12),
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        SkeletonLine(width: double.infinity, height: 16),
+                        SizedBox(height: 8),
+                        SkeletonLine(width: 120, height: 12),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  SkeletonLine(width: 60, height: 24),
+                ],
+              ),
+            );
+          }),
+        ],
+      ),
+    );
   }
 
   @override
@@ -756,16 +845,13 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
       builder: (context, profileSnapshot) {
         if (profileSnapshot.connectionState == ConnectionState.waiting) {
           return Scaffold(
-            body: ListView(
-              padding: const EdgeInsets.all(16),
-              children: const [
-                SkeletonCard(height: 80),
-                SizedBox(height: 16),
-                SkeletonListTile(hasLeading: true, hasSubtitle: true),
-                SkeletonListTile(hasLeading: true, hasSubtitle: true),
-                SkeletonListTile(hasLeading: true, hasSubtitle: true),
-              ],
-            ),
+            appBar: widget.showAppBar
+                ? AppBar(
+                    leading: _buildShellLeading(context),
+                    title: const Text('Staff Management'),
+                  )
+                : null,
+            body: _buildStaffSkeleton(includeHeader: true, rows: 3),
           );
         }
 
@@ -846,6 +932,7 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
 
         final weekEnd = _weekStart.add(const Duration(days: 6));
         final weekLabel = '${_fmtDate(_weekStart)} to ${_fmtDate(weekEnd)}';
+        final compactTabs = MediaQuery.sizeOf(context).width < 430;
 
         return DefaultTabController(
           length: 4,
@@ -888,6 +975,17 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
                 : null,
             body: Column(
               children: [
+                if (_inlineError != null)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+                    child: InlineErrorBanner(
+                      key: const Key('staff-inline-error'),
+                      error: _inlineError!,
+                      operationContext: 'staff',
+                      onRetry: _clearInlineError,
+                      actionLabel: 'Dismiss',
+                    ),
+                  ),
                 if (!widget.showAppBar)
                   Material(
                     color: AppTheme.sagePanel,
@@ -936,21 +1034,7 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
                         );
                       }
                       if (!usersSnap.hasData) {
-                        return ListView(
-                          padding: const EdgeInsets.all(16),
-                          children: const [
-                            SkeletonListTile(
-                                hasLeading: true, hasSubtitle: true),
-                            SkeletonListTile(
-                                hasLeading: true, hasSubtitle: true),
-                            SkeletonListTile(
-                                hasLeading: true, hasSubtitle: true),
-                            SkeletonListTile(
-                                hasLeading: true, hasSubtitle: true),
-                            SkeletonListTile(
-                                hasLeading: true, hasSubtitle: true),
-                          ],
-                        );
+                        return _buildStaffSkeleton(rows: 5);
                       }
 
                       final userDocs = usersSnap.data!.docs;
@@ -1046,23 +1130,41 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
                       fontSize: 12,
                       fontWeight: FontWeight.w600,
                     ),
-                    labelPadding: const EdgeInsets.symmetric(horizontal: 6),
-                    tabs: const [
+                    labelPadding: EdgeInsets.symmetric(
+                      horizontal: compactTabs ? 2 : 6,
+                    ),
+                    tabs: [
                       Tab(
-                        icon: Icon(Icons.group_outlined, size: 20),
-                        text: 'Staff',
+                        icon: Icon(
+                          Icons.group_outlined,
+                          size: compactTabs ? 24 : 20,
+                          semanticLabel: 'Staff',
+                        ),
+                        text: compactTabs ? null : 'Staff',
                       ),
                       Tab(
-                        icon: Icon(Icons.calendar_month_outlined, size: 20),
-                        text: 'Attendance',
+                        icon: Icon(
+                          Icons.calendar_month_outlined,
+                          size: compactTabs ? 24 : 20,
+                          semanticLabel: 'Attendance',
+                        ),
+                        text: compactTabs ? null : 'Attendance',
                       ),
                       Tab(
-                        icon: Icon(Icons.payments_outlined, size: 20),
-                        text: 'Payroll',
+                        icon: Icon(
+                          Icons.payments_outlined,
+                          size: compactTabs ? 24 : 20,
+                          semanticLabel: 'Payroll',
+                        ),
+                        text: compactTabs ? null : 'Payroll',
                       ),
                       Tab(
-                        icon: Icon(Icons.lunch_dining_outlined, size: 20),
-                        text: 'Meals',
+                        icon: Icon(
+                          Icons.lunch_dining_outlined,
+                          size: compactTabs ? 24 : 20,
+                          semanticLabel: 'Meals',
+                        ),
+                        text: compactTabs ? null : 'Meals',
                       ),
                     ],
                   ),

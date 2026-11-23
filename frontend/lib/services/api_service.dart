@@ -4,7 +4,19 @@ import 'dart:math' as math;
 import 'package:http/http.dart' as http;
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../features/inventory/domain/usecases/reports.dart';
+import '../models/inventory_item.dart';
 import 'firebase_service.dart';
+
+class NotificationApiException implements Exception {
+  final String message;
+  final int? statusCode;
+
+  const NotificationApiException(this.message, {this.statusCode});
+
+  @override
+  String toString() => message;
+}
 
 class ChatApiException implements Exception {
   final int? statusCode;
@@ -21,10 +33,20 @@ class ChatApiException implements Exception {
   String toString() => message;
 }
 
+/// Stable per-action id for add-to-order requests. Callers that may retry pass
+/// the same value again so the server can short-circuit the duplicate.
+String resolveAddRequestId(String? requestId) {
+  final trimmed = (requestId ?? '').trim();
+  if (trimmed.isNotEmpty) return trimmed;
+  final random = math.Random();
+  return 'add_${DateTime.now().microsecondsSinceEpoch}_${random.nextInt(1 << 30)}';
+}
+
 class ApiService {
-  // Deployed demo backend (Render).
-  static const String _baseUrl =
-      'https://smarteat-backend-n5ta.onrender.com/api';
+  static const String _baseUrl = String.fromEnvironment(
+    'SMARTEAT_API_BASE_URL',
+    defaultValue: 'https://smarteat-backend-n5ta.onrender.com/api',
+  );
 
   // A single keep-alive client reused across requests. Creating a new client
   // per call forced a fresh TCP connection every time, adding latency.
@@ -39,6 +61,7 @@ class ApiService {
   static Future<Map<String, dynamic>> sendSmsMessage({
     required String phoneNumber,
     required String message,
+    String purpose = 'reminder',
   }) async {
     final token = await _getAuthToken();
     final headers = <String, String>{
@@ -50,7 +73,11 @@ class ApiService {
         .post(
           Uri.parse('$_baseUrl/sms/send'),
           headers: headers,
-          body: jsonEncode({'phone_number': phoneNumber, 'message': message}),
+          body: jsonEncode({
+            'phone_number': phoneNumber,
+            'message': message,
+            'purpose': purpose,
+          }),
         )
         .timeout(const Duration(seconds: 60));
     dynamic data;
@@ -66,6 +93,149 @@ class ApiService {
     throw Exception(err?.toString().isNotEmpty == true
         ? err.toString()
         : 'SMS send failed (HTTP ${response.statusCode})');
+  }
+
+  static Map<String, String> _notificationHeaders(String token) =>
+      <String, String>{
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'Authorization': 'Bearer $token',
+      };
+
+  static Future<String> _requireNotificationToken() async {
+    final token = await _getAuthToken();
+    if (token == null || token.isEmpty) {
+      throw const NotificationApiException(
+          'You must be signed in to view notifications.');
+    }
+    return token;
+  }
+
+  static String _notificationError(http.Response response, String action) {
+    try {
+      final decoded = jsonDecode(response.body);
+      if (decoded is Map) {
+        final error = decoded['error'] ?? decoded['message'];
+        if (error != null && error.toString().isNotEmpty)
+          return error.toString();
+      }
+    } catch (_) {}
+    return 'Failed to $action notifications (HTTP ${response.statusCode}).';
+  }
+
+  static Future<List<Map<String, dynamic>>> fetchNotifications({
+    int limit = 400,
+  }) async {
+    final token = await _requireNotificationToken();
+    final response = await _client
+        .get(
+          Uri.parse('$_baseUrl/notifications?limit=$limit'),
+          headers: _notificationHeaders(token),
+        )
+        .timeout(const Duration(seconds: 15));
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw NotificationApiException(
+        _notificationError(response, 'load'),
+        statusCode: response.statusCode,
+      );
+    }
+    final decoded = jsonDecode(response.body);
+    final payload = decoded is Map ? decoded['data'] : null;
+    final items = payload is Map ? payload['items'] : null;
+    if (items is! List) {
+      throw const NotificationApiException(
+          'Notification service returned an invalid response.');
+    }
+    return items
+        .whereType<Map>()
+        .map((item) => Map<String, dynamic>.from(item))
+        .toList();
+  }
+
+  static Future<bool> recordSystemNotification(
+    Map<String, dynamic> payload,
+  ) async {
+    try {
+      final token = await _requireNotificationToken();
+      final response = await _client
+          .post(
+            Uri.parse('$_baseUrl/notifications/record'),
+            headers: _notificationHeaders(token),
+            body: jsonEncode(payload),
+          )
+          .timeout(const Duration(seconds: 10));
+      return response.statusCode >= 200 && response.statusCode < 300;
+    } on NotificationApiException {
+      return false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static Future<int> syncSystemNotifications() async {
+    try {
+      final token = await _requireNotificationToken();
+      final response = await _client
+          .post(
+            Uri.parse('$_baseUrl/notifications/sync'),
+            headers: _notificationHeaders(token),
+          )
+          .timeout(const Duration(seconds: 15));
+      if (response.statusCode < 200 || response.statusCode >= 300) return 0;
+      final decoded = jsonDecode(response.body);
+      final data = decoded is Map ? decoded['data'] : null;
+      return data is Map ? (data['created'] is int ? data['created'] : 0) : 0;
+    } catch (_) {
+      return 0;
+    }
+  }
+
+  static Future<void> markNotificationRead(String id) async {
+    final token = await _requireNotificationToken();
+    final response = await _client
+        .post(
+          Uri.parse('$_baseUrl/notifications/${Uri.encodeComponent(id)}/read'),
+          headers: _notificationHeaders(token),
+        )
+        .timeout(const Duration(seconds: 10));
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw NotificationApiException(
+        _notificationError(response, 'update'),
+        statusCode: response.statusCode,
+      );
+    }
+  }
+
+  static Future<void> markAllNotificationsRead() async {
+    final token = await _requireNotificationToken();
+    final response = await _client
+        .post(
+          Uri.parse('$_baseUrl/notifications/read-all'),
+          headers: _notificationHeaders(token),
+        )
+        .timeout(const Duration(seconds: 15));
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw NotificationApiException(
+        _notificationError(response, 'update'),
+        statusCode: response.statusCode,
+      );
+    }
+  }
+
+  static Future<void> deleteNotification(String id) async {
+    final token = await _requireNotificationToken();
+    final response = await _client
+        .delete(
+          Uri.parse('$_baseUrl/notifications/${Uri.encodeComponent(id)}'),
+          headers: _notificationHeaders(token),
+        )
+        .timeout(const Duration(seconds: 10));
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw NotificationApiException(
+        _notificationError(response, 'delete'),
+        statusCode: response.statusCode,
+      );
+    }
   }
 
   // Menu endpoints - using Firebase
@@ -256,9 +426,13 @@ class ApiService {
   static Future<Map<String, dynamic>> addItemsToPendingOrder({
     required String orderId,
     required List<Map<String, dynamic>> items,
+    String? addRequestId,
   }) async {
-    final updated =
-        await FirebaseService.addItemsToPendingOrder(orderId, items);
+    final updated = await FirebaseService.addItemsToPendingOrder(
+      orderId,
+      items,
+      addRequestId: resolveAddRequestId(addRequestId),
+    );
     return {'data': updated};
   }
 
@@ -349,6 +523,7 @@ class ApiService {
     double? unitCost,
     double? sellingPrice,
     String? supplier,
+    Map<String, dynamic>? extra,
   }) async {
     final Map<String, dynamic> updates = {};
     if (name != null) updates['name'] = name;
@@ -357,6 +532,22 @@ class ApiService {
     if (unitCost != null) updates['unitCost'] = unitCost;
     if (sellingPrice != null) updates['sellingPrice'] = sellingPrice;
     if (supplier != null) updates['supplier'] = supplier;
+    if (extra != null) {
+      const protectedKeys = {
+        'id',
+        'eateryId',
+        'currentStock',
+        'lastPurchaseCost',
+        'avgCost',
+        'createdAt',
+        'updatedAt',
+        'stockLogs',
+      };
+      for (final entry in extra.entries) {
+        if (!protectedKeys.contains(entry.key))
+          updates[entry.key] = entry.value;
+      }
+    }
 
     final item = await FirebaseService.updateInventoryItem(id, updates);
     return {'data': item};
@@ -714,181 +905,36 @@ class ApiService {
 
   static Future<Map<String, dynamic>> getRecommendations() async {
     try {
-      // Fetch necessary data for the previous month.
+      const windowDays = 30;
       final now = DateTime.now();
-      final lastMonthStart = DateTime(now.year, now.month - 1, 1);
-      final lastMonthEnd = DateTime(now.year, now.month, 0, 23, 59, 59, 999);
+      final start = DateTime(now.year, now.month, now.day)
+          .subtract(const Duration(days: windowDays - 1));
+      final end = DateTime(now.year, now.month, now.day, 23, 59, 59, 999);
 
-      final ordersResult = await getOrdersByDateRange(
-          startDate: lastMonthStart, endDate: lastMonthEnd);
+      final ordersResult =
+          await getOrdersByDateRange(startDate: start, endDate: end);
       final orders = ordersResult['data'] as List<dynamic>? ?? [];
 
       final inventoryResult = await getInventoryItems();
       final inventory = inventoryResult['data'] as List<dynamic>? ?? [];
 
-      final promoteItems = <Map<String, dynamic>>[];
-      final removeItems = <Map<String, dynamic>>[];
-      final optimizeInventory = <Map<String, dynamic>>[];
-
-      // Analyze item sales for the period, tracking quantity, revenue and the
-      // most recent sale date so we can reason about staleness too.
-      final itemSales = <String, Map<String, dynamic>>{};
-      for (final order in orders) {
-        if (order is Map) {
-          final items = order['items'] as List<dynamic>? ?? [];
-          final status = (order['status'] ?? '').toString().toLowerCase();
-          if (status != 'completed') continue;
-
-          DateTime? orderDate;
-          final createdAt = order['createdAt'] ?? order['completedAt'];
-          if (createdAt is Timestamp) {
-            orderDate = createdAt.toDate();
-          } else if (createdAt is DateTime) {
-            orderDate = createdAt;
-          } else if (createdAt is String) {
-            orderDate = DateTime.tryParse(createdAt);
-          }
-
-          for (final item in items) {
-            if (item is! Map) continue;
-            final name = (item['name'] ?? 'Unknown').toString();
-            final qty = (item['quantity'] as num?)?.toInt() ?? 1;
-            final price = (item['price'] as num?)?.toDouble() ?? 0.0;
-
-            final entry = itemSales.putIfAbsent(
-              name,
-              () => {
-                'name': name,
-                'totalSold': 0,
-                'revenue': 0.0,
-                'lastSoldAt': null,
-              },
-            );
-            entry['totalSold'] = (entry['totalSold'] as int) + qty;
-            entry['revenue'] = (entry['revenue'] as double) + (price * qty);
-            if (orderDate != null) {
-              final prev = entry['lastSoldAt'] as DateTime?;
-              if (prev == null || orderDate.isAfter(prev)) {
-                entry['lastSoldAt'] = orderDate;
-              }
-            }
-          }
-        }
-      }
-
-      // Sort by units sold (primary), then revenue.
-      final sortedItems = itemSales.values.toList()
-        ..sort((a, b) {
-          final bySold =
-              (b['totalSold'] as int).compareTo(a['totalSold'] as int);
-          if (bySold != 0) return bySold;
-          return (b['revenue'] as double).compareTo(a['revenue'] as double);
-        });
-
-      final totalSold =
-          sortedItems.fold<int>(0, (s, i) => s + (i['totalSold'] as int));
-
-      // Top performers to promote — up to 3, quantified with quantity + revenue.
-      final promoteCandidates = sortedItems
-          .where((item) => (item['totalSold'] as int) >= 5)
-          .take(3)
-          .toList();
-      for (final item in promoteCandidates) {
-        final sold = item['totalSold'] as int;
-        final revenue = item['revenue'] as double;
-        promoteItems.add({
-          'name': item['name'],
-          'reason':
-              'Strong seller — $sold sold last month (${_currencyShort(revenue)} revenue)',
-          'expectedIncrease': '15-20%',
-          'impact': '≈${_currencyShort(revenue * 0.15)} potential lift',
-          'severity': sold >= 20 ? 'high' : 'medium',
-        });
-      }
-
-      // Low performers / dead stock to consider removing — up to 3.
-      if (sortedItems.length > 4 && totalSold > 0) {
-        final lowPerformers = sortedItems.where((item) {
-          final sold = item['totalSold'] as int;
-          final lastSold = item['lastSoldAt'] as DateTime?;
-          final stale =
-              lastSold != null && now.difference(lastSold).inDays >= 21;
-          return sold < 3 || stale;
-        }).toList();
-
-        for (final item in lowPerformers.take(3)) {
-          final sold = item['totalSold'] as int;
-          final lastSold = item['lastSoldAt'] as DateTime?;
-          final daysSince =
-              lastSold == null ? null : now.difference(lastSold).inDays;
-          removeItems.add({
-            'name': item['name'],
-            'reason': daysSince != null && daysSince >= 21
-                ? 'No sales in $daysSince days — likely dead stock'
-                : 'Very low demand — only $sold sold last month',
-            'wasteReduction': 'Reduce inventory costs',
-            'impact': daysSince != null && daysSince >= 21
-                ? 'Frees shelf space & stock capital'
-                : 'Cuts waste on slow movers',
-            'severity': (sold == 0 || (daysSince ?? 0) >= 30) ? 'high' : 'low',
-          });
-        }
-      }
-
-      // Inventory optimization — quantify the gap and flag severity.
-      for (final invItem in inventory) {
-        if (invItem is! Map) continue;
-        final currentStock =
-            (invItem['currentStock'] as num?)?.toDouble() ?? 0.0;
-        final minStock = (invItem['minStock'] as num?)?.toDouble() ?? 0.0;
-        final name = (invItem['name'] ?? '').toString();
-        if (name.isEmpty) continue;
-
-        if (minStock > 0 && currentStock < minStock * 0.5) {
-          final shortfall = (minStock * 2) - currentStock;
-          optimizeInventory.add({
-            'ingredient': name,
-            'reason':
-                'Stock critically low (${currentStock.toStringAsFixed(1)} of ${minStock.toStringAsFixed(1)} min)',
-            'action': 'Order ${shortfall.toStringAsFixed(0)} units immediately',
-            'impact': 'Restock to 2× minimum',
-            'severity': currentStock <= 0 ? 'high' : 'medium',
-          });
-        } else if (minStock > 0 && currentStock > minStock * 5) {
-          final excess = currentStock - (minStock * 3);
-          optimizeInventory.add({
-            'ingredient': name,
-            'reason':
-                'Overstocked (${currentStock.toStringAsFixed(1)} units, ${(currentStock / minStock).toStringAsFixed(1)}× minimum)',
-            'action': 'Pause reordering or run a promo to use stock',
-            'impact': '${excess.toStringAsFixed(0)} units above target',
-            'severity': 'low',
-          });
-        }
-      }
-
-      // Sort inventory warnings so critical items surface first.
-      const severityRank = {'high': 0, 'medium': 1, 'low': 2};
-      optimizeInventory.sort((a, b) {
-        final sa = severityRank[a['severity']] ?? 3;
-        final sb = severityRank[b['severity']] ?? 3;
-        return sa.compareTo(sb);
-      });
+      final data = buildRecommendationData(
+        orders: orders,
+        inventory: inventory,
+        now: now,
+        windowDays: windowDays,
+      );
 
       return {
         'available': true,
-        'data': {
-          'promoteItems': promoteItems,
-          'removeItems': removeItems,
-          'optimizeInventory': optimizeInventory.take(6).toList(),
-        }
+        'windowDays': windowDays,
+        'data': data,
       };
     } catch (e) {
-      // Distinguish a failed fetch from a genuinely empty result so the UI can
-      // show "couldn't load" instead of a misleading "All caught up!".
       return {
         'available': false,
         'error': e.toString(),
+        'windowDays': 30,
         'data': {
           'promoteItems': [],
           'removeItems': [],
@@ -896,6 +942,182 @@ class ApiService {
         }
       };
     }
+  }
+
+  static Map<String, dynamic> buildRecommendationData({
+    required List<dynamic> orders,
+    required List<dynamic> inventory,
+    required DateTime now,
+    int windowDays = 30,
+  }) {
+    final start = DateTime(now.year, now.month, now.day)
+        .subtract(Duration(days: windowDays - 1));
+    final end = DateTime(now.year, now.month, now.day, 23, 59, 59, 999);
+
+    final promoteItems = <Map<String, dynamic>>[];
+    final removeItems = <Map<String, dynamic>>[];
+    final optimizeInventory = <Map<String, dynamic>>[];
+
+    DateTime? parseDate(dynamic value) {
+      if (value is Timestamp) return value.toDate();
+      if (value is DateTime) return value;
+      if (value is int) return DateTime.fromMillisecondsSinceEpoch(value);
+      if (value is String) return DateTime.tryParse(value);
+      return null;
+    }
+
+    double asDouble(dynamic value) {
+      if (value is num) return value.toDouble();
+      return double.tryParse(value?.toString() ?? '') ?? 0.0;
+    }
+
+    final itemSales = <String, Map<String, dynamic>>{};
+    for (final order in orders) {
+      if (order is! Map) continue;
+      final status = (order['status'] ?? '').toString().toLowerCase();
+      if (status != 'completed') continue;
+
+      final orderDate = parseDate(order['completedAt'] ?? order['createdAt']);
+      if (orderDate == null) continue;
+      final orderDay = DateTime(orderDate.year, orderDate.month, orderDate.day);
+      if (orderDay.isBefore(start) || orderDay.isAfter(end)) continue;
+
+      final items = order['items'] as List<dynamic>? ?? const [];
+      for (final item in items) {
+        if (item is! Map) continue;
+        final rawName = item['name'] ?? item['itemName'] ?? 'Unknown';
+        final trimmedName = rawName.toString().trim();
+        final name = trimmedName.isEmpty ? 'Unknown' : trimmedName;
+        final rawId = item['menuItemId'] ?? item['id'] ?? item['itemId'];
+        final id = rawId?.toString().trim() ?? '';
+        final key = id.isNotEmpty ? 'id:$id' : 'name:${name.toLowerCase()}';
+        final qty = asDouble(item['quantity'] ?? item['qty']).round();
+        final price = asDouble(item['price'] ?? item['unitPrice']);
+
+        final entry = itemSales.putIfAbsent(
+          key,
+          () => {
+            'key': key,
+            'name': name,
+            'totalSold': 0,
+            'revenue': 0.0,
+            'lastSoldAt': null,
+          },
+        );
+        entry['totalSold'] = (entry['totalSold'] as int) + (qty > 0 ? qty : 1);
+        entry['revenue'] =
+            (entry['revenue'] as double) + (price * (qty > 0 ? qty : 1));
+        final previous = entry['lastSoldAt'] as DateTime?;
+        if (previous == null || orderDate.isAfter(previous)) {
+          entry['lastSoldAt'] = orderDate;
+        }
+      }
+    }
+
+    final sortedItems = itemSales.values.toList()
+      ..sort((a, b) {
+        final bySold = (b['totalSold'] as int).compareTo(a['totalSold'] as int);
+        if (bySold != 0) return bySold;
+        return (b['revenue'] as double).compareTo(a['revenue'] as double);
+      });
+
+    final promoteCandidates = sortedItems
+        .where((item) => (item['totalSold'] as int) >= 5)
+        .take(3)
+        .toList();
+    final promotedKeys = promoteCandidates.map((item) => item['key']).toSet();
+
+    for (final item in promoteCandidates) {
+      final sold = item['totalSold'] as int;
+      final revenue = item['revenue'] as double;
+      promoteItems.add({
+        'name': item['name'],
+        'reason':
+            'Strong seller — $sold sold in the last $windowDays days (${_currencyShort(revenue)} revenue)',
+        'expectedIncrease': '15-20%',
+        'impact': '≈${_currencyShort(revenue * 0.15)} potential lift',
+        'severity': sold >= 20 ? 'high' : 'medium',
+      });
+    }
+
+    final removeCandidates = sortedItems
+        .where((item) =>
+            !promotedKeys.contains(item['key']) &&
+            (item['totalSold'] as int) <= 2)
+        .take(3)
+        .toList();
+    for (final item in removeCandidates) {
+      final sold = item['totalSold'] as int;
+      removeItems.add({
+        'name': item['name'],
+        'reason': 'Low demand — only $sold sold in the last $windowDays days',
+        'wasteReduction': 'Reduce slow-mover stock',
+        'impact': 'Frees shelf space & stock capital',
+        'severity': sold <= 1 ? 'high' : 'low',
+      });
+    }
+
+    for (final invItem in inventory) {
+      if (invItem is! Map) continue;
+      final raw = Map<String, dynamic>.from(invItem);
+      final name = (raw['name'] ?? '').toString().trim();
+      if (name.isEmpty) continue;
+
+      InventoryItem item;
+      try {
+        item = InventoryItem.fromJson(raw);
+      } catch (_) {
+        continue;
+      }
+
+      final unit = item.effectiveBaseUnit.trim().isEmpty
+          ? 'units'
+          : item.effectiveBaseUnit;
+      final reorderLevel =
+          item.reorderPoint > 0 ? item.reorderPoint : item.minStock;
+      final qty = suggestedRestockQty(item);
+
+      if (qty > 0) {
+        final reason = item.maxStock > item.currentStock
+            ? 'Below max stock (${item.currentStock.toStringAsFixed(1)} of ${item.maxStock.toStringAsFixed(1)} $unit max)'
+            : reorderLevel > 0
+                ? 'Stock low (${item.currentStock.toStringAsFixed(1)} of ${reorderLevel.toStringAsFixed(1)} $unit threshold)'
+                : 'Out of stock';
+        optimizeInventory.add({
+          'ingredient': name,
+          'reason': reason,
+          'action': 'Order ${qty.toStringAsFixed(0)} $unit',
+          'impact': 'Restore to reorder target',
+          'severity': item.currentStock <= 0 ||
+                  (reorderLevel > 0 && item.currentStock < reorderLevel * 0.5)
+              ? 'high'
+              : 'medium',
+        });
+      } else if (item.minStock > 0 && item.currentStock > item.minStock * 5) {
+        final excess = item.currentStock - (item.minStock * 3);
+        optimizeInventory.add({
+          'ingredient': name,
+          'reason':
+              'Overstocked (${item.currentStock.toStringAsFixed(1)} $unit, ${(item.currentStock / item.minStock).toStringAsFixed(1)}× minimum)',
+          'action': 'Pause reordering or run a promo to use stock',
+          'impact': '${excess.toStringAsFixed(0)} $unit above target',
+          'severity': 'low',
+        });
+      }
+    }
+
+    const severityRank = {'high': 0, 'medium': 1, 'low': 2};
+    optimizeInventory.sort((a, b) {
+      final sa = severityRank[a['severity']] ?? 3;
+      final sb = severityRank[b['severity']] ?? 3;
+      return sa.compareTo(sb);
+    });
+
+    return {
+      'promoteItems': promoteItems,
+      'removeItems': removeItems,
+      'optimizeInventory': optimizeInventory.take(6).toList(),
+    };
   }
 
   /// Compact peso formatter for recommendation copy (e.g. ₱12.5k).
@@ -1005,6 +1227,27 @@ class ApiService {
     String purchaseReceiptId,
   ) {
     return FirebaseService.findExpenseByLinkedPurchase(purchaseReceiptId);
+  }
+
+  static Future<Map<String, dynamic>> postPayrollPayoutExpense({
+    required String payoutId,
+    required String weekStart,
+    required String staffUid,
+    required String staffName,
+    required double amount,
+    required DateTime paidAt,
+    required String paidByName,
+  }) async {
+    final item = await FirebaseService.createExpenseFromPayrollPayout(
+      payoutId: payoutId,
+      weekStart: weekStart,
+      staffUid: staffUid,
+      staffName: staffName,
+      amount: amount,
+      paidAt: paidAt,
+      paidByName: paidByName,
+    );
+    return {'data': item};
   }
 
   static Future<Map<String, dynamic>> deleteExpense(String id) async {
@@ -1161,9 +1404,14 @@ class ApiService {
 
   static Future<Map<String, dynamic>> addItemsToOrder(
     String orderId,
-    List<Map<String, dynamic>> items,
-  ) async {
-    final result = await FirebaseService.addItemsToPendingOrder(orderId, items);
+    List<Map<String, dynamic>> items, {
+    String? addRequestId,
+  }) async {
+    final result = await FirebaseService.addItemsToPendingOrder(
+      orderId,
+      items,
+      addRequestId: resolveAddRequestId(addRequestId),
+    );
     return {'success': true, 'data': result};
   }
 

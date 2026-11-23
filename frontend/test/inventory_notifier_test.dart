@@ -5,6 +5,7 @@ import 'package:smarteat/features/inventory/data/models/stock_adjustment.dart';
 import 'package:smarteat/features/inventory/data/models/stock_movement.dart';
 import 'package:smarteat/features/inventory/data/repositories/inventory_repository.dart';
 import 'package:smarteat/features/inventory/domain/services/fifo_queue.dart';
+import 'package:smarteat/features/inventory/domain/usecases/reports.dart';
 import 'package:smarteat/features/inventory/presentation/providers/inventory_notifier.dart';
 import 'package:smarteat/models/inventory_item.dart';
 
@@ -57,6 +58,52 @@ void main() {
     expect(item.tags, isEmpty);
     expect(item.stockLogs, hasLength(1));
     expect(item.stockLogs.single.change, 2.5);
+  });
+
+  test('suggests restock from reorder levels when max stock is missing', () {
+    final lowStock = InventoryItem(
+      id: 'rice',
+      name: 'Rice',
+      category: 'Grains',
+      currentStock: 4,
+      unit: 'kg',
+      minStock: 10,
+      unitCost: 50,
+    );
+    final outOfStock = InventoryItem(
+      id: 'oil',
+      name: 'Oil',
+      category: 'Cooking',
+      currentStock: 0,
+      unit: 'L',
+      minStock: 0,
+      unitCost: 80,
+    );
+    final healthy = InventoryItem(
+      id: 'beans',
+      name: 'Beans',
+      category: 'Legumes',
+      currentStock: 12,
+      unit: 'kg',
+      minStock: 5,
+      unitCost: 60,
+    );
+
+    final suggestions = RestockSuggestionsUseCase().compute([
+      lowStock,
+      outOfStock,
+      healthy,
+    ]);
+
+    expect(suggestions.map((s) => s.item.id), ['rice', 'oil']);
+    expect(suggestions.first.suggestedQtyBase, 6);
+    expect(suggestions.last.suggestedQtyBase, 1);
+
+    final notifier = InventoryNotifier(
+      repository: _FakeInventoryRepository(),
+    );
+    expect(notifier.suggestedReorderQty(lowStock), 6);
+    expect(notifier.suggestedReorderQty(healthy), 0);
   });
 }
 

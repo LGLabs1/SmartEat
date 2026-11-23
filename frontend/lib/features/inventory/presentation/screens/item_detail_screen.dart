@@ -1,27 +1,90 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
+import '../../data/models/stock_movement.dart';
 import '../../../../../models/inventory_item.dart';
 import '../../../../../services/api_service.dart';
 import '../../../../../theme.dart';
+import '../widgets/add_item_dialog.dart';
 
 class ItemDetailScreen extends StatefulWidget {
   final InventoryItem item;
+  final ValueChanged<InventoryItem>? onItemUpdated;
 
-  const ItemDetailScreen({Key? key, required this.item}) : super(key: key);
+  const ItemDetailScreen({
+    Key? key,
+    required this.item,
+    this.onItemUpdated,
+  }) : super(key: key);
 
   @override
   State<ItemDetailScreen> createState() => _ItemDetailScreenState();
 }
 
 class _ItemDetailScreenState extends State<ItemDetailScreen> {
+  late InventoryItem _item;
   bool _loadingUsage = true;
+  bool _loadingDetails = true;
   Map<String, dynamic>? _ingredientUsage;
+  List<StockMovement> _movements = const [];
 
   @override
   void initState() {
     super.initState();
+    _item = widget.item;
     _loadUsage();
+    _loadDetails();
+  }
+
+  Future<void> _loadDetails() async {
+    final itemId = _item.id;
+    try {
+      final results = await Future.wait([
+        ApiService.getInventoryItems(),
+        ApiService.getStockMovements(),
+      ]);
+      final rawItems = results.first['data'];
+      final rawMovements = results.last['data'];
+      InventoryItem? freshItem;
+      if (rawItems is List) {
+        for (final raw in rawItems) {
+          if (raw is Map<String, dynamic> &&
+              (raw['id'] ?? '').toString() == itemId) {
+            freshItem = InventoryItem.fromJson(raw);
+            break;
+          }
+        }
+      }
+      final movements = <StockMovement>[];
+      if (rawMovements is List) {
+        for (final raw in rawMovements) {
+          if (raw is! Map<String, dynamic>) continue;
+          if ((raw['itemId'] ?? '').toString() != itemId) continue;
+          movements.add(StockMovement.fromJson(raw));
+        }
+      }
+      movements.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+      if (!mounted) return;
+      setState(() {
+        if (freshItem != null) _item = freshItem;
+        _movements = movements;
+        _loadingDetails = false;
+      });
+      if (freshItem != null) widget.onItemUpdated?.call(freshItem);
+    } catch (_) {
+      if (mounted) setState(() => _loadingDetails = false);
+    }
+  }
+
+  Future<void> _openEdit() async {
+    final updated = await showDialog<InventoryItem>(
+      context: context,
+      builder: (_) => AddItemDialog(initialItem: _item),
+    );
+    if (updated == null || !mounted) return;
+    setState(() => _item = updated);
+    widget.onItemUpdated?.call(updated);
+    await _loadDetails();
   }
 
   Future<void> _loadUsage() async {
@@ -32,9 +95,9 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
           List<Map<String, dynamic>>.from(data['ingredients'] ?? const []);
       final match = ingredients.cast<Map<String, dynamic>?>().firstWhere(
             (i) =>
-                (i?['inventoryItemId'] ?? '').toString() == widget.item.id ||
+                (i?['inventoryItemId'] ?? '').toString() == _item.id ||
                 (i?['name'] ?? '').toString().trim().toLowerCase() ==
-                    widget.item.name.trim().toLowerCase(),
+                    _item.name.trim().toLowerCase(),
             orElse: () => null,
           );
       if (!mounted) return;
@@ -51,9 +114,42 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
     return NumberFormat.currency(symbol: '₱', decimalDigits: 2).format(amount);
   }
 
+  String _movementLabel(StockMovementType type) {
+    switch (type) {
+      case StockMovementType.purchase:
+        return 'Purchase';
+      case StockMovementType.adjustIncrease:
+        return 'Adjustment +';
+      case StockMovementType.adjustDecrease:
+        return 'Adjustment -';
+      case StockMovementType.saleConsumption:
+        return 'Order usage';
+      case StockMovementType.writeOff:
+        return 'Write-off';
+      case StockMovementType.damaged:
+        return 'Damaged';
+      case StockMovementType.countCorrection:
+        return 'Count correction';
+    }
+  }
+
+  Widget _sectionLabel(BuildContext context, String text) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 6, bottom: 2),
+      child: Text(
+        text,
+        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 0.8,
+            ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final item = widget.item;
+    final item = _item;
     final theme = Theme.of(context);
     final isLowStock = item.isLowStock;
     final isOutOfStock = item.currentStock <= 0;
@@ -88,7 +184,7 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
           IconButton(
             icon: const Icon(Icons.edit_outlined),
             tooltip: 'Edit Item',
-            onPressed: () {},
+            onPressed: _openEdit,
           ),
         ],
       ),
@@ -244,7 +340,7 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
                     ),
                   ),
                 ),
-                const SizedBox(height: 8),
+                _sectionLabel(context, 'STOCK LEVELS'),
                 Wrap(
                   spacing: 8,
                   runSpacing: 8,
@@ -292,7 +388,7 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
                     ),
                   ],
                 ),
-                const SizedBox(height: 8),
+                _sectionLabel(context, 'COST & PRICING'),
                 Wrap(
                   spacing: 8,
                   runSpacing: 8,
@@ -321,24 +417,11 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
                     ),
                   ],
                 ),
-                const SizedBox(height: 8),
+                _sectionLabel(context, 'SUPPLIER & UNITS'),
                 Wrap(
                   spacing: 8,
                   runSpacing: 8,
                   children: [
-                    _CompactCard(
-                      title: 'Consumption',
-                      value:
-                          item.consumptionMode == ConsumptionMode.recipePending
-                              ? 'Recipe-pending'
-                              : 'Direct',
-                      icon: Icons.sync_alt_outlined,
-                      valueColor:
-                          item.consumptionMode == ConsumptionMode.recipePending
-                              ? AppTheme.warning
-                              : AppTheme.sageCyan,
-                      width: isWide ? 140 : (constraints.maxWidth - 16) / 2,
-                    ),
                     if (item.purchaseUnit != null &&
                         item.purchaseUnit!.isNotEmpty)
                       _CompactCard(
@@ -403,6 +486,99 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
                     ),
                   ),
                 ],
+                _sectionLabel(context, 'STOCK MOVEMENTS'),
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Icon(Icons.history_outlined,
+                                size: 18, color: theme.colorScheme.primary),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                'Recent Stock Movements',
+                                style: theme.textTheme.titleSmall
+                                    ?.copyWith(fontWeight: FontWeight.w700),
+                              ),
+                            ),
+                            if (_loadingDetails)
+                              const SizedBox(
+                                width: 14,
+                                height: 14,
+                                child:
+                                    CircularProgressIndicator(strokeWidth: 2),
+                              ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        if (_movements.isEmpty && !_loadingDetails)
+                          Text(
+                            'No movements recorded yet. Order usage, purchases, and adjustments will appear here.',
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: theme.colorScheme.onSurfaceVariant,
+                            ),
+                          )
+                        else
+                          ..._movements.take(8).map((movement) {
+                            final isIncrease = movement.changeBase > 0;
+                            final accent = isIncrease
+                                ? AppTheme.sageSuccess
+                                : theme.colorScheme.error;
+                            return Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 5),
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Icon(
+                                    isIncrease
+                                        ? Icons.arrow_upward
+                                        : Icons.arrow_downward,
+                                    size: 15,
+                                    color: accent,
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          _movementLabel(movement.type),
+                                          style: const TextStyle(
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                        ),
+                                        Text(
+                                          '${DateFormat('MMM d, yyyy · h:mm a').format(movement.timestamp)}'
+                                          '${movement.referenceId != null && movement.referenceId!.isNotEmpty ? ' · Ref ${movement.referenceId}' : ''}',
+                                          style: theme.textTheme.bodySmall
+                                              ?.copyWith(
+                                            color: theme
+                                                .colorScheme.onSurfaceVariant,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  Text(
+                                    '${isIncrease ? '+' : ''}${movement.changeBase.toStringAsFixed(2)} ${item.effectiveBaseUnit}',
+                                    style: theme.textTheme.bodySmall?.copyWith(
+                                      fontWeight: FontWeight.w800,
+                                      color: accent,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            );
+                          }),
+                      ],
+                    ),
+                  ),
+                ),
                 const SizedBox(height: 8),
                 Card(
                   child: Padding(

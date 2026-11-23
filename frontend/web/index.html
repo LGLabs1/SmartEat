@@ -24,13 +24,71 @@
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black">
   <meta name="apple-mobile-web-app-title" content="SmartEat">
-  <link rel="apple-touch-icon" href="icons/Icon-192.png">
+  <link rel="apple-touch-icon" href="icons/Icon-192-smarteat-v4.png">
 
   <!-- Favicon -->
-  <link rel="icon" type="image/png" href="favicon.png"/>
+  <link rel="icon" type="image/png" href="favicon-smarteat-v4.png"/>
 
   <title>SmartEat</title>
-  <link rel="manifest" href="manifest.json">
+  <link rel="manifest" href="manifest.json?v=smarteat-v6">
+  <script>
+    (function () {
+      var flag = 'smarteat-web-reset-v6';
+      var storage;
+      try {
+        storage = window.localStorage;
+      } catch (_) {
+        return;
+      }
+      if (storage.getItem(flag) === 'done') return;
+
+      (async function () {
+        var completed = false;
+        try {
+          var changed = false;
+
+          if (navigator.serviceWorker && navigator.serviceWorker.getRegistrations) {
+            var baseUrl = new URL(document.baseURI || '/', window.location.href).href;
+            if (baseUrl.charAt(baseUrl.length - 1) !== '/') baseUrl += '/';
+            var registrations = await navigator.serviceWorker.getRegistrations();
+            var appRegistrations = registrations.filter(function (registration) {
+              return String(registration.scope).indexOf(baseUrl) === 0;
+            });
+            if (appRegistrations.length) {
+              changed = true;
+              await Promise.all(appRegistrations.map(function (registration) {
+                return registration.unregister();
+              }));
+            }
+          }
+
+          if (window.caches && caches.keys) {
+            var names = await caches.keys();
+            var appCaches = names.filter(function (name) {
+              return String(name).indexOf('flutter-') === 0;
+            });
+            if (appCaches.length) {
+              changed = true;
+              await Promise.all(appCaches.map(function (name) {
+                return caches.delete(name);
+              }));
+            }
+          }
+
+          storage.setItem(flag, 'done');
+          completed = true;
+          if (changed) window.location.reload();
+        } catch (_) {
+          // Leave the flag unset so cleanup is retried on the next load.
+        } finally {
+          document.documentElement.setAttribute(
+            'data-smarteat-web-reset',
+            completed ? 'done' : 'pending'
+          );
+        }
+      })();
+    })();
+  </script>
 </head>
 <body>
   <script src="flutter_bootstrap.js" async></script>

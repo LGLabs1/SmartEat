@@ -32,7 +32,6 @@ class ReceiptPrinterService {
     String? referenceNumber,
     String paymentStatus = 'paid',
     DateTime? createdAt,
-    String cashierName = '',
   }) async {
     final printer = await BluetoothPrinterService.loadSavedPrinter();
     if (printer == null) {
@@ -76,7 +75,6 @@ class ReceiptPrinterService {
       createdAt: createdAt ?? DateTime.now(),
       eateryName: eateryName,
       address: address,
-      cashierName: cashierName.trim(),
     );
 
     final printed =
@@ -88,6 +86,151 @@ class ReceiptPrinterService {
     }
     return ReceiptPrintResult.success();
   }
+
+  static Future<ReceiptPrintResult> printDocument({
+    required String title,
+    required List<String> lines,
+    String subtitle = '',
+    String footer = 'Powered by SmartEat',
+    DateTime? createdAt,
+  }) async {
+    final printer = await BluetoothPrinterService.loadSavedPrinter();
+    if (printer == null) {
+      return ReceiptPrintResult.failure(
+        'No Bluetooth printer selected. Open Settings > Receipt Printing.',
+      );
+    }
+
+    var connected = await BluetoothPrinterService.isConnected(printer.address);
+    if (!connected) {
+      connected = await BluetoothPrinterService.connect(printer.address);
+    }
+    if (!connected) {
+      return ReceiptPrintResult.failure(
+        'Could not connect to ${printer.displayName}. Make sure it is on and nearby.',
+      );
+    }
+
+    var eateryName = '';
+    var address = '';
+    try {
+      final eateryId = await FirebaseService.getCurrentEateryId();
+      if (eateryId != null && eateryId.trim().isNotEmpty) {
+        final eatery = await FirebaseService.getEatery(eateryId.trim());
+        eateryName = (eatery?['name'] ?? '').toString().trim();
+        address = (eatery?['address'] ?? '').toString().trim();
+      }
+    } catch (_) {}
+
+    final bytes = buildDocumentReceipt(
+      title: title,
+      lines: lines,
+      subtitle: subtitle,
+      footer: footer,
+      createdAt: createdAt ?? DateTime.now(),
+      eateryName: eateryName,
+      address: address,
+    );
+
+    final printed =
+        await BluetoothPrinterService.printBytes(printer.address, bytes);
+    if (!printed) {
+      return ReceiptPrintResult.failure(
+        'Could not send the document to ${printer.displayName}.',
+      );
+    }
+    return ReceiptPrintResult.success();
+  }
+
+  static Uint8List buildDocumentReceipt({
+    required String title,
+    required List<String> lines,
+    DateTime? createdAt,
+    String subtitle = '',
+    String footer = 'Powered by SmartEat',
+    String eateryName = '',
+    String address = '',
+  }) {
+    final builder = BytesBuilder();
+
+    void add(List<int> bytes) => builder.add(bytes);
+    void line(String value) => add(ascii.encode('${_ascii(value)}\n'));
+    void divider() => line('-' * _paperWidth);
+
+    add([0x1B, 0x40]);
+    add([0x1B, 0x74, 0x00]);
+
+    add([0x1B, 0x61, 0x01]);
+    add([0x1B, 0x45, 0x01]);
+    add([0x1D, 0x21, 0x11]);
+    final header = eateryName.isEmpty ? 'SMARTEAT' : eateryName.toUpperCase();
+    for (final part in _wrap(_ascii(header), _paperWidth ~/ 2)) {
+      line(part);
+    }
+    add([0x1D, 0x21, 0x00]);
+    add([0x1B, 0x45, 0x00]);
+
+    if (address.trim().isNotEmpty) {
+      for (final part in _wrap(_ascii(address.trim()), _paperWidth)) {
+        line(part);
+      }
+    }
+
+    add([0x1B, 0x45, 0x01]);
+    add([0x1D, 0x21, 0x01]);
+    for (final part in _wrap(_ascii(title.trim().toUpperCase()), _paperWidth)) {
+      line(part);
+    }
+    add([0x1D, 0x21, 0x00]);
+    add([0x1B, 0x45, 0x00]);
+
+    if (subtitle.trim().isNotEmpty) {
+      for (final part in _wrap(_ascii(subtitle.trim()), _paperWidth)) {
+        line(part);
+      }
+    }
+    line('Date: ${_formatDateTime(createdAt ?? DateTime.now())}');
+    line('');
+    add([0x1B, 0x61, 0x00]);
+    divider();
+
+    for (final rawLine in lines) {
+      if (rawLine == _documentDivider) {
+        divider();
+        continue;
+      }
+      final section = rawLine.startsWith(_documentSection)
+          ? rawLine.substring(_documentSection.length)
+          : null;
+      if (section != null) {
+        add([0x1B, 0x45, 0x01]);
+        for (final part in _wrap(_ascii(section.trim()), _paperWidth)) {
+          line(part);
+        }
+        add([0x1B, 0x45, 0x00]);
+        continue;
+      }
+      for (final part in _wrap(_ascii(rawLine), _paperWidth)) {
+        line(part);
+      }
+    }
+
+    divider();
+    add([0x1B, 0x61, 0x01]);
+    if (footer.trim().isNotEmpty) {
+      for (final part in _wrap(_ascii(footer.trim()), _paperWidth)) {
+        line(part);
+      }
+    }
+    add([0x1B, 0x64, 0x04]);
+    add([0x1D, 0x56, 0x42, 0x00]);
+    return builder.toBytes();
+  }
+
+  static const String documentDivider = '---';
+  static const String documentSection = '## ';
+  static const String _documentDivider = documentDivider;
+  static const String _documentSection = documentSection;
 
   static Uint8List buildOrderReceipt({
     required String orderId,
@@ -101,7 +244,6 @@ class ReceiptPrinterService {
     String paymentStatus = 'paid',
     String eateryName = '',
     String address = '',
-    String cashierName = '',
   }) {
     final builder = BytesBuilder();
 
@@ -153,9 +295,6 @@ class ReceiptPrinterService {
     final shortId = orderId.trim();
     line('Order #${shortId.length <= 8 ? shortId : shortId.substring(0, 8)}');
     line('Date: ${_formatDateTime(createdAt)}');
-    if (cashierName.isNotEmpty) {
-      line('Cashier: $cashierName');
-    }
     divider();
 
     for (final item in items) {
