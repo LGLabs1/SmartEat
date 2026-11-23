@@ -273,25 +273,31 @@ class _MealsTabState extends State<_MealsTab> {
                     ],
                   ),
                   const SizedBox(height: 16),
-                  TextField(
-                    controller: _searchController,
-                    decoration: InputDecoration(
-                      labelText: 'Search staff, notes, or items',
-                      prefixIcon: const Icon(Icons.search),
-                      border: const OutlineInputBorder(),
-                      isDense: true,
-                      suffixIcon: _searchQuery.isEmpty
-                          ? null
-                          : IconButton(
-                              tooltip: 'Clear search',
-                              icon: const Icon(Icons.clear),
-                              onPressed: () {
-                                _searchController.clear();
-                                setState(() => _searchQuery = '');
-                              },
-                            ),
+                  ResponsiveSearchField(
+                    tooltip: 'Search meal orders',
+                    fieldBuilder: (context, {required bool autofocus}) =>
+                        TextField(
+                      autofocus: autofocus,
+                      controller: _searchController,
+                      decoration: InputDecoration(
+                        labelText: 'Search staff, notes, or items',
+                        prefixIcon: const Icon(Icons.search),
+                        border: const OutlineInputBorder(),
+                        isDense: true,
+                        suffixIcon: _searchQuery.isEmpty
+                            ? null
+                            : IconButton(
+                                tooltip: 'Clear search',
+                                icon: const Icon(Icons.clear),
+                                onPressed: () {
+                                  _searchController.clear();
+                                  setState(() => _searchQuery = '');
+                                },
+                              ),
+                      ),
+                      onChanged: (value) =>
+                          setState(() => _searchQuery = value),
                     ),
-                    onChanged: (value) => setState(() => _searchQuery = value),
                   ),
                   const SizedBox(height: 12),
                   Wrap(

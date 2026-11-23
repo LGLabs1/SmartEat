@@ -13,6 +13,7 @@ import '../services/auth_provider.dart';
 import '../theme.dart';
 
 import '../widgets/dashboard/dashboard_back_handler.dart';
+import '../widgets/feature_tab_header.dart';
 
 import '../features/inventory/domain/services/menu_availability.dart';
 
@@ -850,17 +851,39 @@ class _MenuScreenState extends State<MenuScreen>
                 ),
               ],
             ),
-      body: tc == null
-          ? _buildMenuTab(
-              theme, availableFilters, selectedCategoryFilter, filteredItems)
-          : TabBarView(
-              controller: tc,
-              children: [
-                _buildMenuTab(theme, availableFilters, selectedCategoryFilter,
-                    filteredItems),
-                const RecipeListPage(embedded: true),
-              ],
-            ),
+      body: Column(
+        children: [
+          FeatureTabHeader(
+            title: 'Menu',
+            tabs: tc == null
+                ? const [
+                    FeatureTabItem(
+                        label: 'Menu', icon: Icons.restaurant_menu_outlined)
+                  ]
+                : const [
+                    FeatureTabItem(
+                        label: 'Menu', icon: Icons.restaurant_menu_outlined),
+                    FeatureTabItem(
+                        label: 'Recipes', icon: Icons.menu_book_outlined),
+                  ],
+            selectedIndex: tc?.index ?? 0,
+            onTap: tc == null ? null : tc.animateTo,
+          ),
+          Expanded(
+            child: tc == null
+                ? _buildMenuTab(
+                    theme, availableFilters, selectedCategoryFilter, filteredItems)
+                : TabBarView(
+                    controller: tc,
+                    children: [
+                      _buildMenuTab(theme, availableFilters,
+                          selectedCategoryFilter, filteredItems),
+                      const RecipeListPage(embedded: true),
+                    ],
+                  ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -925,9 +948,14 @@ class _MenuScreenState extends State<MenuScreen>
                                   ? 4
                                   : width >= 600
                                       ? 3
-                                      : width >= 400
-                                          ? 2
-                                          : 1;
+                                      : 2;
+                          final childAspectRatio = width < 520
+                              ? 0.64
+                              : crossAxisCount == 2
+                                  ? 0.68
+                                  : crossAxisCount == 3
+                                      ? 0.74
+                                      : 0.82;
 
                           Widget header(String title) {
                             return Padding(
@@ -1005,8 +1033,7 @@ class _MenuScreenState extends State<MenuScreen>
                                         crossAxisCount: crossAxisCount,
                                         crossAxisSpacing: 8,
                                         mainAxisSpacing: 8,
-                                        childAspectRatio:
-                                            crossAxisCount == 1 ? 3.0 : 1.25,
+                                        childAspectRatio: childAspectRatio,
                                       ),
                                       itemCount: items.length,
                                       itemBuilder: (context, index) {
@@ -1045,8 +1072,7 @@ class _MenuScreenState extends State<MenuScreen>
                               crossAxisCount: crossAxisCount,
                               crossAxisSpacing: 8,
                               mainAxisSpacing: 8,
-                              childAspectRatio:
-                                  crossAxisCount == 1 ? 3.0 : 1.25,
+                              childAspectRatio: childAspectRatio,
                             ),
                             itemCount: filteredItems.length,
                             itemBuilder: (context, index) {
@@ -1243,9 +1269,12 @@ class _MenuGridCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Expanded(
-            child: Stack(
-              children: [
-                Positioned.fill(
+            child: AspectRatio(
+              aspectRatio: 0.92,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  Positioned.fill(
                   child: !shouldShowImage
                       ? Container(
                           color: Theme.of(context).colorScheme.surfaceVariant,
@@ -1424,7 +1453,8 @@ class _MenuGridCard extends StatelessWidget {
                     ),
                   ),
                 ),
-              ],
+                ],
+              ),
             ),
           ),
           Padding(

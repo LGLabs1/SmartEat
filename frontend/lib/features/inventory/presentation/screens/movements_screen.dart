@@ -4,6 +4,7 @@ import '../../../../../models/inventory_item.dart';
 import '../../../../../theme.dart';
 import '../../../../../widgets/dashboard/empty_state.dart';
 import '../../../../../widgets/dashboard/kpi_card.dart';
+import '../../../../../widgets/responsive_search_field.dart';
 import '../../data/models/stock_movement.dart';
 
 String movementTypeLabel(StockMovementType type) {
@@ -285,13 +286,17 @@ class _MovementsScreenState extends State<MovementsScreen> {
             ],
           ),
           const SizedBox(height: 12),
-          TextField(
-            controller: _search,
-            onChanged: (_) => setState(() {}),
-            decoration: const InputDecoration(
-              hintText: 'Search by item, reference, notes...',
-              prefixIcon: Icon(Icons.search),
-              isDense: true,
+          ResponsiveSearchField(
+            tooltip: 'Search movements',
+            fieldBuilder: (context, {required bool autofocus}) => TextField(
+              autofocus: autofocus,
+              controller: _search,
+              onChanged: (_) => setState(() {}),
+              decoration: const InputDecoration(
+                hintText: 'Search by item, reference, notes...',
+                prefixIcon: Icon(Icons.search),
+                isDense: true,
+              ),
             ),
           ),
           const SizedBox(height: 10),

@@ -13,6 +13,9 @@ class ReportPdfSection {
 }
 
 class ReportPdfService {
+  static pw.Font? _regularFont;
+  static pw.Font? _boldFont;
+
   static Future<void> printReport({
     required String title,
     required String subtitle,
@@ -20,15 +23,31 @@ class ReportPdfService {
     required List<ReportPdfSection> sections,
     String? footer,
   }) async {
-    await Printing.layoutPdf(
-      name: _fileName(filePrefix),
-      onLayout: (_) => buildPdf(
-        title: title,
-        subtitle: subtitle,
-        sections: sections,
-        footer: footer,
-      ),
+    final bytes = await buildPdf(
+      title: title,
+      subtitle: subtitle,
+      sections: sections,
+      footer: footer,
     );
+    final filename = _fileName(filePrefix);
+
+    var canPrint = false;
+    try {
+      final info = await Printing.info();
+      canPrint = info.canPrint;
+    } catch (_) {
+      canPrint = false;
+    }
+
+    if (canPrint) {
+      final didPrint = await Printing.layoutPdf(
+        name: filename,
+        onLayout: (_) async => bytes,
+      );
+      if (didPrint) return;
+    }
+
+    await Printing.sharePdf(bytes: bytes, filename: filename);
   }
 
   static Future<void> shareReport({
@@ -49,6 +68,14 @@ class ReportPdfService {
     );
   }
 
+  static Future<pw.Font?> _loadFont(String asset) async {
+    try {
+      return pw.Font.ttf(await rootBundle.load(asset));
+    } catch (_) {
+      return null;
+    }
+  }
+
   static String _fileName(String filePrefix) {
     final cleaned = filePrefix.replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '_');
     return '${cleaned}_${DateFormat('yyyy-MM-dd').format(DateTime.now())}.pdf';
@@ -60,27 +87,29 @@ class ReportPdfService {
     required List<ReportPdfSection> sections,
     String? footer,
   }) async {
-    pw.Font? regular;
-    pw.Font? bold;
-    try {
-      final r = await rootBundle.load('assets/fonts/arial.ttf');
-      final b = await rootBundle.load('assets/fonts/arialbd.ttf');
-      regular = pw.Font.ttf(r);
-      bold = pw.Font.ttf(b);
-    } catch (_) {
-      regular = null;
-      bold = null;
-    }
+    _regularFont ??= await _loadFont('assets/fonts/arial.ttf');
+    _boldFont ??= await _loadFont('assets/fonts/arialbd.ttf');
+    final regular = _regularFont;
+    final bold = _boldFont;
 
-    String display(String value) => regular == null
-        ? value.replaceAll('₱', 'PHP ')
-        : value;
+    String display(String value) {
+      if (regular != null) return value;
+      return value
+          .replaceAll('₱', 'PHP ')
+          .replaceAll('—', ' - ')
+          .replaceAll('–', ' - ')
+          .replaceAll('•', '*')
+          .replaceAll('€', 'EUR ')
+          .replaceAll(RegExp(r'[^\x20-\x7E\n\r\t]'), '');
+    }
 
     final doc = pw.Document();
     doc.addPage(
       pw.MultiPage(
         pageFormat: PdfPageFormat.a4,
         margin: const pw.EdgeInsets.all(32),
+        maxPages: 30,
+        theme: pw.ThemeData.withFont(base: regular, bold: bold),
         build: (context) => [
           pw.Text(
             display(title),
@@ -135,7 +164,7 @@ class ReportPdfService {
           mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
           children: [
             pw.Text(
-              footer ?? 'SmartEat Report',
+              display(footer ?? 'SmartEat Report'),
               style: pw.TextStyle(font: regular, fontSize: 8),
             ),
             pw.Text(

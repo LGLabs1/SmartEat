@@ -12,6 +12,8 @@ import '../services/firebase_service.dart';
 import '../services/notification_service.dart';
 import '../theme.dart';
 import '../widgets/confirmation_dialogs.dart';
+import '../widgets/feature_tab_header.dart';
+import '../widgets/responsive_search_field.dart';
 import '../widgets/dashboard/dashboard_back_handler.dart';
 import '../widgets/inline_error_banner.dart';
 import '../widgets/pending_approvals_card.dart';
@@ -975,6 +977,30 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
                 : null,
             body: Column(
               children: [
+                Builder(
+                  builder: (tabContext) {
+                    final controller = DefaultTabController.of(tabContext);
+                    return AnimatedBuilder(
+                      animation: controller,
+                      builder: (context, _) => FeatureTabHeader(
+                        title: 'Staff',
+                        tabs: const [
+                          FeatureTabItem(
+                              label: 'Staff', icon: Icons.group_outlined),
+                          FeatureTabItem(
+                              label: 'Attendance',
+                              icon: Icons.calendar_month_outlined),
+                          FeatureTabItem(
+                              label: 'Payroll', icon: Icons.payments_outlined),
+                          FeatureTabItem(
+                              label: 'Meals', icon: Icons.lunch_dining_outlined),
+                        ],
+                        selectedIndex: controller.index,
+                        onTap: controller.animateTo,
+                      ),
+                    );
+                  },
+                ),
                 if (_inlineError != null)
                   Padding(
                     padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),

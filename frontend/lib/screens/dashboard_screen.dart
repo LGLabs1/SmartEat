@@ -22,6 +22,7 @@ import '../utils/staff_utils.dart';
 import '../widgets/app_brand.dart';
 import '../widgets/sage_header_button.dart';
 import '../widgets/smart_eat_header.dart';
+import '../widgets/responsive_search_field.dart';
 import '../widgets/skeleton_loaders.dart';
 import '../widgets/dashboard/section_card.dart';
 import '../widgets/dashboard/kpi_card.dart';
@@ -891,7 +892,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
 
     final isNarrowSearch = MediaQuery.of(context).size.width < 520;
-    final searchHint = isNarrowSearch ? '' : 'Search';
+    const searchHint = 'Search';
     final pageTitle = _pageTitleForIndex(_selectedIndex);
 
     return Theme(
@@ -907,6 +908,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           backgroundColor: AppTheme.sageNavy,
           appBar: SmartEatHeader(
             titleText: pageTitle,
+            toolbarHeight: isNarrowSearch ? 82 : 64,
             leading: Builder(
               builder: (context) {
                 if (_canGoBack) {
@@ -934,25 +936,31 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         : 200.0;
                 final isNarrow = constraints.maxWidth < 520;
 
-                Widget searchField(double maxWidth) {
+                Widget searchField(
+                  BuildContext fieldContext,
+                  double maxWidth, {
+                  required bool autofocus,
+                }) {
+                  void openResults(String rawValue) {
+                    final query = rawValue.trim();
+                    if (query.isEmpty) return;
+                    if (autofocus && Navigator.of(fieldContext).canPop()) {
+                      Navigator.of(fieldContext).pop();
+                    }
+                    _showGlobalSearchResults(query);
+                  }
+
                   return ConstrainedBox(
                     constraints: BoxConstraints(maxWidth: maxWidth),
                     child: SizedBox(
                       height: 40,
                       child: TextField(
+                        autofocus: autofocus,
                         controller: _globalSearchController,
                         onChanged: (v) => _globalSearchQuery.value = v,
-                        onSubmitted: (v) {
-                          if (v.trim().isNotEmpty) {
-                            _showGlobalSearchResults(v.trim());
-                          }
-                        },
-                        onTap: () {
-                          if (_globalSearchQuery.value.trim().isNotEmpty) {
-                            _showGlobalSearchResults(
-                                _globalSearchQuery.value.trim());
-                          }
-                        },
+                        onSubmitted: openResults,
+                        onTap: () =>
+                            openResults(_globalSearchQuery.value),
                         decoration: InputDecoration(
                           hintText: searchHint,
                           prefixIcon:
@@ -1017,27 +1025,28 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     : maxSearchWidth;
 
                 final brandMaxWidth = isNarrow
-                    ? 130.0
+                    ? 92.0
                     : constraints.maxWidth >= 900
                         ? 240.0
                         : 180.0;
 
                 final title = Text(
                   pageTitle,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 18,
+                  maxLines: 2,
+                  overflow: TextOverflow.visible,
+                  style: TextStyle(
+                    fontSize: isNarrow ? 15 : 18,
+                    height: 1.15,
                     fontWeight: FontWeight.w800,
                   ),
                 );
 
                 return SizedBox(
-                  height: 44,
+                  height: isNarrow ? 58 : 44,
                   child: Row(
                     children: [
                       Flexible(
-                        flex: isNarrow ? 3 : 4,
+                        flex: isNarrow ? 2 : 4,
                         child: Align(
                           alignment: Alignment.centerLeft,
                           child: FittedBox(
@@ -1049,22 +1058,22 @@ class _DashboardScreenState extends State<DashboardScreen> {
                               child: AppBrand(
                                 eateryName: _eateryName.trim(),
                                 compact: isNarrow,
-                                logoHeight: isNarrow ? 22 : 26,
+                                logoHeight: isNarrow ? 20 : 26,
                               ),
                             ),
                           ),
                         ),
                       ),
                       if (isNarrow) ...[
-                        const SizedBox(width: 8),
+                        const SizedBox(width: 6),
                         Expanded(
-                          flex: 4,
+                          flex: 6,
                           child: Align(
                             alignment: Alignment.centerLeft,
                             child: title,
                           ),
                         ),
-                        const SizedBox(width: 8),
+                        const SizedBox(width: 4),
                       ] else ...[
                         const SizedBox(width: 10),
                         Expanded(
@@ -1074,10 +1083,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         const SizedBox(width: 10),
                       ],
                       Flexible(
-                        flex: isNarrow ? 5 : 4,
+                        flex: isNarrow ? 1 : 4,
                         child: Align(
                           alignment: Alignment.centerRight,
-                          child: searchField(searchWidth),
+                          child: ResponsiveSearchField(
+                            iconColor: Colors.white,
+                            fieldBuilder: (fieldContext,
+                                    {required bool autofocus}) =>
+                                searchField(fieldContext, searchWidth,
+                                    autofocus: autofocus),
+                          ),
                         ),
                       ),
                     ],

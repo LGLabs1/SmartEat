@@ -8,6 +8,7 @@ import '../../../../services/api_service.dart';
 import '../../../../services/auth_provider.dart';
 import '../../../../theme.dart';
 import '../../../../widgets/dashboard/dashboard_back_handler.dart';
+import '../../../../widgets/feature_tab_header.dart';
 import '../../../../widgets/skeleton_loaders.dart';
 import '../../data/finance_export_service.dart';
 import '../../data/finance_format.dart';
@@ -260,6 +261,7 @@ class _FinanceScreenState extends State<FinanceScreen> {
           .get();
       final symbol = (doc.data()?['currencySymbol'] ?? '').toString().trim();
       if (!mounted || symbol.isEmpty) return;
+      if (!const {'₱', '\$', '€'}.contains(symbol)) return;
       setState(() => _currencySymbol = symbol);
     } catch (_) {
       // Ignore settings load failures.
@@ -1000,7 +1002,27 @@ class _FinanceScreenState extends State<FinanceScreen> {
               ],
             )
           : null,
-      body: _buildBody(),
+      body: Column(
+        children: [
+          FeatureTabHeader(
+            title: 'Finance',
+            tabs: const [
+              FeatureTabItem(
+                  label: 'Overview', icon: Icons.dashboard_outlined),
+              FeatureTabItem(
+                  label: 'Expenses', icon: Icons.receipt_long_outlined),
+              FeatureTabItem(
+                  label: 'Payables', icon: Icons.payment_outlined),
+              FeatureTabItem(
+                  label: 'Reports', icon: Icons.analytics_outlined),
+              FeatureTabItem(label: 'Payroll', icon: Icons.groups_outlined),
+            ],
+            selectedIndex: _index,
+            onTap: _selectSection,
+          ),
+          Expanded(child: _buildBody()),
+        ],
+      ),
       bottomNavigationBar: _isLoading || _error != null
           ? null
           : BottomNavigationBar(

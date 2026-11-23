@@ -189,9 +189,14 @@ class _StaffTabState extends State<_StaffTab> {
               ),
             ],
             const SizedBox(height: 8),
-            _StaffSearchField(
-              controller: _searchController,
-              onClear: () => _searchController.clear(),
+            ResponsiveSearchField(
+              tooltip: 'Search staff',
+              fieldBuilder: (context, {required bool autofocus}) =>
+                  _StaffSearchField(
+                controller: _searchController,
+                onClear: () => _searchController.clear(),
+                autofocus: autofocus,
+              ),
             ),
             const SizedBox(height: 8),
             _StaffFilterBar(
@@ -309,14 +314,20 @@ class _StaffInviteCard extends StatelessWidget {
 }
 
 class _StaffSearchField extends StatelessWidget {
-  const _StaffSearchField({required this.controller, required this.onClear});
+  const _StaffSearchField({
+    required this.controller,
+    required this.onClear,
+    this.autofocus = false,
+  });
 
   final TextEditingController controller;
   final VoidCallback onClear;
+  final bool autofocus;
 
   @override
   Widget build(BuildContext context) {
     return TextField(
+      autofocus: autofocus,
       controller: controller,
       decoration: InputDecoration(
         isDense: true,

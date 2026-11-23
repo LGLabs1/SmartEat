@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../../../theme.dart';
 import '../../../../widgets/dashboard/empty_state.dart';
+import '../../../../widgets/responsive_search_field.dart';
 import '../../data/finance_format.dart';
 import '../../data/finance_metrics.dart';
 import 'finance_category_bar.dart';
@@ -172,12 +173,16 @@ class FinanceExpensesTab extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 12),
-              TextField(
-                onChanged: onSearchChanged,
-                decoration: const InputDecoration(
-                  hintText: 'Search expenses...',
-                  prefixIcon: Icon(Icons.search),
-                  isDense: true,
+              ResponsiveSearchField(
+                tooltip: 'Search expenses',
+                fieldBuilder: (context, {required bool autofocus}) => TextField(
+                  autofocus: autofocus,
+                  onChanged: onSearchChanged,
+                  decoration: const InputDecoration(
+                    hintText: 'Search expenses...',
+                    prefixIcon: Icon(Icons.search),
+                    isDense: true,
+                  ),
                 ),
               ),
               const SizedBox(height: 10),

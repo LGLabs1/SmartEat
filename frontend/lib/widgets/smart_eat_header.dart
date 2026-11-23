@@ -35,10 +35,11 @@ class SmartEatHeader extends StatelessWidget implements PreferredSizeWidget {
             ? null
             : Text(
                 titleText!,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
+                maxLines: 2,
+                overflow: TextOverflow.visible,
                 style: const TextStyle(
-                  fontSize: 18,
+                  fontSize: 17,
+                  height: 1.15,
                   fontWeight: FontWeight.w800,
                 ),
               ));

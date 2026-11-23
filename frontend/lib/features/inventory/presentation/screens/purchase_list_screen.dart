@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import '../../../../../models/inventory_item.dart';
 import '../../../../../services/receipt_printer_service.dart';
 import '../../../../../theme.dart';
+import '../../../../../widgets/responsive_search_field.dart';
 import '../../data/models/purchase_list_item.dart';
 import '../../data/models/purchase_receipt.dart';
 import '../../data/services/purchase_list_pdf_service.dart';
@@ -565,17 +566,21 @@ class _PurchaseListScreenState extends State<PurchaseListScreen> {
               ],
             ),
             const SizedBox(height: 8),
-            TextField(
-              onChanged: (v) => setState(() => _allItemsQuery = v),
-              decoration: InputDecoration(
-                isDense: true,
-                hintText: 'Search items…',
-                prefixIcon: const Icon(Icons.search, size: 18),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
+            ResponsiveSearchField(
+              tooltip: 'Search purchase items',
+              fieldBuilder: (context, {required bool autofocus}) => TextField(
+                autofocus: autofocus,
+                onChanged: (v) => setState(() => _allItemsQuery = v),
+                decoration: InputDecoration(
+                  isDense: true,
+                  hintText: 'Search items…',
+                  prefixIcon: const Icon(Icons.search, size: 18),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  contentPadding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
                 ),
-                contentPadding:
-                    const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
               ),
             ),
             const SizedBox(height: 8),

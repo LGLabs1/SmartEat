@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../services/firebase_service.dart';
 import '../theme.dart';
+import '../widgets/responsive_search_field.dart';
 import 'recipe_editor_page.dart';
 
 class RecipeListPage extends StatefulWidget {
@@ -240,14 +241,18 @@ class _RecipeListPageState extends State<RecipeListPage> {
   }
 
   Widget _buildSearch(BuildContext context) {
-    return TextField(
-      onChanged: (v) => setState(() => _query = v),
-      decoration: InputDecoration(
-        hintText: 'Search recipes...',
-        prefixIcon: const Icon(Icons.search),
-        isDense: true,
-        filled: true,
-        fillColor: Theme.of(context).colorScheme.surface,
+    return ResponsiveSearchField(
+      tooltip: 'Search recipes',
+      fieldBuilder: (fieldContext, {required bool autofocus}) => TextField(
+        autofocus: autofocus,
+        onChanged: (v) => setState(() => _query = v),
+        decoration: InputDecoration(
+          hintText: 'Search recipes...',
+          prefixIcon: const Icon(Icons.search),
+          isDense: true,
+          filled: true,
+          fillColor: Theme.of(fieldContext).colorScheme.surface,
+        ),
       ),
     );
   }

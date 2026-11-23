@@ -7,6 +7,7 @@ import '../features/finance/data/finance_metrics.dart';
 import '../services/api_service.dart';
 import '../theme.dart';
 import '../widgets/dashboard/dashboard_back_handler.dart';
+import '../widgets/feature_tab_header.dart';
 
 Widget analyticsCompactTabIcon(
   IconData icon,
@@ -651,6 +652,21 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
             ? const Center(child: CircularProgressIndicator())
             : Column(
                 children: [
+                  FeatureTabHeader(
+                    title: 'Analytics',
+                    tabs: const [
+                      FeatureTabItem(
+                          label: 'Sales', icon: Icons.show_chart_outlined),
+                      FeatureTabItem(
+                          label: 'Insights', icon: Icons.insights_outlined),
+                      FeatureTabItem(
+                          label: 'Forecast', icon: Icons.auto_graph_outlined),
+                      FeatureTabItem(
+                          label: 'Finance', icon: Icons.payments_outlined),
+                    ],
+                    selectedIndex: _tabController.index,
+                    onTap: _tabController.animateTo,
+                  ),
                   Padding(
                     padding: const EdgeInsets.fromLTRB(16, 8, 16, 6),
                     child: LayoutBuilder(

@@ -7,8 +7,8 @@ class AppDownloads {
   AppDownloads._();
 
   static const String androidApk =
-      'https://github.com/LGLabs1/SmartEat/releases/download/v1.0.2/smarteat-android-1.0.2.apk';
+      'https://github.com/LGLabs1/SmartEat/releases/download/v1.0.3/smarteat-android-1.0.3.apk';
 
   static const String windowsZip =
-      'https://github.com/LGLabs1/SmartEat/releases/download/v1.0.2/smarteat-windows-1.0.2.zip';
+      'https://github.com/LGLabs1/SmartEat/releases/download/v1.0.3/smarteat-windows-1.0.3.zip';
 }

@@ -193,13 +193,8 @@ class _ItemsListScreenState extends State<ItemsListScreen> {
     return LayoutBuilder(
       builder: (context, constraints) {
         final width = constraints.maxWidth;
-        final crossAxisCount = width >= 1100
-            ? 4
-            : width >= 800
-                ? 3
-                : width >= 520
-                    ? 2
-                    : 1;
+        final crossAxisCount =
+            width >= 1100 ? 4 : width >= 800 ? 3 : 2;
         final cats = categories.toList();
         final lowStockItems = widget.items
             .where((i) => i.isLowStock && i.currentStock > 0)
@@ -216,7 +211,7 @@ class _ItemsListScreenState extends State<ItemsListScreen> {
                 crossAxisCount: crossAxisCount,
                 crossAxisSpacing: 12,
                 mainAxisSpacing: 12,
-                childAspectRatio: crossAxisCount == 1 ? 3.4 : 1.6,
+                childAspectRatio: crossAxisCount == 2 ? 1.05 : 1.4,
               ),
               children: [
                 StockStatusCard(
@@ -277,7 +272,7 @@ class _ItemsListScreenState extends State<ItemsListScreen> {
                 crossAxisCount: crossAxisCount,
                 crossAxisSpacing: 12,
                 mainAxisSpacing: 12,
-                childAspectRatio: crossAxisCount == 1 ? 3.4 : 1.6,
+                childAspectRatio: crossAxisCount == 2 ? 1.05 : 1.4,
               ),
               itemCount: cats.length,
               itemBuilder: (context, index) {

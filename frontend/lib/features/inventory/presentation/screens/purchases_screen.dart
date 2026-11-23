@@ -5,6 +5,7 @@ import '../../../../../models/inventory_item.dart';
 import '../../../../../theme.dart';
 import '../../../../../widgets/dashboard/empty_state.dart';
 import '../../../../../widgets/dashboard/kpi_card.dart';
+import '../../../../../widgets/responsive_search_field.dart';
 import '../../data/models/purchase_receipt.dart';
 import '../providers/purchase_list_notifier.dart';
 
@@ -176,13 +177,18 @@ class _PurchasesScreenState extends State<PurchasesScreen> {
                   ],
                 ),
                 const SizedBox(height: 12),
-                TextField(
-                  controller: _search,
-                  onChanged: (_) => setState(() {}),
-                  decoration: const InputDecoration(
-                    hintText: 'Search by receipt, supplier, item...',
-                    prefixIcon: Icon(Icons.search),
-                    isDense: true,
+                ResponsiveSearchField(
+                  tooltip: 'Search purchases',
+                  fieldBuilder: (context, {required bool autofocus}) =>
+                      TextField(
+                    autofocus: autofocus,
+                    controller: _search,
+                    onChanged: (_) => setState(() {}),
+                    decoration: const InputDecoration(
+                      hintText: 'Search by receipt, supplier, item...',
+                      prefixIcon: Icon(Icons.search),
+                      isDense: true,
+                    ),
                   ),
                 ),
                 const SizedBox(height: 10),
