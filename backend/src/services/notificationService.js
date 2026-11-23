@@ -236,10 +236,7 @@ async function syncSystemNotifications({ eateryId }) {
   const [usersSnap, inventorySnap, ordersSnap, payablesSnap] = await Promise.all([
     query('users', [['eateryId', '==', tenant]]),
     query('inventory', [['eateryId', '==', tenant]]),
-    query('orders', [
-      ['eateryId', '==', tenant],
-      ['status', '==', 'pending'],
-    ]),
+    query('orders', [['eateryId', '==', tenant]]),
     query('payables', [['eateryId', '==', tenant]]),
   ]);
 
@@ -295,7 +292,10 @@ async function syncSystemNotifications({ eateryId }) {
     }
   }
 
-  const pendingOrders = snapshotDocs(ordersSnap);
+  const pendingOrders = snapshotDocs(ordersSnap).filter((doc) => {
+    const data = doc.data() || {};
+    return cleanText(data.status, 40).toLowerCase() === 'pending';
+  });
   if (pendingOrders.length) {
     specs.push(specFor({
       type: 'order',

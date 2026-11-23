@@ -117,6 +117,7 @@ test('notification writer stores role metadata and is idempotent', async () => {
 
 test('notification sync always creates a permanent history record', async () => {
   const created = [];
+  let maxWhereClauses = 0;
   const dbStub = {
     collection(name) {
       if (name === 'notifications') {
@@ -129,8 +130,13 @@ test('notification sync always creates a permanent history record', async () => 
           }),
         };
       }
+      let whereClauses = 0;
       const queryStub = {
-        where: () => queryStub,
+        where: () => {
+          whereClauses += 1;
+          maxWhereClauses = Math.max(maxWhereClauses, whereClauses);
+          return queryStub;
+        },
         get: async () => ({ docs: [] }),
       };
       return queryStub;
@@ -141,6 +147,7 @@ test('notification sync always creates a permanent history record', async () => 
 
   assert.equal(result.total, 1);
   assert.equal(result.created, 1);
+  assert.equal(maxWhereClauses, 1);
   assert.equal(created[0].payload.type, 'system');
   assert.equal(created[0].payload.title, 'Notification history is active');
   assert.deepEqual(created[0].payload.allowedRoles, ['all', 'staff', 'admin', 'manager']);
