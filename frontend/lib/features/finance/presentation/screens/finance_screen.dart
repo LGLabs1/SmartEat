@@ -7,6 +7,7 @@ import '../../../../screens/staff_management_screen.dart';
 import '../../../../services/api_service.dart';
 import '../../../../services/auth_provider.dart';
 import '../../../../theme.dart';
+import '../../../../widgets/admin/admin_bottom_tabs.dart';
 import '../../../../widgets/dashboard/dashboard_back_handler.dart';
 import '../../../../widgets/feature_tab_header.dart';
 import '../../../../widgets/skeleton_loaders.dart';
@@ -969,7 +970,6 @@ class _FinanceScreenState extends State<FinanceScreen> {
   @override
   Widget build(BuildContext context) {
     final canUnwind = _tabHistory.length > 1;
-    final compactTabs = MediaQuery.sizeOf(context).width < 430;
     final body = Scaffold(
       backgroundColor: AppTheme.sageNavy,
       appBar: widget.showAppBar
@@ -1007,55 +1007,29 @@ class _FinanceScreenState extends State<FinanceScreen> {
           FeatureTabHeader(
             title: 'Finance',
             tabs: const [
-              FeatureTabItem(
-                  label: 'Overview', icon: Icons.dashboard_outlined),
+              FeatureTabItem(label: 'Overview', icon: Icons.dashboard_outlined),
               FeatureTabItem(
                   label: 'Expenses', icon: Icons.receipt_long_outlined),
-              FeatureTabItem(
-                  label: 'Payables', icon: Icons.payment_outlined),
-              FeatureTabItem(
-                  label: 'Reports', icon: Icons.analytics_outlined),
+              FeatureTabItem(label: 'Payables', icon: Icons.payment_outlined),
+              FeatureTabItem(label: 'Reports', icon: Icons.analytics_outlined),
               FeatureTabItem(label: 'Payroll', icon: Icons.groups_outlined),
             ],
             selectedIndex: _index,
-            onTap: _selectSection,
           ),
           Expanded(child: _buildBody()),
         ],
       ),
-      bottomNavigationBar: _isLoading || _error != null
-          ? null
-          : BottomNavigationBar(
-              currentIndex: _index,
-              onTap: _selectSection,
-              type: BottomNavigationBarType.fixed,
-              items: [
-                BottomNavigationBarItem(
-                  icon: financeCompactNavIcon(
-                      Icons.dashboard_outlined, 'Overview'),
-                  label: compactTabs ? '' : 'Overview',
-                ),
-                BottomNavigationBarItem(
-                  icon: financeCompactNavIcon(
-                      Icons.receipt_long_outlined, 'Expenses'),
-                  label: compactTabs ? '' : 'Expenses',
-                ),
-                BottomNavigationBarItem(
-                  icon:
-                      financeCompactNavIcon(Icons.payment_outlined, 'Payables'),
-                  label: compactTabs ? '' : 'Payables',
-                ),
-                BottomNavigationBarItem(
-                  icon: financeCompactNavIcon(
-                      Icons.analytics_outlined, 'Reports'),
-                  label: compactTabs ? '' : 'Reports',
-                ),
-                BottomNavigationBarItem(
-                  icon: financeCompactNavIcon(Icons.groups_outlined, 'Payroll'),
-                  label: compactTabs ? '' : 'Payroll',
-                ),
-              ],
-            ),
+      bottomNavigationBar: AdminBottomTabs(
+        tabs: const [
+          AdminTabItem(label: 'Overview', icon: Icons.dashboard_outlined),
+          AdminTabItem(label: 'Expenses', icon: Icons.receipt_long_outlined),
+          AdminTabItem(label: 'Payables', icon: Icons.payment_outlined),
+          AdminTabItem(label: 'Reports', icon: Icons.analytics_outlined),
+          AdminTabItem(label: 'Payroll', icon: Icons.groups_outlined),
+        ],
+        selectedIndex: _index,
+        onTap: _selectSection,
+      ),
     );
     if (widget.showAppBar && canUnwind) {
       return PopScope(

@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../../../../services/api_service.dart';
 import '../../../../../theme.dart';
+import '../../../../../widgets/admin/admin_bottom_tabs.dart';
 import '../../../../../widgets/dashboard/dashboard_back_handler.dart';
+import '../../../../../widgets/feature_tab_header.dart';
 import '../../../../../widgets/skeleton_loaders.dart';
 import '../../data/models/purchase_receipt.dart';
 import '../../data/models/stock_adjustment.dart';
@@ -174,6 +176,7 @@ class _InventoryFeatureScreenState extends State<InventoryFeatureScreen> {
         onViewReports: () => _goToSection(5),
         onViewLowStock: () => _goToSection(1),
         onViewMovements: () => _goToSection(2),
+        showAppBar: false,
       ),
       ItemsListScreen(
         key: const ValueKey('inventory-items'),
@@ -203,17 +206,20 @@ class _InventoryFeatureScreenState extends State<InventoryFeatureScreen> {
         onAddItem: (_) async {
           await notifier.load();
         },
+        showAppBar: false,
       ),
       MovementsScreen(
         key: const ValueKey('inventory-movements'),
         movements: state.movements,
         items: items,
+        showAppBar: false,
       ),
       PurchasesScreen(
         key: const ValueKey('inventory-purchases'),
         purchases: state.purchases,
         items: items,
         onSyncToFinance: () => _syncExistingPurchasesToFinance(),
+        showAppBar: false,
         onOpenPurchaseList: () {
           final purchaseNotifier = context.read<PurchaseListNotifier>();
           Navigator.push(
@@ -237,116 +243,115 @@ class _InventoryFeatureScreenState extends State<InventoryFeatureScreen> {
         key: const ValueKey('inventory-adjustments'),
         adjustments: state.adjustments,
         items: items,
+        showAppBar: false,
       ),
       ReportsScreen(
         key: const ValueKey('inventory-reports'),
         items: items,
         movements: state.movements,
+        showAppBar: false,
       ),
     ];
 
     return Scaffold(
       backgroundColor: AppTheme.sageNavy,
-      body: Stack(
+      body: Column(
         children: [
-          IndexedStack(index: _index, children: screens),
-          if (state.loading && items.isEmpty)
-            Positioned.fill(
-              child: Container(
-                color: AppTheme.sageNavy,
-                child: const SkeletonInventory(),
-              ),
-            ),
-          if (state.loading && items.isNotEmpty)
-            const Positioned(
-              top: 0,
-              left: 0,
-              right: 0,
-              child: LinearProgressIndicator(minHeight: 2),
-            ),
-          if (showError)
-            Positioned(
-              top: state.loading ? 4 : 0,
-              left: 12,
-              right: 12,
-              child: Material(
-                color: AppTheme.sagePanel,
-                elevation: 4,
-                borderRadius: BorderRadius.circular(12),
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
-                  child: Row(
-                    children: [
-                      const Icon(
-                        Icons.error_outline,
-                        color: Colors.orangeAccent,
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          error,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(color: Colors.white70),
-                        ),
-                      ),
-                      IconButton(
-                        tooltip: 'Retry',
-                        onPressed: () {
-                          setState(() => _dismissedError = null);
-                          notifier.load();
-                        },
-                        icon: const Icon(
-                          Icons.refresh,
-                          color: AppTheme.sageAccent,
-                        ),
-                      ),
-                      IconButton(
-                        tooltip: 'Dismiss',
-                        onPressed: () =>
-                            setState(() => _dismissedError = error),
-                        icon: const Icon(Icons.close, color: Colors.white54),
-                      ),
-                    ],
+          FeatureTabHeader(
+            title: 'Inventory',
+            tabs: const [
+              FeatureTabItem(label: 'Overview', icon: Icons.dashboard),
+              FeatureTabItem(label: 'Items', icon: Icons.inventory),
+              FeatureTabItem(label: 'Movements', icon: Icons.history),
+              FeatureTabItem(label: 'Purchases', icon: Icons.shopping_cart),
+              FeatureTabItem(label: 'Adjustments', icon: Icons.tune),
+              FeatureTabItem(label: 'Reports', icon: Icons.bar_chart),
+            ],
+            selectedIndex: _index,
+          ),
+          Expanded(
+            child: Stack(
+              children: [
+                IndexedStack(index: _index, children: screens),
+                if (state.loading && items.isEmpty)
+                  Positioned.fill(
+                    child: Container(
+                      color: AppTheme.sageNavy,
+                      child: const SkeletonInventory(),
+                    ),
                   ),
-                ),
-              ),
+                if (state.loading && items.isNotEmpty)
+                  const Positioned(
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    child: LinearProgressIndicator(minHeight: 2),
+                  ),
+                if (showError)
+                  Positioned(
+                    top: state.loading ? 4 : 0,
+                    left: 12,
+                    right: 12,
+                    child: Material(
+                      color: AppTheme.sagePanel,
+                      elevation: 4,
+                      borderRadius: BorderRadius.circular(12),
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
+                        child: Row(
+                          children: [
+                            const Icon(
+                              Icons.error_outline,
+                              color: Colors.orangeAccent,
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                error,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(color: Colors.white70),
+                              ),
+                            ),
+                            IconButton(
+                              tooltip: 'Retry',
+                              onPressed: () {
+                                setState(() => _dismissedError = null);
+                                notifier.load();
+                              },
+                              icon: const Icon(
+                                Icons.refresh,
+                                color: AppTheme.sageAccent,
+                              ),
+                            ),
+                            IconButton(
+                              tooltip: 'Dismiss',
+                              onPressed: () =>
+                                  setState(() => _dismissedError = error),
+                              icon: const Icon(Icons.close,
+                                  color: Colors.white54),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
             ),
+          ),
         ],
       ),
-      bottomNavigationBar: BottomNavigationBar(
-        currentIndex: _index,
-        onTap: _goToSection,
-        type: BottomNavigationBarType.fixed,
-        backgroundColor: AppTheme.sagePanel,
-        selectedItemColor: AppTheme.sageAccent,
-        unselectedItemColor: Colors.white.withValues(alpha: 0.52),
-        items: [
-          BottomNavigationBarItem(
-            icon: inventoryCompactNavIcon(Icons.dashboard, 'Overview'),
-            label: '',
-          ),
-          BottomNavigationBarItem(
-            icon: inventoryCompactNavIcon(Icons.inventory, 'Items'),
-            label: '',
-          ),
-          BottomNavigationBarItem(
-            icon: inventoryCompactNavIcon(Icons.history, 'Movements'),
-            label: '',
-          ),
-          BottomNavigationBarItem(
-            icon: inventoryCompactNavIcon(Icons.shopping_cart, 'Purchases'),
-            label: '',
-          ),
-          BottomNavigationBarItem(
-            icon: inventoryCompactNavIcon(Icons.tune, 'Adjustments'),
-            label: '',
-          ),
-          BottomNavigationBarItem(
-            icon: inventoryCompactNavIcon(Icons.bar_chart, 'Reports'),
-            label: '',
-          ),
+      bottomNavigationBar: AdminBottomTabs(
+        tabs: const [
+          AdminTabItem(label: 'Overview', icon: Icons.dashboard),
+          AdminTabItem(label: 'Items', icon: Icons.inventory),
+          AdminTabItem(label: 'Movements', icon: Icons.history),
+          AdminTabItem(label: 'Purchases', icon: Icons.shopping_cart),
+          AdminTabItem(label: 'Adjustments', icon: Icons.tune),
+          AdminTabItem(label: 'Reports', icon: Icons.bar_chart),
         ],
+        selectedIndex: _index,
+        onTap: _goToSection,
       ),
     );
   }

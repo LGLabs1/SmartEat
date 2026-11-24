@@ -6,6 +6,7 @@ import '../features/finance/data/business_kpis.dart';
 import '../features/finance/data/finance_metrics.dart';
 import '../services/api_service.dart';
 import '../theme.dart';
+import '../widgets/admin/admin_bottom_tabs.dart';
 import '../widgets/dashboard/dashboard_back_handler.dart';
 import '../widgets/feature_tab_header.dart';
 
@@ -627,8 +628,6 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final compactTabs = MediaQuery.sizeOf(context).width < 430;
     return Scaffold(
       appBar: widget.showAppBar
           ? AppBar(
@@ -665,7 +664,6 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                           label: 'Finance', icon: Icons.payments_outlined),
                     ],
                     selectedIndex: _tabController.index,
-                    onTap: _tabController.animateTo,
                   ),
                   Padding(
                     padding: const EdgeInsets.fromLTRB(16, 8, 16, 6),
@@ -718,68 +716,16 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                 ],
               ),
       ),
-      bottomNavigationBar: _isLoading
-          ? null
-          : Material(
-              color: scheme.surface,
-              child: SafeArea(
-                top: false,
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    border:
-                        Border(top: BorderSide(color: scheme.outlineVariant)),
-                  ),
-                  child: TabBar(
-                    controller: _tabController,
-                    labelColor: scheme.primary,
-                    unselectedLabelColor: scheme.onSurfaceVariant,
-                    indicatorColor: scheme.primary,
-                    indicatorSize: TabBarIndicatorSize.tab,
-                    labelStyle: const TextStyle(
-                        fontSize: 12, fontWeight: FontWeight.w700),
-                    unselectedLabelStyle: const TextStyle(
-                        fontSize: 12, fontWeight: FontWeight.w600),
-                    labelPadding: EdgeInsets.symmetric(
-                      horizontal: compactTabs ? 2 : 6,
-                    ),
-                    tabs: [
-                      Tab(
-                        icon: analyticsCompactTabIcon(
-                          Icons.show_chart_outlined,
-                          'Sales',
-                          size: compactTabs ? 24 : 20,
-                        ),
-                        text: compactTabs ? null : 'Sales',
-                      ),
-                      Tab(
-                        icon: analyticsCompactTabIcon(
-                          Icons.insights_outlined,
-                          'Insights',
-                          size: compactTabs ? 24 : 20,
-                        ),
-                        text: compactTabs ? null : 'Insights',
-                      ),
-                      Tab(
-                        icon: analyticsCompactTabIcon(
-                          Icons.auto_graph_outlined,
-                          'Forecast',
-                          size: compactTabs ? 24 : 20,
-                        ),
-                        text: compactTabs ? null : 'Forecast',
-                      ),
-                      Tab(
-                        icon: analyticsCompactTabIcon(
-                          Icons.payments_outlined,
-                          'Finance',
-                          size: compactTabs ? 24 : 20,
-                        ),
-                        text: compactTabs ? null : 'Finance',
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
+      bottomNavigationBar: AdminBottomTabs(
+        tabs: const [
+          AdminTabItem(label: 'Sales', icon: Icons.show_chart_outlined),
+          AdminTabItem(label: 'Insights', icon: Icons.insights_outlined),
+          AdminTabItem(label: 'Forecast', icon: Icons.auto_graph_outlined),
+          AdminTabItem(label: 'Finance', icon: Icons.payments_outlined),
+        ],
+        selectedIndex: _tabController.index,
+        onTap: _tabController.animateTo,
+      ),
     );
   }
 

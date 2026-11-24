@@ -7,11 +7,13 @@ import '../../data/models/stock_adjustment.dart';
 class AdjustmentsScreen extends StatelessWidget {
   final List<StockAdjustment> adjustments;
   final List<InventoryItem> items;
+  final bool showAppBar;
 
   const AdjustmentsScreen({
     Key? key,
     required this.adjustments,
     this.items = const [],
+    this.showAppBar = true,
   }) : super(key: key);
 
   String _getItemName(String itemId) {
@@ -37,7 +39,9 @@ class AdjustmentsScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Stock Adjustments')),
+      appBar: showAppBar
+          ? AppBar(title: const Text('Stock Adjustments'))
+          : null,
       body: adjustments.isEmpty
           ? _buildEmptyState(context)
           : ListView.separated(

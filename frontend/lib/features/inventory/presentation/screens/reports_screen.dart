@@ -16,9 +16,14 @@ import '../widgets/health_score_card.dart';
 class ReportsScreen extends StatefulWidget {
   final List<InventoryItem> items;
   final List<StockMovement> movements;
+  final bool showAppBar;
 
-  const ReportsScreen({Key? key, required this.items, required this.movements})
-      : super(key: key);
+  const ReportsScreen({
+    Key? key,
+    required this.items,
+    required this.movements,
+    this.showAppBar = true,
+  }) : super(key: key);
 
   @override
   State<ReportsScreen> createState() => _ReportsScreenState();
@@ -248,16 +253,18 @@ class _ReportsScreenState extends State<ReportsScreen> {
     }
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Inventory Reports'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.print_outlined),
-            tooltip: 'Print report',
-            onPressed: _printReport,
-          ),
-        ],
-      ),
+      appBar: widget.showAppBar
+          ? AppBar(
+              title: const Text('Inventory Reports'),
+              actions: [
+                IconButton(
+                  icon: const Icon(Icons.print_outlined),
+                  tooltip: 'Print report',
+                  onPressed: _printReport,
+                ),
+              ],
+            )
+          : null,
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [

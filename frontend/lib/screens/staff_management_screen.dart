@@ -11,6 +11,7 @@ import '../services/api_service.dart';
 import '../services/firebase_service.dart';
 import '../services/notification_service.dart';
 import '../theme.dart';
+import '../widgets/admin/admin_bottom_tabs.dart';
 import '../widgets/confirmation_dialogs.dart';
 import '../widgets/feature_tab_header.dart';
 import '../widgets/responsive_search_field.dart';
@@ -934,7 +935,6 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
 
         final weekEnd = _weekStart.add(const Duration(days: 6));
         final weekLabel = '${_fmtDate(_weekStart)} to ${_fmtDate(weekEnd)}';
-        final compactTabs = MediaQuery.sizeOf(context).width < 430;
 
         return DefaultTabController(
           length: 4,
@@ -993,10 +993,10 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
                           FeatureTabItem(
                               label: 'Payroll', icon: Icons.payments_outlined),
                           FeatureTabItem(
-                              label: 'Meals', icon: Icons.lunch_dining_outlined),
+                              label: 'Meals',
+                              icon: Icons.lunch_dining_outlined),
                         ],
                         selectedIndex: controller.index,
-                        onTap: controller.animateTo,
                       ),
                     );
                   },
@@ -1130,72 +1130,27 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
                 ),
               ],
             ),
-            bottomNavigationBar: Material(
-              color: Theme.of(context).colorScheme.surface,
-              child: SafeArea(
-                top: false,
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    border: Border(
-                      top: BorderSide(
-                        color: Theme.of(context).colorScheme.outlineVariant,
-                      ),
-                    ),
-                  ),
-                  child: TabBar(
-                    labelColor: Theme.of(context).colorScheme.primary,
-                    unselectedLabelColor:
-                        Theme.of(context).colorScheme.onSurfaceVariant,
-                    indicatorColor: Theme.of(context).colorScheme.primary,
-                    indicatorSize: TabBarIndicatorSize.tab,
-                    labelStyle: const TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
-                    ),
-                    unselectedLabelStyle: const TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                    ),
-                    labelPadding: EdgeInsets.symmetric(
-                      horizontal: compactTabs ? 2 : 6,
-                    ),
-                    tabs: [
-                      Tab(
-                        icon: Icon(
-                          Icons.group_outlined,
-                          size: compactTabs ? 24 : 20,
-                          semanticLabel: 'Staff',
-                        ),
-                        text: compactTabs ? null : 'Staff',
-                      ),
-                      Tab(
-                        icon: Icon(
-                          Icons.calendar_month_outlined,
-                          size: compactTabs ? 24 : 20,
-                          semanticLabel: 'Attendance',
-                        ),
-                        text: compactTabs ? null : 'Attendance',
-                      ),
-                      Tab(
-                        icon: Icon(
-                          Icons.payments_outlined,
-                          size: compactTabs ? 24 : 20,
-                          semanticLabel: 'Payroll',
-                        ),
-                        text: compactTabs ? null : 'Payroll',
-                      ),
-                      Tab(
-                        icon: Icon(
-                          Icons.lunch_dining_outlined,
-                          size: compactTabs ? 24 : 20,
-                          semanticLabel: 'Meals',
-                        ),
-                        text: compactTabs ? null : 'Meals',
-                      ),
+            bottomNavigationBar: Builder(
+              builder: (tabContext) {
+                final controller = DefaultTabController.of(tabContext);
+                return AnimatedBuilder(
+                  animation: controller,
+                  builder: (context, _) => AdminBottomTabs(
+                    tabs: const [
+                      AdminTabItem(label: 'Staff', icon: Icons.group_outlined),
+                      AdminTabItem(
+                          label: 'Attendance',
+                          icon: Icons.calendar_month_outlined),
+                      AdminTabItem(
+                          label: 'Payroll', icon: Icons.payments_outlined),
+                      AdminTabItem(
+                          label: 'Meals', icon: Icons.lunch_dining_outlined),
                     ],
+                    selectedIndex: controller.index,
+                    onTap: controller.animateTo,
                   ),
-                ),
-              ),
+                );
+              },
             ),
           ),
         );

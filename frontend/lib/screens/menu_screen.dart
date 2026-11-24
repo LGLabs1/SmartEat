@@ -12,6 +12,7 @@ import '../services/auth_provider.dart';
 
 import '../theme.dart';
 
+import '../widgets/admin/admin_bottom_tabs.dart';
 import '../widgets/dashboard/dashboard_back_handler.dart';
 import '../widgets/feature_tab_header.dart';
 
@@ -729,7 +730,6 @@ class _MenuScreenState extends State<MenuScreen>
       ..sort();
 
     final availableFilters = <String>['All', ...categories];
-    final compactTabs = MediaQuery.sizeOf(context).width < 430;
 
     final selectedCategoryFilter =
         availableFilters.contains(_selectedCategoryFilter)
@@ -786,23 +786,6 @@ class _MenuScreenState extends State<MenuScreen>
                   onPressed: _loadMenuItems,
                 ),
               ],
-              bottom: tc == null
-                  ? null
-                  : TabBar(
-                      controller: tc,
-                      tabs: [
-                        Tab(
-                          text: compactTabs ? null : 'Menu',
-                          icon: menuCompactNavIcon(
-                              Icons.restaurant_menu_outlined, 'Menu'),
-                        ),
-                        Tab(
-                          text: compactTabs ? null : 'Recipes',
-                          icon: menuCompactNavIcon(
-                              Icons.menu_book_outlined, 'Recipes'),
-                        ),
-                      ],
-                    ),
             )
           : null,
       floatingActionButton: !_isAdmin
@@ -835,21 +818,14 @@ class _MenuScreenState extends State<MenuScreen>
                   : null),
       bottomNavigationBar: tc == null
           ? null
-          : BottomNavigationBar(
-              currentIndex: tc.index,
-              onTap: tc.animateTo,
-              type: BottomNavigationBarType.fixed,
-              items: [
-                BottomNavigationBarItem(
-                  icon: menuCompactNavIcon(
-                      Icons.restaurant_menu_outlined, 'Menu'),
-                  label: compactTabs ? '' : 'Menu',
-                ),
-                BottomNavigationBarItem(
-                  icon: menuCompactNavIcon(Icons.menu_book_outlined, 'Recipes'),
-                  label: compactTabs ? '' : 'Recipes',
-                ),
+          : AdminBottomTabs(
+              tabs: const [
+                AdminTabItem(
+                    label: 'Menu', icon: Icons.restaurant_menu_outlined),
+                AdminTabItem(label: 'Recipes', icon: Icons.menu_book_outlined),
               ],
+              selectedIndex: tc.index,
+              onTap: tc.animateTo,
             ),
       body: Column(
         children: [
@@ -867,12 +843,11 @@ class _MenuScreenState extends State<MenuScreen>
                         label: 'Recipes', icon: Icons.menu_book_outlined),
                   ],
             selectedIndex: tc?.index ?? 0,
-            onTap: tc == null ? null : tc.animateTo,
           ),
           Expanded(
             child: tc == null
-                ? _buildMenuTab(
-                    theme, availableFilters, selectedCategoryFilter, filteredItems)
+                ? _buildMenuTab(theme, availableFilters, selectedCategoryFilter,
+                    filteredItems)
                 : TabBarView(
                     controller: tc,
                     children: [
@@ -949,13 +924,10 @@ class _MenuScreenState extends State<MenuScreen>
                                   : width >= 600
                                       ? 3
                                       : 2;
-                          final childAspectRatio = width < 520
-                              ? 0.64
-                              : crossAxisCount == 2
-                                  ? 0.68
-                                  : crossAxisCount == 3
-                                      ? 0.74
-                                      : 0.82;
+                          final cardWidth =
+                              (width - 32 - (8 * (crossAxisCount - 1))) /
+                                  crossAxisCount;
+                          final cardHeight = cardWidth + 88;
 
                           Widget header(String title) {
                             return Padding(
@@ -1033,7 +1005,7 @@ class _MenuScreenState extends State<MenuScreen>
                                         crossAxisCount: crossAxisCount,
                                         crossAxisSpacing: 8,
                                         mainAxisSpacing: 8,
-                                        childAspectRatio: childAspectRatio,
+                                        mainAxisExtent: cardHeight,
                                       ),
                                       itemCount: items.length,
                                       itemBuilder: (context, index) {
@@ -1072,7 +1044,7 @@ class _MenuScreenState extends State<MenuScreen>
                               crossAxisCount: crossAxisCount,
                               crossAxisSpacing: 8,
                               mainAxisSpacing: 8,
-                              childAspectRatio: childAspectRatio,
+                              mainAxisExtent: cardHeight,
                             ),
                             itemCount: filteredItems.length,
                             itemBuilder: (context, index) {
@@ -1225,6 +1197,23 @@ class _MenuGridCard extends StatelessWidget {
 
     final imageUrl = (item['imageUrl'] ?? '').toString().trim();
 
+    final rawImageAlignmentX = item['imageAlignmentX'] is num
+        ? (item['imageAlignmentX'] as num).toDouble()
+        : double.tryParse((item['imageAlignmentX'] ?? '').toString()) ?? 0.0;
+    final imageAlignmentX = rawImageAlignmentX < -1.0
+        ? -1.0
+        : rawImageAlignmentX > 1.0
+            ? 1.0
+            : rawImageAlignmentX;
+    final rawImageAlignmentY = item['imageAlignmentY'] is num
+        ? (item['imageAlignmentY'] as num).toDouble()
+        : double.tryParse((item['imageAlignmentY'] ?? '').toString()) ?? 0.0;
+    final imageAlignmentY = rawImageAlignmentY < -1.0
+        ? -1.0
+        : rawImageAlignmentY > 1.0
+            ? 1.0
+            : rawImageAlignmentY;
+
     final shouldShowImage = imageUrl.isNotEmpty &&
         !imageUrl.toLowerCase().startsWith('https://share.google/') &&
         !imageUrl.toLowerCase().startsWith('http://share.google/') &&
@@ -1266,37 +1255,36 @@ class _MenuGridCard extends StatelessWidget {
     return Card(
       clipBehavior: Clip.antiAlias,
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Expanded(
-            child: AspectRatio(
-              aspectRatio: 0.92,
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  Positioned.fill(
+          AspectRatio(
+            aspectRatio: 1,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                Positioned.fill(
                   child: !shouldShowImage
                       ? Container(
-                          color: Theme.of(context).colorScheme.surfaceVariant,
+                          color: theme.colorScheme.surfaceVariant,
+                          alignment: Alignment.center,
                           child: Icon(
                             Icons.restaurant_menu,
-                            color:
-                                Theme.of(context).colorScheme.onSurfaceVariant,
+                            color: theme.colorScheme.onSurfaceVariant,
                             size: 40,
                           ),
                         )
                       : Image.network(
                           imageUrl,
                           fit: BoxFit.cover,
+                          alignment:
+                              Alignment(imageAlignmentX, imageAlignmentY),
                           errorBuilder: (context, error, stackTrace) {
                             return Container(
-                              color:
-                                  Theme.of(context).colorScheme.surfaceVariant,
+                              color: theme.colorScheme.surfaceVariant,
+                              alignment: Alignment.center,
                               child: Icon(
                                 Icons.image_not_supported_outlined,
-                                color: Theme.of(context)
-                                    .colorScheme
-                                    .onSurfaceVariant,
+                                color: theme.colorScheme.onSurfaceVariant,
                                 size: 34,
                               ),
                             );
@@ -1311,11 +1299,11 @@ class _MenuGridCard extends StatelessWidget {
                     child: InkWell(
                       onTap: onToggleAvailability == null
                           ? null
-                          : () => onToggleAvailability?.call(!isAvailable),
+                          : () => onToggleAvailability!.call(!isAvailable),
                       borderRadius: BorderRadius.circular(999),
                       child: Container(
                         padding: const EdgeInsets.symmetric(
-                            horizontal: 10, vertical: 6),
+                            horizontal: 10, vertical: 7),
                         decoration: BoxDecoration(
                           color: isAvailable
                               ? theme.colorScheme.secondaryContainer
@@ -1336,12 +1324,12 @@ class _MenuGridCard extends StatelessWidget {
                           children: [
                             Icon(
                               isAvailable ? Icons.check_circle : Icons.cancel,
-                              size: 12,
+                              size: 14,
                               color: isAvailable
                                   ? theme.colorScheme.onSecondaryContainer
                                   : theme.colorScheme.onErrorContainer,
                             ),
-                            const SizedBox(width: 4),
+                            const SizedBox(width: 5),
                             Text(
                               isAvailable ? 'Available' : 'Unavailable',
                               style: TextStyle(
@@ -1349,7 +1337,7 @@ class _MenuGridCard extends StatelessWidget {
                                     ? theme.colorScheme.onSecondaryContainer
                                     : theme.colorScheme.onErrorContainer,
                                 fontWeight: FontWeight.w700,
-                                fontSize: 10,
+                                fontSize: 11,
                               ),
                             ),
                           ],
@@ -1425,13 +1413,8 @@ class _MenuGridCard extends StatelessWidget {
                         padding: const EdgeInsets.all(4),
                         decoration: BoxDecoration(
                           color: isPinned
-                              ? Theme.of(context)
-                                  .colorScheme
-                                  .error
-                                  .withValues(alpha: 0.92)
-                              : Theme.of(context)
-                                  .colorScheme
-                                  .surface
+                              ? theme.colorScheme.error.withValues(alpha: 0.92)
+                              : theme.colorScheme.surface
                                   .withValues(alpha: 0.9),
                           borderRadius: BorderRadius.circular(999),
                           border: isPinned
@@ -1445,89 +1428,58 @@ class _MenuGridCard extends StatelessWidget {
                         child: Icon(
                           isPinned ? Icons.push_pin : Icons.more_horiz,
                           size: 14,
-                          color: isPinned
-                              ? Theme.of(context).colorScheme.onError
-                              : null,
+                          color: isPinned ? theme.colorScheme.onError : null,
                         ),
                       ),
                     ),
                   ),
                 ),
-                ],
-              ),
+              ],
             ),
           ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(8, 4, 8, 6),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    if (isPinned)
-                      Padding(
-                        padding: const EdgeInsets.only(right: 4),
-                        child: Icon(
-                          Icons.push_pin,
-                          size: 10,
-                          color: Theme.of(context).colorScheme.error,
-                        ),
-                      ),
-                    Expanded(
-                      child: Text(
-                        name,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 1),
-                Text(
-                  category,
-                  style: TextStyle(
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    fontSize: 10,
-                  ),
-                  overflow: TextOverflow.ellipsis,
-                ),
-                const SizedBox(height: 3),
-                Row(
-                  children: [
-                    Expanded(
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 6,
-                          vertical: 3,
-                        ),
-                        decoration: BoxDecoration(
-                          color:
-                              Theme.of(context).colorScheme.secondaryContainer,
-                          borderRadius: BorderRadius.circular(999),
-                          border: Border.all(
-                            color: Theme.of(context)
-                                .colorScheme
-                                .secondaryContainer,
+          SizedBox(
+            height: 88,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(8, 4, 8, 6),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      if (isPinned)
+                        Padding(
+                          padding: const EdgeInsets.only(right: 4),
+                          child: Icon(
+                            Icons.push_pin,
+                            size: 10,
+                            color: theme.colorScheme.error,
                           ),
                         ),
+                      Expanded(
                         child: Text(
-                          priceText,
-                          style: TextStyle(
-                            fontSize: 10,
-                            fontWeight: FontWeight.w800,
-                            color: Theme.of(context).colorScheme.secondary,
-                          ),
+                          name,
+                          maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                          ),
                         ),
                       ),
+                    ],
+                  ),
+                  const SizedBox(height: 1),
+                  Text(
+                    category,
+                    style: TextStyle(
+                      color: theme.colorScheme.onSurfaceVariant,
+                      fontSize: 10,
                     ),
-                    if (isLinked) ...[
-                      const SizedBox(width: 6),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 3),
+                  Row(
+                    children: [
                       Expanded(
                         child: Container(
                           padding: const EdgeInsets.symmetric(
@@ -1535,46 +1487,74 @@ class _MenuGridCard extends StatelessWidget {
                             vertical: 3,
                           ),
                           decoration: BoxDecoration(
-                            color: theme.colorScheme.primaryContainer,
+                            color: theme.colorScheme.secondaryContainer,
                             borderRadius: BorderRadius.circular(999),
                             border: Border.all(
-                                color: theme.colorScheme.primaryContainer),
+                              color: theme.colorScheme.secondaryContainer,
+                            ),
                           ),
-                          child: Center(
-                            child: Text(
-                              availableServings == null
-                                  ? '—'
-                                  : 'x$availableServings',
-                              style: TextStyle(
-                                color: Theme.of(context).colorScheme.primary,
-                                fontSize: 10,
-                                fontWeight: FontWeight.w700,
+                          child: Text(
+                            priceText,
+                            style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w800,
+                              color: theme.colorScheme.secondary,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                            textAlign: TextAlign.center,
+                          ),
+                        ),
+                      ),
+                      if (isLinked) ...[
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 6,
+                              vertical: 3,
+                            ),
+                            decoration: BoxDecoration(
+                              color: theme.colorScheme.primaryContainer,
+                              borderRadius: BorderRadius.circular(999),
+                              border: Border.all(
+                                  color: theme.colorScheme.primaryContainer),
+                            ),
+                            child: Center(
+                              child: Text(
+                                availableServings == null
+                                    ? '—'
+                                    : 'x$availableServings',
+                                style: TextStyle(
+                                  color: theme.colorScheme.primary,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w700,
+                                ),
                               ),
                             ),
                           ),
                         ),
-                      ),
+                      ],
                     ],
-                  ],
-                ),
-                if (hasStockIssues || !isLinked) ...[
-                  const SizedBox(height: 3),
-                  Text(
-                    hasStockIssues
-                        ? 'Stock issue: ${stockIssueSummary.isEmpty ? 'Check ingredients' : stockIssueSummary}'
-                        : 'No stock tracking',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 9,
-                      fontWeight: FontWeight.w600,
-                      color: hasStockIssues
-                          ? theme.colorScheme.error
-                          : theme.colorScheme.onSurfaceVariant,
-                    ),
                   ),
+                  if (hasStockIssues || !isLinked) ...[
+                    const SizedBox(height: 3),
+                    Text(
+                      hasStockIssues
+                          ? 'Stock issue: ${stockIssueSummary.isEmpty ? 'Check ingredients' : stockIssueSummary}'
+                          : 'No stock tracking',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 9,
+                        fontWeight: FontWeight.w600,
+                        color: hasStockIssues
+                            ? theme.colorScheme.error
+                            : theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
                 ],
-              ],
+              ),
             ),
           ),
         ],

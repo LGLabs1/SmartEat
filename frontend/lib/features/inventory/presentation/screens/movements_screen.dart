@@ -32,11 +32,13 @@ String movementTypeLabel(StockMovementType type) {
 class MovementsScreen extends StatefulWidget {
   final List<StockMovement> movements;
   final List<InventoryItem> items;
+  final bool showAppBar;
 
   const MovementsScreen({
     Key? key,
     required this.movements,
     this.items = const [],
+    this.showAppBar = true,
   }) : super(key: key);
 
   @override
@@ -176,7 +178,9 @@ class _MovementsScreenState extends State<MovementsScreen> {
     final days = groups.keys.toList()..sort((a, b) => b.compareTo(a));
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Movement History')),
+      appBar: widget.showAppBar
+          ? AppBar(title: const Text('Movement History'))
+          : null,
       body: Column(
         children: [
           _buildHeader(

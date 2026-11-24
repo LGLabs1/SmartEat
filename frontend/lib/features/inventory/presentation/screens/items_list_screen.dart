@@ -15,6 +15,7 @@ class ItemsListScreen extends StatefulWidget {
   final ValueChanged<StockAdjustment>? onAdjustment;
   final ValueChanged<InventoryItem>? onAddItem;
   final Future<void> Function()? onRefresh;
+  final bool showAppBar;
 
   const ItemsListScreen({
     Key? key,
@@ -24,6 +25,7 @@ class ItemsListScreen extends StatefulWidget {
     this.onAdjustment,
     this.onAddItem,
     this.onRefresh,
+    this.showAppBar = true,
   }) : super(key: key);
 
   @override
@@ -98,44 +100,48 @@ class _ItemsListScreenState extends State<ItemsListScreen> {
     final categories = _getCategories();
     final filtered = _filtered();
     return Scaffold(
-      appBar: AppBar(
-        title: Text(_showGrid ? 'Inventory' : 'Inventory (List)'),
-        actions: [
-          IconButton(
-            icon: Icon(_showGrid ? Icons.view_list : Icons.grid_view),
-            tooltip: _showGrid ? 'Switch to List View' : 'Switch to Grid View',
-            onPressed: () => setState(() => _showGrid = !_showGrid),
-          ),
-          if (widget.onPurchase != null)
-            IconButton(
-              icon: const Icon(Icons.add_shopping_cart),
-              tooltip: 'New Purchase',
-              onPressed: () async {
-                final r = await showDialog<PurchaseReceipt>(
-                  context: context,
-                  builder: (c) => const PurchaseDialog(),
-                );
-                if (r != null) widget.onPurchase!(r);
-              },
-            ),
-          IconButton(
-            icon: const Icon(Icons.add),
-            tooltip: 'Add Item',
-            onPressed: () async {
-              final result = await showDialog<InventoryItem>(
-                context: context,
-                builder: (_) => AddItemDialog(
-                  initialCategory:
-                      _selectedCategory != 'All' ? _selectedCategory : null,
+      appBar: widget.showAppBar
+          ? AppBar(
+              title: Text(_showGrid ? 'Inventory' : 'Inventory (List)'),
+              actions: [
+                IconButton(
+                  icon: Icon(_showGrid ? Icons.view_list : Icons.grid_view),
+                  tooltip:
+                      _showGrid ? 'Switch to List View' : 'Switch to Grid View',
+                  onPressed: () => setState(() => _showGrid = !_showGrid),
                 ),
-              );
-              if (result != null && widget.onAddItem != null) {
-                widget.onAddItem!(result);
-              }
-            },
-          ),
-        ],
-      ),
+                if (widget.onPurchase != null)
+                  IconButton(
+                    icon: const Icon(Icons.add_shopping_cart),
+                    tooltip: 'New Purchase',
+                    onPressed: () async {
+                      final r = await showDialog<PurchaseReceipt>(
+                        context: context,
+                        builder: (c) => const PurchaseDialog(),
+                      );
+                      if (r != null) widget.onPurchase!(r);
+                    },
+                  ),
+                IconButton(
+                  icon: const Icon(Icons.add),
+                  tooltip: 'Add Item',
+                  onPressed: () async {
+                    final result = await showDialog<InventoryItem>(
+                      context: context,
+                      builder: (_) => AddItemDialog(
+                        initialCategory: _selectedCategory != 'All'
+                            ? _selectedCategory
+                            : null,
+                      ),
+                    );
+                    if (result != null && widget.onAddItem != null) {
+                      widget.onAddItem!(result);
+                    }
+                  },
+                ),
+              ],
+            )
+          : null,
       body: RefreshIndicator(
         onRefresh: widget.onRefresh ?? () async {},
         child: Padding(
@@ -193,8 +199,11 @@ class _ItemsListScreenState extends State<ItemsListScreen> {
     return LayoutBuilder(
       builder: (context, constraints) {
         final width = constraints.maxWidth;
-        final crossAxisCount =
-            width >= 1100 ? 4 : width >= 800 ? 3 : 2;
+        final crossAxisCount = width >= 1100
+            ? 4
+            : width >= 800
+                ? 3
+                : 2;
         final cats = categories.toList();
         final lowStockItems = widget.items
             .where((i) => i.isLowStock && i.currentStock > 0)

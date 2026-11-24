@@ -14,6 +14,7 @@ class InventoryOverviewScreen extends StatelessWidget {
   final VoidCallback onViewReports;
   final VoidCallback onViewLowStock;
   final VoidCallback onViewMovements;
+  final bool showAppBar;
 
   const InventoryOverviewScreen({
     Key? key,
@@ -22,6 +23,7 @@ class InventoryOverviewScreen extends StatelessWidget {
     required this.onViewReports,
     required this.onViewLowStock,
     required this.onViewMovements,
+    this.showAppBar = true,
   }) : super(key: key);
 
   String _formatCurrency(double amount) {
@@ -54,16 +56,18 @@ class InventoryOverviewScreen extends StatelessWidget {
     }
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Inventory Overview'),
-        actions: [
-          IconButton(
-            tooltip: 'Reports',
-            icon: const Icon(Icons.bar_chart),
-            onPressed: onViewReports,
-          ),
-        ],
-      ),
+      appBar: showAppBar
+          ? AppBar(
+              title: const Text('Inventory Overview'),
+              actions: [
+                IconButton(
+                  tooltip: 'Reports',
+                  icon: const Icon(Icons.bar_chart),
+                  onPressed: onViewReports,
+                ),
+              ],
+            )
+          : null,
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [

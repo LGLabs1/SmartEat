@@ -1,114 +1,75 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:smarteat/features/finance/presentation/screens/finance_screen.dart';
-import 'package:smarteat/features/inventory/presentation/screens/inventory_feature_screen.dart';
-import 'package:smarteat/screens/analytics_screen.dart';
-import 'package:smarteat/screens/menu_screen.dart';
+import 'package:smarteat/widgets/admin/admin_bottom_tabs.dart';
 import 'package:smarteat/widgets/feature_tab_header.dart';
 import 'package:smarteat/widgets/responsive_search_field.dart';
 
-Widget buildHarness(List<Widget> icons) {
-  return MaterialApp(
+const _tabs = [
+  AdminTabItem(label: 'Overview', icon: Icons.dashboard_outlined),
+  AdminTabItem(label: 'Expenses', icon: Icons.receipt_long_outlined),
+  AdminTabItem(label: 'Payables', icon: Icons.payment_outlined),
+];
+
+Future<void> _pumpTabs(WidgetTester tester, Size size) async {
+  tester.view.physicalSize = size;
+  tester.view.devicePixelRatio = 1;
+  addTearDown(() {
+    tester.view.resetPhysicalSize();
+    tester.view.resetDevicePixelRatio();
+  });
+
+  await tester.pumpWidget(MaterialApp(
     home: Scaffold(
-      body: Column(children: icons),
+      bottomNavigationBar: AdminBottomTabs(
+        tabs: _tabs,
+        selectedIndex: 0,
+        onTap: (_) {},
+      ),
     ),
-  );
+  ));
 }
 
 void main() {
-  testWidgets('finance compact navigation icons expose labels and tooltips',
-      (tester) async {
-    await tester.pumpWidget(buildHarness([
-      financeCompactNavIcon(Icons.dashboard_outlined, 'Overview'),
-      financeCompactNavIcon(Icons.receipt_long_outlined, 'Expenses'),
-      financeCompactNavIcon(Icons.payment_outlined, 'Payables'),
-      financeCompactNavIcon(Icons.analytics_outlined, 'Reports'),
-      financeCompactNavIcon(Icons.groups_outlined, 'Payroll'),
-    ]));
+  testWidgets('admin bottom tabs show labels on wide screens', (tester) async {
+    await _pumpTabs(tester, const Size(900, 700));
 
-    for (final label in [
-      'Overview',
-      'Expenses',
-      'Payables',
-      'Reports',
-      'Payroll',
-    ]) {
-      expect(find.bySemanticsLabel(label), findsOneWidget,
-          reason: '$label must be available to screen readers');
-      expect(find.byTooltip(label), findsOneWidget,
-          reason: '$label must be available as a tooltip');
-    }
-  });
-
-  testWidgets('menu compact tab and nav icons expose labels and tooltips',
-      (tester) async {
-    await tester.pumpWidget(buildHarness([
-      menuCompactNavIcon(Icons.restaurant_menu_outlined, 'Menu'),
-      menuCompactNavIcon(Icons.menu_book_outlined, 'Recipes'),
-    ]));
-
-    for (final label in ['Menu', 'Recipes']) {
-      expect(find.bySemanticsLabel(label), findsOneWidget);
+    for (final label in ['Overview', 'Expenses', 'Payables']) {
+      expect(find.text(label), findsOneWidget);
       expect(find.byTooltip(label), findsOneWidget);
+      expect(find.bySemanticsLabel(RegExp(label)), findsWidgets);
     }
   });
 
-  testWidgets('analytics compact tab icons expose labels and tooltips',
+  testWidgets('admin bottom tabs are icon-only on narrow screens',
       (tester) async {
-    await tester.pumpWidget(buildHarness([
-      analyticsCompactTabIcon(Icons.show_chart_outlined, 'Sales'),
-      analyticsCompactTabIcon(Icons.insights_outlined, 'Insights'),
-      analyticsCompactTabIcon(Icons.auto_graph_outlined, 'Forecast'),
-      analyticsCompactTabIcon(Icons.payments_outlined, 'Finance'),
-    ]));
+    await _pumpTabs(tester, const Size(390, 844));
 
-    for (final label in ['Sales', 'Insights', 'Forecast', 'Finance']) {
-      expect(find.bySemanticsLabel(label), findsOneWidget);
+    for (final label in ['Overview', 'Expenses', 'Payables']) {
+      expect(find.text(label), findsNothing);
       expect(find.byTooltip(label), findsOneWidget);
+      expect(find.bySemanticsLabel(RegExp(label)), findsWidgets);
     }
   });
 
-  testWidgets('inventory compact nav icons expose labels and tooltips',
+  testWidgets('feature tab header is title-only without tab navigation',
       (tester) async {
-    await tester.pumpWidget(buildHarness([
-      inventoryCompactNavIcon(Icons.dashboard, 'Overview'),
-      inventoryCompactNavIcon(Icons.inventory, 'Items'),
-      inventoryCompactNavIcon(Icons.history, 'Movements'),
-      inventoryCompactNavIcon(Icons.shopping_cart, 'Purchases'),
-      inventoryCompactNavIcon(Icons.tune, 'Adjustments'),
-      inventoryCompactNavIcon(Icons.bar_chart, 'Reports'),
-    ]));
-
-    for (final label in [
-      'Overview',
-      'Items',
-      'Movements',
-      'Purchases',
-      'Adjustments',
-      'Reports',
-    ]) {
-      expect(find.bySemanticsLabel(label), findsOneWidget);
-      expect(find.byTooltip(label), findsOneWidget);
-    }
-  });
-
-  testWidgets('feature tab header shows the current tab', (tester) async {
     await tester.pumpWidget(MaterialApp(
       home: Scaffold(
         body: FeatureTabHeader(
           title: 'Finance',
           tabs: const [
             FeatureTabItem(label: 'Overview', icon: Icons.dashboard_outlined),
-            FeatureTabItem(label: 'Expenses', icon: Icons.receipt_long_outlined),
+            FeatureTabItem(
+                label: 'Expenses', icon: Icons.receipt_long_outlined),
           ],
           selectedIndex: 1,
-          onTap: (_) {},
         ),
       ),
     ));
 
-    expect(find.textContaining('Expenses'), findsWidgets);
-    expect(find.byTooltip('Expenses'), findsOneWidget);
+    expect(find.text('Finance  /  Expenses'), findsOneWidget);
+    expect(find.byIcon(Icons.chevron_right), findsOneWidget);
+    expect(find.byTooltip('Expenses'), findsNothing);
   });
 
   testWidgets('responsive search collapses to an icon on narrow screens',

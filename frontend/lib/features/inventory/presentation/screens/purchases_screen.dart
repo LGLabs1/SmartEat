@@ -16,6 +16,7 @@ class PurchasesScreen extends StatefulWidget {
   final List<InventoryItem> items;
   final VoidCallback? onOpenPurchaseList;
   final Future<void> Function()? onSyncToFinance;
+  final bool showAppBar;
 
   const PurchasesScreen({
     Key? key,
@@ -23,6 +24,7 @@ class PurchasesScreen extends StatefulWidget {
     this.items = const [],
     this.onOpenPurchaseList,
     this.onSyncToFinance,
+    this.showAppBar = true,
   }) : super(key: key);
 
   @override
@@ -111,17 +113,19 @@ class _PurchasesScreenState extends State<PurchasesScreen> {
       ..sort();
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Purchases (GRN)'),
-        actions: [
-          if (widget.onSyncToFinance != null)
-            IconButton(
-              icon: const Icon(Icons.sync_alt),
-              tooltip: 'Sync purchases to Finance',
-              onPressed: () => widget.onSyncToFinance!(),
-            ),
-        ],
-      ),
+      appBar: widget.showAppBar
+          ? AppBar(
+              title: const Text('Purchases (GRN)'),
+              actions: [
+                if (widget.onSyncToFinance != null)
+                  IconButton(
+                    icon: const Icon(Icons.sync_alt),
+                    tooltip: 'Sync purchases to Finance',
+                    onPressed: () => widget.onSyncToFinance!(),
+                  ),
+              ],
+            )
+          : null,
       body: Column(
         children: [
           Padding(
