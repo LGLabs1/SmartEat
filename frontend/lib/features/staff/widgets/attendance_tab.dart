@@ -28,9 +28,21 @@ class _AttendanceTabState extends State<_AttendanceTab>
   // Memoized per eatery+month so rebuilds reuse the same Firestore listener.
   Stream<QuerySnapshot<Map<String, dynamic>>>? _attendanceStream;
   String _attendanceStreamKey = '';
+  Stream<QuerySnapshot<Map<String, dynamic>>>? _profilesStream;
+  String _profilesStreamKey = '';
 
   @override
   bool get wantKeepAlive => true;
+
+  Stream<QuerySnapshot<Map<String, dynamic>>> _profilesStreamFor(
+    String eateryId,
+  ) {
+    if (_profilesStream == null || _profilesStreamKey != eateryId) {
+      _profilesStreamKey = eateryId;
+      _profilesStream = StaffService.staffProfilesStream(eateryId);
+    }
+    return _profilesStream!;
+  }
 
   Stream<QuerySnapshot<Map<String, dynamic>>> _attendanceStreamFor(
     String eateryId,
@@ -67,42 +79,63 @@ class _AttendanceTabState extends State<_AttendanceTab>
     final endKey = attendanceYmd(monthEnd);
 
     return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-      stream: _attendanceStreamFor(widget.eateryId, startKey, endKey),
-      builder: (context, attSnap) {
-        if (attSnap.hasError) {
-          return Center(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Text('Failed to load attendance: ${attSnap.error}'),
-            ),
-          );
-        }
-
-        final records = <Map<String, dynamic>>[];
-        if (attSnap.hasData) {
-          for (final doc in attSnap.data!.docs) {
+      stream: _profilesStreamFor(widget.eateryId),
+      builder: (context, profSnap) {
+        final dailyRateByUid = <String, double>{};
+        final halfDayRateByUid = <String, double>{};
+        if (profSnap.hasData) {
+          for (final doc in profSnap.data!.docs) {
             final data = doc.data();
-            final uid = (data['uid'] ?? '').toString().trim();
+            final uid = (data['uid'] ?? doc.id).toString().trim();
             if (uid.isEmpty) continue;
-            records.add({...data, 'uid': uid});
+            final rawDaily = data['dailyRate'];
+            final rawHalf = data['halfDayRate'];
+            dailyRateByUid[uid] = rawDaily is num ? rawDaily.toDouble() : 0.0;
+            halfDayRateByUid[uid] = rawHalf is num ? rawHalf.toDouble() : 0.0;
           }
         }
 
-        return SingleChildScrollView(
-          padding: const EdgeInsets.all(12),
-          child: AdminAttendanceCalendar(
-            records: records,
-            usersByUid: widget.usersByUid,
-            selectedMonth: _selectedMonth,
-            isLoading: !attSnap.hasData,
-            onMonthChanged: (month) {
-              setState(() {
-                _selectedMonth = DateTime(month.year, month.month);
-              });
-            },
-            onEncodeAttendance: widget.onEncodeAttendance,
-            onMarkMissingAbsent: widget.onMarkMissingAbsent,
-          ),
+        return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+          stream: _attendanceStreamFor(widget.eateryId, startKey, endKey),
+          builder: (context, attSnap) {
+            if (attSnap.hasError) {
+              return Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Text('Failed to load attendance: ${attSnap.error}'),
+                ),
+              );
+            }
+
+            final records = <Map<String, dynamic>>[];
+            if (attSnap.hasData) {
+              for (final doc in attSnap.data!.docs) {
+                final data = doc.data();
+                final uid = (data['uid'] ?? '').toString().trim();
+                if (uid.isEmpty) continue;
+                records.add({...data, 'uid': uid});
+              }
+            }
+
+            return SingleChildScrollView(
+              padding: const EdgeInsets.all(12),
+              child: AdminAttendanceCalendar(
+                records: records,
+                usersByUid: widget.usersByUid,
+                dailyRateByUid: dailyRateByUid,
+                halfDayRateByUid: halfDayRateByUid,
+                selectedMonth: _selectedMonth,
+                isLoading: !attSnap.hasData,
+                onMonthChanged: (month) {
+                  setState(() {
+                    _selectedMonth = DateTime(month.year, month.month);
+                  });
+                },
+                onEncodeAttendance: widget.onEncodeAttendance,
+                onMarkMissingAbsent: widget.onMarkMissingAbsent,
+              ),
+            );
+          },
         );
       },
     );

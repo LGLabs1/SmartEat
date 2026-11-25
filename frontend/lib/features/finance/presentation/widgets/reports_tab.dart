@@ -115,6 +115,8 @@ class _FinanceReportsTabState extends State<FinanceReportsTab> {
     final payableKpi =
         BusinessKpis.payablesKpi(widget.payables, now: DateTime.now());
     final menuRows = BusinessKpis.menuProfitRows(widget.itemPerformance);
+    final performanceRows =
+        menuRows.where((r) => r.revenue > 0 || r.quantity > 0).toList();
     final forecast = BusinessKpis.forecastKpi(
         salesForecast: widget.salesForecast,
         menuProfitRowsData: menuRows
@@ -180,10 +182,10 @@ class _FinanceReportsTabState extends State<FinanceReportsTab> {
       ),
       ReportPdfSection(
         title: 'Menu profitability',
-        lines: menuRows.isEmpty
+        lines: performanceRows.isEmpty
             ? ['No menu performance data.']
             : [
-                for (final row in menuRows.take(10))
+                for (final row in performanceRows.take(10))
                   '${row.item['name'] ?? 'Unknown'} — sold ${row.quantity.toStringAsFixed(0)}, revenue ${widget.fmt.money(row.revenue)}, profit ${row.hasCosting ? widget.fmt.money(row.profit) : 'N/A'}',
               ],
       ),
@@ -354,13 +356,13 @@ class _FinanceReportsTabState extends State<FinanceReportsTab> {
             icon: Icons.restaurant_menu_rounded,
             iconColor: AppTheme.sageSuccess,
             badge: 'Estimates when recipe costing exists',
-            child: menuRows.isEmpty
+            child: performanceRows.isEmpty
                 ? const EmptyState(
                     icon: Icons.restaurant_menu_outlined,
                     title: 'No menu performance data',
                     subtitle: 'Complete orders to populate per-menu KPIs.')
                 : Column(children: [
-                    for (final row in menuRows.take(12))
+                    for (final row in performanceRows.take(12))
                       _MenuProfit(row: row, fmt: widget.fmt)
                   ])),
         const SizedBox(height: 16),

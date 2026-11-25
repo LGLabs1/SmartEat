@@ -5,7 +5,11 @@ import 'package:provider/provider.dart';
 import '../../../../../models/inventory_item.dart';
 import '../../../../../services/receipt_printer_service.dart';
 import '../../../../../theme.dart';
+import '../../../../../widgets/dashboard/empty_state.dart';
+import '../../../../../widgets/dashboard/kpi_card.dart';
+import '../../../../../widgets/dashboard/section_card.dart';
 import '../../../../../widgets/responsive_search_field.dart';
+import '../../../../../widgets/smart_eat_header.dart';
 import '../../data/models/purchase_list_item.dart';
 import '../../data/models/purchase_receipt.dart';
 import '../../data/services/purchase_list_pdf_service.dart';
@@ -177,8 +181,9 @@ class _PurchaseListScreenState extends State<PurchaseListScreen> {
     final all = notifier.allItems(widget.items);
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Purchase List'),
+      appBar: SmartEatHeader(
+        titleText: 'Shopping List',
+        showBackButton: true,
         actions: [
           IconButton(
             icon: const Icon(Icons.print_outlined),
@@ -200,6 +205,7 @@ class _PurchaseListScreenState extends State<PurchaseListScreen> {
             TextButton.icon(
               icon: const Icon(Icons.delete_sweep_outlined, size: 18),
               label: const Text('Clear checked'),
+              style: TextButton.styleFrom(foregroundColor: Colors.white),
               onPressed: () => notifier.clearChecked(),
             ),
           if (list.isNotEmpty)
@@ -210,37 +216,98 @@ class _PurchaseListScreenState extends State<PurchaseListScreen> {
             ),
         ],
       ),
-      body: LayoutBuilder(
+      body: Column(
+        children: [
+          _buildSummary(context, notifier),
+          Expanded(
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final isWide = constraints.maxWidth >= 800;
+                final listWidget = _buildMyList(context, notifier, list);
+                final rightColumn = Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _buildSuggestions(context, notifier, critical, safe),
+                    const SizedBox(height: 16),
+                    _buildAllItems(context, notifier, all),
+                  ],
+                );
+                if (isWide) {
+                  return Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        flex: 3,
+                        child: SingleChildScrollView(child: listWidget),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        flex: 2,
+                        child: SingleChildScrollView(child: rightColumn),
+                      ),
+                    ],
+                  );
+                }
+                return ListView(
+                  padding: const EdgeInsets.all(12),
+                  children: [
+                    listWidget,
+                    const SizedBox(height: 16),
+                    rightColumn
+                  ],
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSummary(BuildContext context, PurchaseListNotifier notifier) {
+    final theme = Theme.of(context);
+    final totalQty = notifier.list.fold<double>(
+      0,
+      (sum, entry) => sum + entry.qty,
+    );
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+      child: LayoutBuilder(
         builder: (context, constraints) {
-          final isWide = constraints.maxWidth >= 800;
-          final listWidget = _buildMyList(context, notifier, list);
-          final rightColumn = Column(
-            mainAxisSize: MainAxisSize.min,
+          final wide = constraints.maxWidth >= 700;
+          return GridView.count(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            crossAxisCount: wide ? 4 : 2,
+            mainAxisSpacing: 8,
+            crossAxisSpacing: 8,
+            childAspectRatio: wide ? 3.2 : 2.4,
             children: [
-              _buildSuggestions(context, notifier, critical, safe),
-              const SizedBox(height: 12),
-              _buildAllItems(context, notifier, all),
+              KpiCard(
+                title: 'Pending items',
+                value: '${notifier.pendingCount}',
+                icon: Icons.shopping_basket_outlined,
+                color: theme.colorScheme.primary,
+              ),
+              KpiCard(
+                title: 'Pending cost',
+                value: _formatCurrency(notifier.pendingCost),
+                icon: Icons.account_balance_wallet_outlined,
+                color: Colors.deepPurpleAccent,
+              ),
+              KpiCard(
+                title: 'Checked cost',
+                value: _formatCurrency(notifier.checkedCost),
+                icon: Icons.check_circle_outline,
+                color: AppTheme.sageSuccess,
+              ),
+              KpiCard(
+                title: 'List items',
+                value: _qty(totalQty),
+                icon: Icons.list_alt_outlined,
+                color: AppTheme.sageAccent,
+              ),
             ],
-          );
-          if (isWide) {
-            return Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  flex: 3,
-                  child: SingleChildScrollView(child: listWidget),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  flex: 2,
-                  child: SingleChildScrollView(child: rightColumn),
-                ),
-              ],
-            );
-          }
-          return ListView(
-            padding: const EdgeInsets.all(12),
-            children: [listWidget, const SizedBox(height: 12), rightColumn],
           );
         },
       ),
@@ -249,32 +316,17 @@ class _PurchaseListScreenState extends State<PurchaseListScreen> {
 
   Widget _buildMyList(BuildContext context, PurchaseListNotifier notifier,
       List<PurchaseListItem> list) {
-    final theme = Theme.of(context);
-    return Card(
-      margin:
+    return Padding(
+      padding:
           isWideLayout(context) ? const EdgeInsets.all(12) : EdgeInsets.zero,
-      child: Padding(
-        padding: const EdgeInsets.all(12),
+      child: SectionCard(
+        title: 'Your Purchase List',
+        icon: Icons.shopping_basket_outlined,
+        badge: '${notifier.pendingCount} pending',
+        padding: const EdgeInsets.all(14),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
           children: [
-            Row(
-              children: [
-                Icon(Icons.shopping_basket_outlined,
-                    size: 20, color: theme.colorScheme.primary),
-                const SizedBox(width: 8),
-                Text('Your Purchase List',
-                    style: theme.textTheme.titleSmall
-                        ?.copyWith(fontWeight: FontWeight.bold)),
-                const Spacer(),
-                Text('${notifier.pendingCount} pending',
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: theme.colorScheme.onSurfaceVariant,
-                    )),
-              ],
-            ),
-            const Divider(height: 16),
             if (list.isEmpty)
               _emptyList(context)
             else
@@ -288,31 +340,12 @@ class _PurchaseListScreenState extends State<PurchaseListScreen> {
   }
 
   Widget _emptyList(BuildContext context) {
-    final theme = Theme.of(context);
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 24),
-      child: Center(
-        child: Column(
-          children: [
-            Icon(Icons.shopping_cart_outlined,
-                size: 40,
-                color:
-                    theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.4)),
-            const SizedBox(height: 8),
-            Text('No items yet',
-                style: theme.textTheme.bodyLarge
-                    ?.copyWith(fontWeight: FontWeight.w600)),
-            const SizedBox(height: 4),
-            Text(
-              'Tap items in Critical / Safe / All below, or use Generate to fill from critical items.',
-              textAlign: TextAlign.center,
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
-            ),
-          ],
-        ),
-      ),
+    return EmptyState(
+      icon: Icons.shopping_cart_outlined,
+      title: 'No items yet',
+      subtitle:
+          'Tap items in Critical / Safe / All below, or use Generate to fill from critical items.',
+      iconColor: Theme.of(context).colorScheme.primary,
     );
   }
 
@@ -448,37 +481,23 @@ class _PurchaseListScreenState extends State<PurchaseListScreen> {
 
   Widget _buildSuggestions(BuildContext context, PurchaseListNotifier notifier,
       List<InventoryItem> critical, List<InventoryItem> safe) {
-    final theme = Theme.of(context);
-    return Card(
-      margin:
+    return Padding(
+      padding:
           isWideLayout(context) ? const EdgeInsets.all(12) : EdgeInsets.zero,
-      child: Padding(
-        padding: const EdgeInsets.all(12),
+      child: SectionCard(
+        title: 'Suggested Items',
+        icon: Icons.auto_awesome_outlined,
+        badge: '${critical.length} critical',
+        padding: const EdgeInsets.all(14),
+        action: FilledButton.tonalIcon(
+          icon: const Icon(Icons.flash_on, size: 16),
+          label: const Text('Generate'),
+          onPressed: critical.isEmpty ? null : () => _confirmGenerate(critical),
+          style: FilledButton.styleFrom(visualDensity: VisualDensity.compact),
+        ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
           children: [
-            Row(
-              children: [
-                Icon(Icons.auto_awesome_outlined,
-                    size: 18, color: theme.colorScheme.primary),
-                const SizedBox(width: 8),
-                Text('Suggested Items',
-                    style: theme.textTheme.titleSmall
-                        ?.copyWith(fontWeight: FontWeight.bold)),
-                const Spacer(),
-                FilledButton.tonalIcon(
-                  icon: const Icon(Icons.flash_on, size: 16),
-                  label: const Text('Generate'),
-                  onPressed: critical.isEmpty
-                      ? null
-                      : () => _confirmGenerate(critical),
-                  style: FilledButton.styleFrom(
-                      visualDensity: VisualDensity.compact),
-                ),
-              ],
-            ),
-            const Divider(height: 16),
             _suggestionHeader(
                 context, 'Critical — restock now', AppTheme.error),
             if (critical.isEmpty)
@@ -538,34 +557,19 @@ class _PurchaseListScreenState extends State<PurchaseListScreen> {
       return matchesCategory && matchesQuery;
     }).toList();
 
-    return Card(
-      margin:
+    return Padding(
+      padding:
           isWideLayout(context) ? const EdgeInsets.all(12) : EdgeInsets.zero,
-      child: Padding(
-        padding: const EdgeInsets.all(12),
+      child: SectionCard(
+        title: 'All Items',
+        icon: Icons.list_alt_outlined,
+        badge: selectedCat == 'All' && query.isEmpty
+            ? '${all.length} total'
+            : '${filtered.length} of ${all.length}',
+        padding: const EdgeInsets.all(14),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
           children: [
-            Row(
-              children: [
-                Icon(Icons.list_alt_outlined,
-                    size: 18, color: theme.colorScheme.primary),
-                const SizedBox(width: 8),
-                Text('All Items',
-                    style: theme.textTheme.titleSmall
-                        ?.copyWith(fontWeight: FontWeight.bold)),
-                const Spacer(),
-                Text(
-                    selectedCat == 'All' && query.isEmpty
-                        ? '${all.length} total'
-                        : '${filtered.length} of ${all.length}',
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: theme.colorScheme.onSurfaceVariant,
-                    )),
-              ],
-            ),
-            const SizedBox(height: 8),
             ResponsiveSearchField(
               tooltip: 'Search purchase items',
               fieldBuilder: (context, {required bool autofocus}) => TextField(
@@ -583,7 +587,7 @@ class _PurchaseListScreenState extends State<PurchaseListScreen> {
                 ),
               ),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 10),
             SizedBox(
               height: 34,
               child: ListView.separated(

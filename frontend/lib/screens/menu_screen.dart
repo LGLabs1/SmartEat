@@ -927,7 +927,7 @@ class _MenuScreenState extends State<MenuScreen>
                           final cardWidth =
                               (width - 32 - (8 * (crossAxisCount - 1))) /
                                   crossAxisCount;
-                          final cardHeight = cardWidth + 88;
+                          final cardHeight = cardWidth;
 
                           Widget header(String title) {
                             return Padding(
@@ -1219,25 +1219,6 @@ class _MenuGridCard extends StatelessWidget {
         !imageUrl.toLowerCase().startsWith('http://share.google/') &&
         !imageUrl.toLowerCase().contains('drive.google.com');
 
-    final availableServings = item['availableServings'];
-
-    final inventoryItemId = (item['inventoryItemId'] ?? '').toString().trim();
-
-    final recipeId = (item['recipeId'] ?? '').toString().trim();
-
-    final isInventoryLinked = inventoryItemId.isNotEmpty;
-
-    final isLinked = isInventoryLinked || recipeId.isNotEmpty;
-
-    final rawStockIssues = item['stockIssues'];
-
-    final stockIssues = rawStockIssues is List ? rawStockIssues : const [];
-
-    final hasStockIssues = stockIssues.isNotEmpty;
-
-    final stockIssueSummary =
-        (item['stockIssueSummary'] ?? '').toString().trim();
-
     final category = (item['category'] ?? '').toString();
 
     final name = (item['name'] ?? '').toString();
@@ -1254,11 +1235,10 @@ class _MenuGridCard extends StatelessWidget {
 
     return Card(
       clipBehavior: Clip.antiAlias,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+      child: Stack(
+        fit: StackFit.expand,
         children: [
-          AspectRatio(
-            aspectRatio: 1,
+          Positioned.fill(
             child: Stack(
               fit: StackFit.expand,
               children: [
@@ -1437,124 +1417,80 @@ class _MenuGridCard extends StatelessWidget {
               ],
             ),
           ),
-          SizedBox(
-            height: 88,
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(8, 4, 8, 6),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      if (isPinned)
-                        Padding(
-                          padding: const EdgeInsets.only(right: 4),
-                          child: Icon(
-                            Icons.push_pin,
-                            size: 10,
-                            color: theme.colorScheme.error,
-                          ),
-                        ),
-                      Expanded(
-                        child: Text(
-                          name,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ),
+          Positioned.fill(
+            child: IgnorePointer(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [
+                      AppTheme.sageNavy.withValues(alpha: 0.08),
+                      AppTheme.sageNavy.withValues(alpha: 0.6),
+                      Colors.black.withValues(alpha: 0.92),
                     ],
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    stops: const [0.45, 0.78, 1],
                   ),
-                  const SizedBox(height: 1),
-                  Text(
-                    category,
-                    style: TextStyle(
-                      color: theme.colorScheme.onSurfaceVariant,
-                      fontSize: 10,
-                    ),
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  const SizedBox(height: 3),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 6,
-                            vertical: 3,
-                          ),
-                          decoration: BoxDecoration(
-                            color: theme.colorScheme.secondaryContainer,
-                            borderRadius: BorderRadius.circular(999),
-                            border: Border.all(
-                              color: theme.colorScheme.secondaryContainer,
-                            ),
-                          ),
-                          child: Text(
-                            priceText,
-                            style: TextStyle(
-                              fontSize: 10,
-                              fontWeight: FontWeight.w800,
-                              color: theme.colorScheme.secondary,
-                            ),
-                            overflow: TextOverflow.ellipsis,
-                            textAlign: TextAlign.center,
-                          ),
-                        ),
-                      ),
-                      if (isLinked) ...[
-                        const SizedBox(width: 6),
-                        Expanded(
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 6,
-                              vertical: 3,
-                            ),
-                            decoration: BoxDecoration(
-                              color: theme.colorScheme.primaryContainer,
-                              borderRadius: BorderRadius.circular(999),
-                              border: Border.all(
-                                  color: theme.colorScheme.primaryContainer),
-                            ),
-                            child: Center(
-                              child: Text(
-                                availableServings == null
-                                    ? '—'
-                                    : 'x$availableServings',
-                                style: TextStyle(
-                                  color: theme.colorScheme.primary,
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
+                ),
+              ),
+            ),
+          ),
+          Positioned(
+            left: 8,
+            right: 8,
+            bottom: 7,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    if (isPinned) ...[
+                      const Icon(Icons.push_pin, size: 11, color: Colors.white),
+                      const SizedBox(width: 4),
                     ],
-                  ),
-                  if (hasStockIssues || !isLinked) ...[
-                    const SizedBox(height: 3),
-                    Text(
-                      hasStockIssues
-                          ? 'Stock issue: ${stockIssueSummary.isEmpty ? 'Check ingredients' : stockIssueSummary}'
-                          : 'No stock tracking',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 9,
-                        fontWeight: FontWeight.w600,
-                        color: hasStockIssues
-                            ? theme.colorScheme.error
-                            : theme.colorScheme.onSurfaceVariant,
+                    Expanded(
+                      child: Text(
+                        name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w800,
+                        ),
                       ),
                     ),
                   ],
-                ],
-              ),
+                ),
+                const SizedBox(height: 2),
+                Row(
+                  children: [
+                    Text(
+                      priceText,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    if (category.isNotEmpty) ...[
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          category,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: Colors.white.withValues(alpha: 0.78),
+                            fontSize: 10,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ],
             ),
           ),
         ],

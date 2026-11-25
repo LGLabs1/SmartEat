@@ -8,6 +8,8 @@ library;
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+import 'staff_utils.dart';
+
 const String attendanceInProgress = 'in_progress';
 const String attendancePresent = 'present';
 const String attendanceHalfDay = 'halfday';
@@ -99,6 +101,29 @@ double attendancePayrollWorkUnit(Map<String, dynamic> record) {
   if (status == attendancePresent) return 1.0;
   if (status == attendanceHalfDay) return 0.5;
   return 0.0;
+}
+
+double attendanceGrossPay({
+  required Iterable<Map<String, dynamic>> records,
+  required Map<String, double> dailyRateByUid,
+  required Map<String, double> halfDayRateByUid,
+}) {
+  var total = 0.0;
+  for (final record in records) {
+    final uid = (record['uid'] ?? '').toString().trim();
+    if (uid.isEmpty) continue;
+    final unit = attendancePayrollWorkUnit(record);
+    if (unit <= 0) continue;
+    final dailyRate = dailyRateByUid[uid] ?? 0.0;
+    final halfDayRate = halfDayRateByUid[uid] ?? 0.0;
+    total += unit >= 1.0
+        ? dailyRate
+        : effectiveHalfDayRate(
+            dailyRate: dailyRate,
+            halfDayRate: halfDayRate,
+          );
+  }
+  return total;
 }
 
 String attendanceStatusForUnit(double workUnit) {

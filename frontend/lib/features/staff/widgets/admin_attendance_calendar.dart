@@ -10,6 +10,8 @@ class AdminAttendanceCalendar extends StatefulWidget {
     super.key,
     required this.records,
     required this.usersByUid,
+    this.dailyRateByUid = const <String, double>{},
+    this.halfDayRateByUid = const <String, double>{},
     required this.selectedMonth,
     required this.isLoading,
     required this.onMonthChanged,
@@ -19,6 +21,8 @@ class AdminAttendanceCalendar extends StatefulWidget {
 
   final List<Map<String, dynamic>> records;
   final Map<String, Map<String, dynamic>> usersByUid;
+  final Map<String, double> dailyRateByUid;
+  final Map<String, double> halfDayRateByUid;
   final DateTime selectedMonth;
   final bool isLoading;
   final ValueChanged<DateTime> onMonthChanged;
@@ -305,6 +309,17 @@ class _AdminAttendanceCalendarState extends State<AdminAttendanceCalendar> {
       0,
       (total, aggregate) => total + aggregate.absent,
     );
+    final monthRecords = recordsByDate.values.expand((list) => list).toList();
+    final monthGross = attendanceGrossPay(
+      records: monthRecords,
+      dailyRateByUid: widget.dailyRateByUid,
+      halfDayRateByUid: widget.halfDayRateByUid,
+    );
+    final selectedGross = attendanceGrossPay(
+      records: recordsByDate[selectedKey] ?? const <Map<String, dynamic>>[],
+      dailyRateByUid: widget.dailyRateByUid,
+      halfDayRateByUid: widget.halfDayRateByUid,
+    );
 
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -343,6 +358,7 @@ class _AdminAttendanceCalendarState extends State<AdminAttendanceCalendar> {
                   monthRecordCount: monthRecordCount,
                   monthReviewCount: monthReviewCount,
                   monthAbsentCount: monthAbsentCount,
+                  monthGross: monthGross,
                   missingCount: missingCount,
                   monthStart: monthStart,
                   existingByUidDate: byUidDate,
@@ -370,6 +386,7 @@ class _AdminAttendanceCalendarState extends State<AdminAttendanceCalendar> {
                           selectedDate,
                           onDuty,
                           notOnDuty,
+                          selectedGross: selectedGross,
                         ),
                       ),
                     ],
@@ -387,6 +404,7 @@ class _AdminAttendanceCalendarState extends State<AdminAttendanceCalendar> {
                     selectedDate,
                     onDuty,
                     notOnDuty,
+                    selectedGross: selectedGross,
                   ),
                 ],
               ],
@@ -492,6 +510,7 @@ class _AdminAttendanceCalendarState extends State<AdminAttendanceCalendar> {
     required int monthRecordCount,
     required int monthReviewCount,
     required int monthAbsentCount,
+    required double monthGross,
     required int missingCount,
     required DateTime monthStart,
     required Map<String, Map<String, dynamic>> existingByUidDate,
@@ -614,6 +633,43 @@ class _AdminAttendanceCalendarState extends State<AdminAttendanceCalendar> {
               ),
             ),
           ],
+        ),
+        const SizedBox(height: 10),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: AppTheme.sageSuccess.withValues(alpha: 0.1),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: AppTheme.sageSuccess.withValues(alpha: 0.2),
+            ),
+          ),
+          child: Row(
+            children: [
+              const Icon(
+                Icons.payments_outlined,
+                size: 17,
+                color: AppTheme.sageSuccess,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Estimated monthly gross',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        fontWeight: FontWeight.w700,
+                        color: AppTheme.sageSuccess,
+                      ),
+                ),
+              ),
+              Text(
+                '₱${monthGross.toStringAsFixed(2)}',
+                style: const TextStyle(
+                  fontWeight: FontWeight.w900,
+                  color: AppTheme.sageSuccess,
+                ),
+              ),
+            ],
+          ),
         ),
         if (missingCount > 0) ...[
           const SizedBox(height: 10),
@@ -916,8 +972,9 @@ class _AdminAttendanceCalendarState extends State<AdminAttendanceCalendar> {
     ColorScheme scheme,
     DateTime date,
     List<_StaffAttendanceEntry> onDuty,
-    List<_StaffAttendanceEntry> notOnDuty,
-  ) {
+    List<_StaffAttendanceEntry> notOnDuty, {
+    required double selectedGross,
+  }) {
     final today = attendanceDateOnly(DateTime.now());
     final isToday = attendanceDateOnly(date) == today;
     final isFuture = attendanceDateOnly(date).isAfter(today);
@@ -971,6 +1028,40 @@ class _AdminAttendanceCalendarState extends State<AdminAttendanceCalendar> {
                   icon: Icons.groups_rounded,
                 ),
               ],
+            ),
+            const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              decoration: BoxDecoration(
+                color: scheme.primary.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.account_balance_wallet_outlined,
+                    size: 16,
+                    color: scheme.primary,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Gross for selected day',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            fontWeight: FontWeight.w700,
+                            color: scheme.primary,
+                          ),
+                    ),
+                  ),
+                  Text(
+                    '₱${selectedGross.toStringAsFixed(2)}',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w900,
+                      color: scheme.primary,
+                    ),
+                  ),
+                ],
+              ),
             ),
             const SizedBox(height: 14),
             if (isFuture)

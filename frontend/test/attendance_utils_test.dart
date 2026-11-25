@@ -225,6 +225,22 @@ void main() {
     expect(attendancePayrollWorkUnit({}), 0.0);
   });
 
+  test('attendanceGrossPay sums full and half units with rate fallback', () {
+    final gross = attendanceGrossPay(
+      records: [
+        {'uid': 'a', 'workUnit': 1},
+        {'uid': 'a', 'workUnit': 0.5},
+        {'uid': 'b', 'workUnit': 0.5},
+        {'uid': 'b', 'status': attendanceAbsent},
+        {'uid': 'missing', 'workUnit': 1},
+      ],
+      dailyRateByUid: const {'a': 100, 'b': 80},
+      halfDayRateByUid: const {'a': 60},
+    );
+
+    expect(gross, 200);
+  });
+
   test('attendanceScheduledStartFor parses valid HH:mm values', () {
     expect(
       attendanceScheduledStartFor(DateTime(2026, 1, 5, 18), '09:30'),

@@ -163,6 +163,20 @@ void main() {
       expect(upcoming.length, 1);
       expect(FinanceMetrics.amountOf(upcoming.first), 10);
     });
+
+    test('dueAndOverduePayables includes overdue before upcoming', () {
+      final payables = [
+        _payable(amount: 10, dueDate: DateTime(2025, 3, 18)),
+        _payable(amount: 20, dueDate: DateTime(2025, 3, 10)),
+        _payable(amount: 30, dueDate: DateTime(2025, 3, 20), status: 'paid'),
+        _payable(amount: 40),
+      ];
+      final due =
+          FinanceMetrics.dueAndOverduePayables(payables, days: 7, now: now);
+      expect(due.length, 2);
+      expect(FinanceMetrics.amountOf(due.first), 20);
+      expect(FinanceMetrics.amountOf(due.last), 10);
+    });
   });
 
   group('FinanceMetrics variable payables', () {

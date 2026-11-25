@@ -44,8 +44,6 @@ class _StaffProfileDialog extends StatefulWidget {
 class _StaffProfileDialogState extends State<_StaffProfileDialog> {
   late bool _isEditing;
   late TextEditingController _positionController;
-  late TextEditingController _dailyRateController;
-  late TextEditingController _halfDayRateController;
   late String _status;
 
   @override
@@ -53,26 +51,13 @@ class _StaffProfileDialogState extends State<_StaffProfileDialog> {
     super.initState();
     _isEditing = false;
     _positionController = TextEditingController(text: widget.position);
-    _dailyRateController = TextEditingController(
-      text: widget.dailyRate > 0 ? widget.dailyRate.toStringAsFixed(2) : '',
-    );
-    _halfDayRateController = TextEditingController(
-      text: widget.halfDayRate > 0 ? widget.halfDayRate.toStringAsFixed(2) : '',
-    );
     _status = widget.status;
   }
 
   @override
   void dispose() {
     _positionController.dispose();
-    _dailyRateController.dispose();
-    _halfDayRateController.dispose();
     super.dispose();
-  }
-
-  double _parseDouble(String value) {
-    if (value.trim().isEmpty) return 0.0;
-    return double.tryParse(value.trim()) ?? 0.0;
   }
 
   Widget _buildReadOnlyView() {
@@ -141,23 +126,10 @@ class _StaffProfileDialogState extends State<_StaffProfileDialog> {
               widget.position.isNotEmpty ? widget.position : 'Not set'),
           const SizedBox(height: 12),
 
-          // Daily rate
           _buildInfoRow(
-            Icons.attach_money,
-            'Daily Rate',
-            widget.dailyRate > 0
-                ? '₱${widget.dailyRate.toStringAsFixed(2)}'
-                : 'Not set',
-          ),
-          const SizedBox(height: 12),
-
-          // Half-day rate (now exact amount)
-          _buildInfoRow(
-            Icons.timer_outlined,
-            'Half-Day Rate',
-            widget.halfDayRate > 0
-                ? '₱${widget.halfDayRate.toStringAsFixed(2)}'
-                : 'Not set',
+            Icons.payments_outlined,
+            'Pay rates',
+            'Managed in Payroll',
           ),
           const SizedBox(height: 12),
 
@@ -223,25 +195,6 @@ class _StaffProfileDialogState extends State<_StaffProfileDialog> {
             ),
           ),
           const SizedBox(height: 16),
-          TextField(
-            controller: _dailyRateController,
-            keyboardType: TextInputType.number,
-            decoration: const InputDecoration(
-              labelText: 'Daily rate (₱)',
-              prefixIcon: Icon(Icons.attach_money),
-            ),
-          ),
-          const SizedBox(height: 16),
-          TextField(
-            controller: _halfDayRateController,
-            keyboardType: TextInputType.number,
-            decoration: const InputDecoration(
-              labelText: 'Half-day rate (₱) - exact amount',
-              prefixIcon: Icon(Icons.timer_outlined),
-              helperText: 'Enter exact amount (not percentage)',
-            ),
-          ),
-          const SizedBox(height: 16),
           DropdownButtonFormField<String>(
             value: _status,
             items: const [
@@ -296,8 +249,8 @@ class _StaffProfileDialogState extends State<_StaffProfileDialog> {
             onPressed: () {
               final result = _StaffProfileResult(
                 position: _positionController.text.trim(),
-                dailyRate: _parseDouble(_dailyRateController.text),
-                halfDayRate: _parseDouble(_halfDayRateController.text),
+                dailyRate: widget.dailyRate,
+                halfDayRate: widget.halfDayRate,
                 status: _status,
               );
               Navigator.of(context).pop(result);

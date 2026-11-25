@@ -133,6 +133,17 @@ class _PurchasesScreenState extends State<PurchasesScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                if (widget.onOpenPurchaseList != null)
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.icon(
+                      onPressed: widget.onOpenPurchaseList,
+                      icon: const Icon(Icons.playlist_add_check_outlined),
+                      label: const Text('Open Shopping List'),
+                    ),
+                  ),
+                if (widget.onOpenPurchaseList != null)
+                  const SizedBox(height: 12),
                 Row(
                   children: [
                     Expanded(
@@ -246,7 +257,7 @@ class _PurchasesScreenState extends State<PurchasesScreen> {
                         child: Icon(Icons.shopping_basket_outlined,
                             color: theme.colorScheme.secondary),
                       ),
-                      title: const Text('Purchase List'),
+                      title: const Text('View shopping list'),
                       subtitle: listNotifier == null
                           ? const Text('Review & record planned purchases')
                           : listNotifier.list.isEmpty

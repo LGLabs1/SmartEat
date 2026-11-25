@@ -8,6 +8,7 @@ import '../../data/finance_format.dart';
 import '../../data/finance_metrics.dart';
 import 'cashflow_trend_chart.dart';
 import 'finance_category_bar.dart';
+import 'finance_category_pie_chart.dart';
 import 'finance_kpi_grid.dart';
 import 'finance_status.dart';
 
@@ -79,6 +80,8 @@ class FinanceOverviewTab extends StatelessWidget {
         ? ((operating - prevOperating) / prevOperating) * 100
         : null;
     final menuRows = BusinessKpis.menuProfitRows(itemPerformance);
+    final performanceRows =
+        menuRows.where((r) => r.revenue > 0 || r.quantity > 0).toList();
     final cogs = BusinessKpis.resolveCogs(
         stockMovements: stockMovements,
         itemPerformance: itemPerformance,
@@ -111,7 +114,7 @@ class FinanceOverviewTab extends StatelessWidget {
     final profitGrowth = prevProfit.abs() > 0.0001
         ? ((netProfit - prevProfit) / prevProfit.abs()) * 100
         : null;
-    final dueBills = FinanceMetrics.upcomingPayables(payables, days: 30);
+    final dueBills = FinanceMetrics.dueAndOverduePayables(payables, days: 30);
     final trend = FinanceMetrics.dailyTrend(expenses, days: 14);
     final trendPoints = [
       for (final e in trend)
@@ -131,13 +134,14 @@ class FinanceOverviewTab extends StatelessWidget {
         if (bd == null) return -1;
         return bd.compareTo(ad);
       });
-    final bestSelling = menuRows.isEmpty
+    final bestSelling = performanceRows.isEmpty
         ? null
-        : menuRows.reduce((a, b) => a.quantity >= b.quantity ? a : b);
-    final highestRevenue = menuRows.isEmpty ? null : menuRows.first;
-    final highestProfit = menuRows.where((r) => r.hasCosting).toList()
+        : performanceRows.reduce((a, b) => a.quantity >= b.quantity ? a : b);
+    final highestRevenue =
+        performanceRows.isEmpty ? null : performanceRows.first;
+    final highestProfit = performanceRows.where((r) => r.hasCosting).toList()
       ..sort((a, b) => b.profit.compareTo(a.profit));
-    final lowProfit = menuRows
+    final lowProfit = performanceRows
         .where((r) => r.hasCosting && r.revenue > 0 && r.marginPercent < 25)
         .toList()
       ..sort((a, b) => a.marginPercent.compareTo(b.marginPercent));
@@ -366,13 +370,13 @@ class FinanceOverviewTab extends StatelessWidget {
                           detail:
                               '${fmt.money(lowProfit.first.profit)} (${lowProfit.first.marginPercent.toStringAsFixed(1)}%)',
                           warn: true),
-                    if (menuRows.isEmpty)
+                    if (performanceRows.isEmpty)
                       const EmptyState(
                           icon: Icons.restaurant_menu_outlined,
                           title: 'No menu performance data',
                           subtitle:
                               'Complete orders to populate per-menu KPIs.'),
-                    if (menuRows.any((r) => !r.hasCosting))
+                    if (performanceRows.any((r) => !r.hasCosting))
                       Padding(
                           padding: const EdgeInsets.only(top: 8),
                           child: Text(
@@ -406,17 +410,8 @@ class FinanceOverviewTab extends StatelessWidget {
                       icon: Icons.pie_chart_outline,
                       title: 'No expenses this month',
                       subtitle: 'Recorded expenses will be grouped here.')
-                  : Column(children: [
-                      for (final entry in categoryData.take(6))
-                        FinanceCategoryBar(
-                            category: entry.key,
-                            amount: entry.value,
-                            percent: operating > 0
-                                ? entry.value / operating * 100
-                                : 0,
-                            color: financeCategoryColor(entry.key),
-                            money: fmt.money)
-                    ])),
+                  : FinanceCategoryPieChart(
+                      data: categoryData.take(6).toList(), money: fmt.money)),
           const SizedBox(height: 16),
           SectionCard(
               title: 'Upcoming and Overdue Bills',

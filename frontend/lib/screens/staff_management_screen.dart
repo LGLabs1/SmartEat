@@ -317,6 +317,52 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
     );
   }
 
+  Future<void> _saveStaffPayRates(
+    BuildContext context, {
+    required String eateryId,
+    required String uid,
+    required Map<String, dynamic> userData,
+    required double dailyRate,
+    required double halfDayRate,
+  }) async {
+    final isAdmin = isAdminUser(userData);
+    final profileCollection = isAdmin ? 'admin_profiles' : 'staff_profiles';
+    final profileRef = FirebaseFirestore.instance
+        .collection('eateries')
+        .doc(eateryId)
+        .collection(profileCollection)
+        .doc(uid);
+
+    try {
+      final snap = await profileRef.get();
+      final existing = snap.data() ?? const <String, dynamic>{};
+      final profilePosition = (existing['position'] ?? '').toString().trim();
+      final position = profilePosition.isNotEmpty
+          ? profilePosition
+          : (userData['position'] ?? '').toString().trim();
+      final status = (existing['status'] ?? 'active').toString().trim();
+
+      await StaffService.saveStaffProfile(
+        eateryId: eateryId,
+        uid: uid,
+        isAdmin: isAdmin,
+        position: position,
+        dailyRate: dailyRate,
+        halfDayRate: halfDayRate,
+        status: status,
+        createdAt: existing['createdAt'],
+      );
+
+      if (!context.mounted) return;
+      HapticHelper.success();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Pay rates saved')),
+      );
+    } catch (e) {
+      _showInlineError(e);
+    }
+  }
+
   Future<void> _encodeAttendance(
     BuildContext context, {
     required String eateryId,
@@ -1120,6 +1166,16 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
                               type: type,
                               adminUid: adminUid,
                               adminName: adminName,
+                            ),
+                            onSaveRates: (uid, label, dailyRate, halfDayRate) =>
+                                _saveStaffPayRates(
+                              context,
+                              eateryId: eateryId,
+                              uid: uid,
+                              userData:
+                                  usersByUid[uid] ?? const <String, dynamic>{},
+                              dailyRate: dailyRate,
+                              halfDayRate: halfDayRate,
                             ),
                           ),
                           _MealsTab(eateryId: eateryId),

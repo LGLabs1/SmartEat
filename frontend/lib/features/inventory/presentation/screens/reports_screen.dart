@@ -318,6 +318,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
               ),
             ),
           ),
+          const SizedBox(height: 12),
           Card(
             child: ListTile(
               leading: Container(
@@ -341,6 +342,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
               ),
             ),
           ),
+          const SizedBox(height: 12),
           Card(
             child: ListTile(
               leading: Container(
@@ -362,6 +364,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
               ),
             ),
           ),
+          const SizedBox(height: 12),
           Card(
             child: ListTile(
               leading: Container(
@@ -437,6 +440,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
               ),
             ),
           ),
+          const SizedBox(height: 12),
           Card(
             child: Padding(
               padding: const EdgeInsets.all(16),
@@ -464,6 +468,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
               ),
             ),
           ),
+          const SizedBox(height: 12),
           Card(
             child: Padding(
               padding: const EdgeInsets.all(16),
@@ -695,6 +700,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
               onTap: () {},
             ),
           ),
+          const SizedBox(height: 12),
           Card(
             child: ListTile(
               leading: Container(

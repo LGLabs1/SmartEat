@@ -951,7 +951,10 @@ class _FinanceScreenState extends State<FinanceScreen> {
   void _openStaff() {
     Navigator.of(context, rootNavigator: true).push(
       MaterialPageRoute<void>(
-        builder: (_) => const StaffManagementScreen(showAppBar: true),
+        builder: (_) => const StaffManagementScreen(
+          showAppBar: true,
+          initialTabIndex: 2,
+        ),
       ),
     );
   }

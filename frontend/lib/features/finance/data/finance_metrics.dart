@@ -219,6 +219,32 @@ class FinanceMetrics {
     }).toList();
   }
 
+  static List<Map<String, dynamic>> dueAndOverduePayables(
+    List<Map<String, dynamic>> payables, {
+    int days = 30,
+    DateTime? now,
+  }) {
+    final today = now ?? DateTime.now();
+    final cutoff = DateTime(today.year, today.month, today.day);
+    final limit = cutoff.add(Duration(days: days));
+    final result = payables.where((p) {
+      if (isPaid(p)) return false;
+      final due = FinanceFormat.asDate(p['dueDate']);
+      if (due == null) return false;
+      final d = DateTime(due.year, due.month, due.day);
+      return !d.isAfter(limit);
+    }).toList();
+    result.sort((a, b) {
+      final ad = FinanceFormat.asDate(a['dueDate']);
+      final bd = FinanceFormat.asDate(b['dueDate']);
+      if (ad == null && bd == null) return 0;
+      if (ad == null) return 1;
+      if (bd == null) return -1;
+      return ad.compareTo(bd);
+    });
+    return result;
+  }
+
   /// AP aging buckets keyed by label. Buckets are exclusive of paid payables.
   static Map<String, double> agingBuckets(
     List<Map<String, dynamic>> payables, {

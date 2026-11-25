@@ -218,9 +218,13 @@ class _ItemsListScreenState extends State<ItemsListScreen> {
               physics: const NeverScrollableScrollPhysics(),
               gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                 crossAxisCount: crossAxisCount,
-                crossAxisSpacing: 12,
-                mainAxisSpacing: 12,
-                childAspectRatio: crossAxisCount == 2 ? 1.05 : 1.4,
+                crossAxisSpacing: 10,
+                mainAxisSpacing: 10,
+                childAspectRatio: crossAxisCount == 2
+                    ? 1.9
+                    : crossAxisCount == 3
+                        ? 2.3
+                        : 2.7,
               ),
               children: [
                 StockStatusCard(
@@ -279,9 +283,13 @@ class _ItemsListScreenState extends State<ItemsListScreen> {
               physics: const NeverScrollableScrollPhysics(),
               gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                 crossAxisCount: crossAxisCount,
-                crossAxisSpacing: 12,
-                mainAxisSpacing: 12,
-                childAspectRatio: crossAxisCount == 2 ? 1.05 : 1.4,
+                crossAxisSpacing: 10,
+                mainAxisSpacing: 10,
+                childAspectRatio: crossAxisCount == 2
+                    ? 1.9
+                    : crossAxisCount == 3
+                        ? 2.3
+                        : 2.7,
               ),
               itemCount: cats.length,
               itemBuilder: (context, index) {

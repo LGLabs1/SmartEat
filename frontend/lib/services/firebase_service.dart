@@ -3836,25 +3836,30 @@ class FirebaseService {
         final items = order['items'] as List<dynamic>? ?? [];
 
         for (final item in items) {
-          final itemId = item['id'] as String?;
-          final quantity = (item['quantity'] as num?)?.toInt() ?? 0;
-          final price = (item['price'] as num?)?.toDouble() ?? 0.0;
+          if (item is! Map) continue;
+          final itemMap = Map<String, dynamic>.from(item);
+          final rawId = itemMap['menuItemId'] ??
+              itemMap['id'] ??
+              itemMap['itemId'] ??
+              itemMap['name'];
+          final itemId = rawId?.toString().trim();
+          if (itemId == null || itemId.isEmpty) continue;
+          final quantity = (itemMap['quantity'] as num?)?.toInt() ?? 0;
+          final price = (itemMap['price'] as num?)?.toDouble() ?? 0.0;
 
-          if (itemId != null) {
-            if (!itemStats.containsKey(itemId)) {
-              itemStats[itemId] = {
-                'id': itemId,
-                'name': item['name'] ?? 'Unknown',
-                'quantitySold': 0,
-                'revenue': 0.0,
-              };
-            }
-
-            itemStats[itemId]!['quantitySold'] =
-                itemStats[itemId]!['quantitySold'] + quantity;
-            itemStats[itemId]!['revenue'] =
-                itemStats[itemId]!['revenue'] + (price * quantity);
+          if (!itemStats.containsKey(itemId)) {
+            itemStats[itemId] = {
+              'id': itemId,
+              'name': itemMap['name'] ?? 'Unknown',
+              'quantitySold': 0,
+              'revenue': 0.0,
+            };
           }
+
+          itemStats[itemId]!['quantitySold'] =
+              itemStats[itemId]!['quantitySold'] + quantity;
+          itemStats[itemId]!['revenue'] =
+              itemStats[itemId]!['revenue'] + (price * quantity);
         }
       }
 
@@ -3866,8 +3871,15 @@ class FirebaseService {
           for (final m in menuItems)
             if ((m['id'] ?? '').toString().isNotEmpty) (m['id'] as String): m,
         };
+        final menuByName = <String, Map<String, dynamic>>{
+          for (final m in menuItems)
+            if ((m['name'] ?? '').toString().isNotEmpty)
+              (m['name'] as String).toLowerCase().trim(): m,
+        };
         for (final stat in itemStats.values) {
-          final menu = menuById[stat['id']?.toString()];
+          final statId = stat['id']?.toString();
+          final menu = menuById[statId] ??
+              menuByName[(stat['name'] ?? '').toString().toLowerCase().trim()];
           if (menu == null) continue;
           if (menu['costPerServing'] != null) {
             stat['costPerServing'] = menu['costPerServing'];

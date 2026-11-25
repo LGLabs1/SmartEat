@@ -1,4 +1,4 @@
-﻿import 'finance_format.dart';
+import 'finance_format.dart';
 import 'finance_metrics.dart';
 
 class OrderFinanceFacts {
@@ -39,7 +39,8 @@ class PeriodKpi {
   final double itemsSold;
 
   double get averageOrderValue => orders > 0 ? revenue / orders : 0;
-  double get averageSellingPricePerItem => itemsSold > 0 ? revenue / itemsSold : 0;
+  double get averageSellingPricePerItem =>
+      itemsSold > 0 ? revenue / itemsSold : 0;
   double get averageDiscountPerOrder => orders > 0 ? discounts / orders : 0;
   double get netSales => revenue;
   int get ordersCount => orders.round();
@@ -163,7 +164,8 @@ class BusinessKpis {
     'bills',
   };
 
-  static double _num(dynamic v) => v is num ? v.toDouble() : double.tryParse('$v') ?? 0.0;
+  static double _num(dynamic v) =>
+      v is num ? v.toDouble() : double.tryParse('$v') ?? 0.0;
 
   static DateTime? _asDate(dynamic v) => FinanceFormat.asDate(v);
 
@@ -187,20 +189,27 @@ class BusinessKpis {
             .map((e) => Map<String, dynamic>.from(e))
             .toList()
         : const <Map<String, dynamic>>[];
-    final subtotal = _num(order['subtotal'] ?? order['grossAmount'] ?? order['grossTotal']);
+    final subtotal =
+        _num(order['subtotal'] ?? order['grossAmount'] ?? order['grossTotal']);
     final computedSubtotal = items.fold<double>(0, (sum, item) {
       final line = _num(item['subtotal']);
       if (line > 0) return sum + line;
       return sum + _num(item['price']) * _num(item['quantity']);
     });
     final grossSales = subtotal > 0 ? subtotal : computedSubtotal;
-    final explicitDiscount =
-        _num(order['discountAmount'] ?? order['discountTotal'] ?? order['discount'] ?? order['discounts']);
-    final total = _num(order['totalAmount'] ?? order['netAmount'] ?? order['netTotal'] ?? order['amount']);
+    final explicitDiscount = _num(order['discountAmount'] ??
+        order['discountTotal'] ??
+        order['discount'] ??
+        order['discounts']);
+    final total = _num(order['totalAmount'] ??
+        order['netAmount'] ??
+        order['netTotal'] ??
+        order['amount']);
     final inferredDiscount = (grossSales > 0 && total > 0 && grossSales > total)
         ? (grossSales - total)
         : 0.0;
-    final discounts = explicitDiscount > 0 ? explicitDiscount : inferredDiscount;
+    final discounts =
+        explicitDiscount > 0 ? explicitDiscount : inferredDiscount;
     final netSales = total > 0
         ? total
         : (grossSales - discounts).clamp(0, double.infinity).toDouble();
@@ -236,7 +245,11 @@ class BusinessKpis {
     DateTime? start,
     DateTime? end,
   }) {
-    double revenue = 0, grossSales = 0, discounts = 0, itemsSold = 0, orderCount = 0;
+    double revenue = 0,
+        grossSales = 0,
+        discounts = 0,
+        itemsSold = 0,
+        orderCount = 0;
     for (final facts in completedOrderFacts(orders, start: start, end: end)) {
       orderCount++;
       revenue += facts.netSales;
@@ -263,7 +276,8 @@ class BusinessKpis {
 
   static DateTime startOfMonth(DateTime d) => DateTime(d.year, d.month, 1);
   static DateTime startOfYear(DateTime d) => DateTime(d.year, 1, 1);
-  static DateTime endOfDay(DateTime d) => DateTime(d.year, d.month, d.day, 23, 59, 59, 999);
+  static DateTime endOfDay(DateTime d) =>
+      DateTime(d.year, d.month, d.day, 23, 59, 59, 999);
 
   static GrowthKpi revenueGrowth(
     List<Map<String, dynamic>> orders, {
@@ -272,24 +286,32 @@ class BusinessKpis {
     required DateTime previousStart,
     required DateTime previousEnd,
   }) {
-    final current = summarizeOrders(orders, start: currentStart, end: currentEnd).revenue;
-    final previous = summarizeOrders(orders, start: previousStart, end: previousEnd).revenue;
+    final current =
+        summarizeOrders(orders, start: currentStart, end: currentEnd).revenue;
+    final previous =
+        summarizeOrders(orders, start: previousStart, end: previousEnd).revenue;
     return GrowthKpi(current: current, previous: previous);
   }
 
-  static GrowthKpi monthOverMonthRevenue(List<Map<String, dynamic>> orders, DateTime month) {
+  static GrowthKpi monthOverMonthRevenue(
+      List<Map<String, dynamic>> orders, DateTime month) {
     final start = startOfMonth(month);
     final end = DateTime(month.year, month.month + 1, 0, 23, 59, 59, 999);
     final prev = DateTime(month.year, month.month - 1, 1);
     final prevEnd = DateTime(prev.year, prev.month + 1, 0, 23, 59, 59, 999);
-    return revenueGrowth(orders, currentStart: start, currentEnd: end, previousStart: prev, previousEnd: prevEnd);
+    return revenueGrowth(orders,
+        currentStart: start,
+        currentEnd: end,
+        previousStart: prev,
+        previousEnd: prevEnd);
   }
 
   static bool isOperatingExpense(Map<String, dynamic> expense) {
     if (FinanceMetrics.isPayablePayment(expense)) return true;
     final source = FinanceMetrics.source(expense);
     if (source == FinanceMetrics.inventorySource) return false;
-    final category = (expense['category'] ?? '').toString().trim().toLowerCase();
+    final category =
+        (expense['category'] ?? '').toString().trim().toLowerCase();
     if (category.isEmpty) return true;
     return _operatingExpenseCategories.contains(category);
   }
@@ -316,8 +338,10 @@ class BusinessKpis {
     required DateTime previousStart,
     required DateTime previousEnd,
   }) {
-    final current = operatingExpenses(expenses, start: currentStart, end: currentEnd);
-    final previous = operatingExpenses(expenses, start: previousStart, end: previousEnd);
+    final current =
+        operatingExpenses(expenses, start: currentStart, end: currentEnd);
+    final previous =
+        operatingExpenses(expenses, start: previousStart, end: previousEnd);
     return GrowthKpi(current: current, previous: previous);
   }
 
@@ -340,7 +364,9 @@ class BusinessKpis {
 
     double wasteCost = 0, wasteQty = 0;
     for (final item in damagedItems) {
-      final d = _asDate(item['createdAt']) ?? _asDate(item['timestamp']) ?? _asDate(item['date']);
+      final d = _asDate(item['createdAt']) ??
+          _asDate(item['timestamp']) ??
+          _asDate(item['date']);
       if (start != null && (d == null || d.isBefore(start))) continue;
       if (end != null && (d == null || d.isAfter(end))) continue;
       final qty = _num(item['quantity']);
@@ -358,12 +384,14 @@ class BusinessKpis {
     for (final movement in stockMovements) {
       final type = (movement['type'] ?? '').toString();
       if (type != 'saleConsumption' && type != 'sale_consumption') continue;
-      final d = _asDate(movement['timestamp']) ?? _asDate(movement['createdAt']) ?? _asDate(movement['date']);
+      final d = _asDate(movement['timestamp']) ??
+          _asDate(movement['createdAt']) ??
+          _asDate(movement['date']);
       if (start != null && (d == null || d.isBefore(start))) continue;
       if (end != null && (d == null || d.isAfter(end))) continue;
       hasActualConsumption = true;
       final change = _num(movement['changeBase']);
-      final qty = change < 0 ? -change : _num(movement['qty']) .abs();
+      final qty = change < 0 ? -change : _num(movement['qty']).abs();
       consumptionQty += qty;
       final impact = _num(movement['totalCostImpact']).abs();
       if (impact > 0) {
@@ -393,7 +421,9 @@ class BusinessKpis {
     for (final movement in stockMovements) {
       final type = (movement['type'] ?? '').toString();
       if (type != 'saleConsumption' && type != 'sale_consumption') continue;
-      final d = _asDate(movement['timestamp']) ?? _asDate(movement['createdAt']) ?? _asDate(movement['date']);
+      final d = _asDate(movement['timestamp']) ??
+          _asDate(movement['createdAt']) ??
+          _asDate(movement['date']);
       if (start != null && (d == null || d.isBefore(start))) continue;
       if (end != null && (d == null || d.isAfter(end))) continue;
       has = true;
@@ -401,7 +431,9 @@ class BusinessKpis {
     }
     return CogsKpi(
       amount: amount,
-      sourceLabel: has ? 'Actual COGS (sale consumption movements)' : 'Actual COGS unavailable',
+      sourceLabel: has
+          ? 'Actual COGS (sale consumption movements)'
+          : 'Actual COGS unavailable',
       isEstimated: false,
     );
   }
@@ -411,9 +443,14 @@ class BusinessKpis {
   ) {
     final rows = <MenuProfitRow>[];
     for (final item in itemPerformance) {
-      final revenue = _num(item['revenue']);
-      final qty = _num(item['quantitySold'] ?? item['quantity'] ?? item['count']);
-      final unitCost = _num(item['costPerServing'] != 0 ? item['costPerServing'] : item['costPerUnit']);
+      final revenue = _num(item['revenue'] ?? item['revenueLast30Days']);
+      final qty = _num(item['quantitySold'] ??
+          item['quantity'] ??
+          item['count'] ??
+          item['soldLast30Days']);
+      final servingCost = _num(item['costPerServing']);
+      final unitCost =
+          servingCost > 0 ? servingCost : _num(item['costPerUnit']);
       final hasCosting = unitCost > 0 && qty > 0;
       final estimatedCogs = hasCosting ? unitCost * qty : 0.0;
       rows.add(MenuProfitRow(
@@ -435,7 +472,8 @@ class BusinessKpis {
     DateTime? start,
     DateTime? end,
   }) {
-    final actual = actualCogsFromMovements(stockMovements, start: start, end: end);
+    final actual =
+        actualCogsFromMovements(stockMovements, start: start, end: end);
     if (actual.sourceLabel.startsWith('Actual COGS (sale')) {
       return actual;
     }
@@ -483,10 +521,14 @@ class BusinessKpis {
   }) {
     double revenue = 0;
     for (final point in salesForecast) {
-      revenue += _num(point['predictedRevenue'] ?? point['predictedSales'] ?? point['revenue']);
+      revenue += _num(point['predictedRevenue'] ??
+          point['predictedSales'] ??
+          point['revenue']);
     }
-    final revenueBase = menuProfitRowsData.fold<double>(0, (s, r) => s + _num(r['revenue']));
-    final cogsBase = menuProfitRowsData.fold<double>(0, (s, r) => s + _num(r['estimatedCogs']));
+    final revenueBase =
+        menuProfitRowsData.fold<double>(0, (s, r) => s + _num(r['revenue']));
+    final cogsBase = menuProfitRowsData.fold<double>(
+        0, (s, r) => s + _num(r['estimatedCogs']));
     final costRatio = revenueBase > 0 ? (cogsBase / revenueBase) : 0.0;
     final ingredientCost = revenue * costRatio;
     return ForecastKpi(
@@ -497,7 +539,10 @@ class BusinessKpis {
     );
   }
 
-  static Map<String, List<double>> dailyRevenueSeries(List<Map<String, dynamic>> orders, {int days = 30, DateTime? end}) {
+  static Map<String, List<double>> dailyRevenueSeries(
+      List<Map<String, dynamic>> orders,
+      {int days = 30,
+      DateTime? end}) {
     final endDay = startOfDay(end ?? DateTime.now());
     final startDay = endDay.subtract(Duration(days: days - 1));
     final map = <String, double>{};
@@ -505,7 +550,8 @@ class BusinessKpis {
       final d = startDay.add(Duration(days: i));
       map[FinanceFormat.date(d)] = 0;
     }
-    for (final facts in completedOrderFacts(orders, start: startDay, end: endOfDay(endDay))) {
+    for (final facts in completedOrderFacts(orders,
+        start: startDay, end: endOfDay(endDay))) {
       final d = facts.date;
       if (d == null) continue;
       final key = FinanceFormat.date(startOfDay(d));

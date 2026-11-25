@@ -56,6 +56,8 @@ void main() {
     List<Map<String, dynamic>>? records,
     DateTime? month,
     bool loading = false,
+    Map<String, double>? dailyRates,
+    Map<String, double>? halfDayRates,
     ValueChanged<DateTime>? onMonthChanged,
     void Function(String uid, String label, DateTime day)? onEncode,
     Future<int> Function(
@@ -71,6 +73,8 @@ void main() {
           child: AdminAttendanceCalendar(
             records: records ?? buildRecords(),
             usersByUid: usersByUid,
+            dailyRateByUid: dailyRates ?? const <String, double>{},
+            halfDayRateByUid: halfDayRates ?? const <String, double>{},
             selectedMonth: month ?? DateTime(2026, 10),
             isLoading: loading,
             onMonthChanged: onMonthChanged ?? (_) {},
@@ -102,6 +106,26 @@ void main() {
     expect(find.text('Alice Diaz'), findsOneWidget);
     expect(find.text('On shift'), findsWidgets);
     expect(find.text('Absent / No record (2)'), findsOneWidget);
+  });
+
+  testWidgets('shows monthly and selected-day gross', (tester) async {
+    await setSurface(tester, const Size(1200, 1000));
+    await tester.pumpWidget(
+      buildCalendar(
+        dailyRates: const {'u1': 100, 'u2': 80, 'u3': 120},
+        halfDayRates: const {'u1': 50, 'u2': 40, 'u3': 60},
+      ),
+    );
+
+    expect(find.text('Estimated monthly gross'), findsOneWidget);
+    expect(find.text('₱140.00'), findsOneWidget);
+
+    await tester
+        .tap(find.byKey(const ValueKey('admin-attendance-day-2026-10-02')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Gross for selected day'), findsOneWidget);
+    expect(find.text('₱140.00'), findsNWidgets(2));
   });
 
   testWidgets('tapping a day updates the on-duty card', (tester) async {

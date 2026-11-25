@@ -6,6 +6,7 @@ class _PayrollTab extends StatefulWidget {
     required this.usersByUid,
     required this.weekStart,
     required this.onRecordPayout,
+    required this.onSaveRates,
   });
 
   final String eateryId;
@@ -17,6 +18,12 @@ class _PayrollTab extends StatefulWidget {
     double amount,
     String type,
   ) onRecordPayout;
+  final Future<void> Function(
+    String uid,
+    String userLabel,
+    double dailyRate,
+    double halfDayRate,
+  ) onSaveRates;
 
   @override
   State<_PayrollTab> createState() => _PayrollTabState();
@@ -77,6 +84,70 @@ class _PayrollTabState extends State<_PayrollTab> {
 
   String _displayName(Map<String, dynamic> data, String uid) =>
       staffDisplayName(data, uid);
+
+  Future<void> _editRates(BuildContext context, String uid, String label,
+      double dailyRate, double halfDayRate) async {
+    final dailyController = TextEditingController(
+      text: dailyRate > 0 ? dailyRate.toStringAsFixed(2) : '',
+    );
+    final halfController = TextEditingController(
+      text: halfDayRate > 0 ? halfDayRate.toStringAsFixed(2) : '',
+    );
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Pay rates: $label'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: dailyController,
+              autofocus: true,
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
+              decoration: const InputDecoration(
+                labelText: 'Daily rate (₱)',
+                prefixIcon: Icon(Icons.attach_money),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: halfController,
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
+              decoration: const InputDecoration(
+                labelText: 'Half-day rate (₱) — exact amount',
+                prefixIcon: Icon(Icons.timer_outlined),
+                helperText: 'Enter the exact half-day amount, not a percent.',
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+    final nextDaily = _StaffManagementScreenState._asDouble(
+      dailyController.text,
+      fallback: dailyRate,
+    );
+    final nextHalf = _StaffManagementScreenState._asDouble(
+      halfController.text,
+      fallback: halfDayRate,
+    );
+    dailyController.dispose();
+    halfController.dispose();
+    if (saved != true || nextDaily < 0 || nextHalf < 0) return;
+    await widget.onSaveRates(uid, label, nextDaily, nextHalf);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -243,6 +314,7 @@ class _PayrollTabState extends State<_PayrollTab> {
                       final label = r['label'] as String;
                       final fullDays = r['fullDays'] as int;
                       final halfDays = r['halfDays'] as int;
+                      final rate = r['rate'] as double;
                       final halfDayRate = r['halfDayRate'] as double;
                       final gross = r['gross'] as double;
                       final advances = r['advances'] as double;
@@ -271,6 +343,19 @@ class _PayrollTabState extends State<_PayrollTab> {
                           trailing: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
+                              IconButton(
+                                icon: const Icon(Icons.edit_outlined, size: 18),
+                                tooltip: 'Edit pay rates',
+                                visualDensity: VisualDensity.compact,
+                                onPressed: () => _editRates(
+                                  context,
+                                  uid,
+                                  label,
+                                  rate,
+                                  halfDayRate,
+                                ),
+                              ),
+                              const SizedBox(width: 4),
                               Text(
                                 _fmtMoney(net),
                                 style: const TextStyle(
