@@ -9,6 +9,7 @@ import '../../../../../widgets/dashboard/empty_state.dart';
 import '../../../../../widgets/dashboard/kpi_card.dart';
 import '../../../../../widgets/dashboard/section_card.dart';
 import '../../../../../widgets/responsive_search_field.dart';
+import '../../../../../widgets/sage_header_button.dart';
 import '../../../../../widgets/smart_eat_header.dart';
 import '../../data/models/purchase_list_item.dart';
 import '../../data/models/purchase_receipt.dart';
@@ -179,87 +180,109 @@ class _PurchaseListScreenState extends State<PurchaseListScreen> {
     final critical = notifier.criticalItems(widget.items);
     final safe = notifier.safeItems(widget.items);
     final all = notifier.allItems(widget.items);
+    final pendingSummary = notifier.pendingCount == 0
+        ? 'No pending items'
+        : '${notifier.pendingCount} pending • ${_formatCurrency(notifier.pendingCost)}';
 
-    return Scaffold(
-      appBar: SmartEatHeader(
-        titleText: 'Shopping List',
-        showBackButton: true,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.print_outlined),
-            tooltip: 'Print via Bluetooth',
-            onPressed: _printList,
+    return Theme(
+      data: AppTheme.dashboardTheme,
+      child: Scaffold(
+        backgroundColor: AppTheme.sageNavy,
+        appBar: SmartEatHeader(
+          titleText: 'Shopping List',
+          showBackButton: true,
+          title: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Shopping List'),
+              Text(
+                pendingSummary,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.normal,
+                  color: Colors.white.withValues(alpha: 0.7),
+                ),
+              ),
+            ],
           ),
-          IconButton(
-            icon: const Icon(Icons.picture_as_pdf_outlined),
-            tooltip: 'Download PDF',
-            onPressed: _exportPdf,
-          ),
-          if (list.isNotEmpty && widget.onRecordPurchase != null)
+          actions: [
+            const SageHeaderButton(),
             IconButton(
-              icon: const Icon(Icons.playlist_add_check),
-              tooltip: 'Record to Inventory',
-              onPressed: _record,
+              icon: const Icon(Icons.print_outlined),
+              tooltip: 'Print via Bluetooth',
+              onPressed: _printList,
             ),
-          if (list.isNotEmpty)
-            TextButton.icon(
-              icon: const Icon(Icons.delete_sweep_outlined, size: 18),
-              label: const Text('Clear checked'),
-              style: TextButton.styleFrom(foregroundColor: Colors.white),
-              onPressed: () => notifier.clearChecked(),
-            ),
-          if (list.isNotEmpty)
             IconButton(
-              icon: const Icon(Icons.refresh),
-              tooltip: 'Regenerate from critical',
-              onPressed: () => _confirmRegenerate(critical),
+              icon: const Icon(Icons.picture_as_pdf_outlined),
+              tooltip: 'Download PDF',
+              onPressed: _exportPdf,
             ),
-        ],
-      ),
-      body: Column(
-        children: [
-          _buildSummary(context, notifier),
-          Expanded(
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                final isWide = constraints.maxWidth >= 800;
-                final listWidget = _buildMyList(context, notifier, list);
-                final rightColumn = Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    _buildSuggestions(context, notifier, critical, safe),
-                    const SizedBox(height: 16),
-                    _buildAllItems(context, notifier, all),
-                  ],
-                );
-                if (isWide) {
-                  return Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+            if (list.isNotEmpty && widget.onRecordPurchase != null)
+              IconButton(
+                icon: const Icon(Icons.playlist_add_check),
+                tooltip: 'Record to Inventory',
+                onPressed: _record,
+              ),
+            if (list.isNotEmpty)
+              TextButton.icon(
+                icon: const Icon(Icons.delete_sweep_outlined, size: 18),
+                label: const Text('Clear checked'),
+                style: TextButton.styleFrom(foregroundColor: Colors.white),
+                onPressed: () => notifier.clearChecked(),
+              ),
+            if (list.isNotEmpty)
+              IconButton(
+                icon: const Icon(Icons.refresh),
+                tooltip: 'Regenerate from critical',
+                onPressed: () => _confirmRegenerate(critical),
+              ),
+          ],
+        ),
+        body: Column(
+          children: [
+            _buildSummary(context, notifier),
+            Expanded(
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final isWide = constraints.maxWidth >= 800;
+                  final listWidget = _buildMyList(context, notifier, list);
+                  final rightColumn = Column(
+                    mainAxisSize: MainAxisSize.min,
                     children: [
-                      Expanded(
-                        flex: 3,
-                        child: SingleChildScrollView(child: listWidget),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        flex: 2,
-                        child: SingleChildScrollView(child: rightColumn),
-                      ),
+                      _buildSuggestions(context, notifier, critical, safe),
+                      const SizedBox(height: 16),
+                      _buildAllItems(context, notifier, all),
                     ],
                   );
-                }
-                return ListView(
-                  padding: const EdgeInsets.all(12),
-                  children: [
-                    listWidget,
-                    const SizedBox(height: 16),
-                    rightColumn
-                  ],
-                );
-              },
+                  if (isWide) {
+                    return Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          flex: 3,
+                          child: SingleChildScrollView(child: listWidget),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          flex: 2,
+                          child: SingleChildScrollView(child: rightColumn),
+                        ),
+                      ],
+                    );
+                  }
+                  return ListView(
+                    padding: const EdgeInsets.all(12),
+                    children: [
+                      listWidget,
+                      const SizedBox(height: 16),
+                      rightColumn
+                    ],
+                  );
+                },
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

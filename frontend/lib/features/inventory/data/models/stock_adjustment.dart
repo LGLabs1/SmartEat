@@ -61,6 +61,36 @@ class StockAdjustment {
     );
   }
 
+  StockAdjustment copyWith({
+    String? id,
+    String? adjustmentNumber,
+    String? itemId,
+    String? locationId,
+    double? deltaBase,
+    double? qtyBeforeBase,
+    double? qtyAfterBase,
+    String? reasonCode,
+    String? notes,
+    String? performedBy,
+    DateTime? performedAt,
+    String? status,
+  }) {
+    return StockAdjustment(
+      id: id ?? this.id,
+      adjustmentNumber: adjustmentNumber ?? this.adjustmentNumber,
+      itemId: itemId ?? this.itemId,
+      locationId: locationId ?? this.locationId,
+      deltaBase: deltaBase ?? this.deltaBase,
+      qtyBeforeBase: qtyBeforeBase ?? this.qtyBeforeBase,
+      qtyAfterBase: qtyAfterBase ?? this.qtyAfterBase,
+      reasonCode: reasonCode ?? this.reasonCode,
+      notes: notes ?? this.notes,
+      performedBy: performedBy ?? this.performedBy,
+      performedAt: performedAt ?? this.performedAt,
+      status: status ?? this.status,
+    );
+  }
+
   Map<String, dynamic> toJson() => {
         'id': id,
         'adjustmentNumber': adjustmentNumber,

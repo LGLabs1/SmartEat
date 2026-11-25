@@ -336,7 +336,10 @@ class InventoryRemoteRepository implements InventoryRepository {
       final lots = await getFifoLots(adjustment.itemId);
       await saveFifoLots(adjustment.itemId, lots);
     }
-    await _appendAdjustment(adjustment);
+    await _appendAdjustment(adjustment.copyWith(
+      qtyBeforeBase: before,
+      qtyAfterBase: after,
+    ));
   }
 
   @override

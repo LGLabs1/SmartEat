@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../../../../services/api_service.dart';
+import '../../../../../services/firebase_service.dart';
 import '../../../../../theme.dart';
 import '../../../../../widgets/admin/admin_bottom_tabs.dart';
 import '../../../../../widgets/dashboard/dashboard_back_handler.dart';
@@ -165,6 +166,9 @@ class _InventoryFeatureScreenState extends State<InventoryFeatureScreen> {
     final notifier = context.watch<InventoryNotifier>();
     final state = notifier.state;
     final items = state.items;
+    final currentUser = FirebaseService.getCurrentUser();
+    final performedBy =
+        currentUser?.displayName ?? currentUser?.email ?? 'admin';
     final error = state.error;
     final showError = error != null && error != _dismissedError;
 
@@ -188,6 +192,9 @@ class _InventoryFeatureScreenState extends State<InventoryFeatureScreen> {
             MaterialPageRoute(
               builder: (_) => ItemDetailScreen(
                 item: item,
+                performedBy: performedBy,
+                onAdjustStock: (adjustment) =>
+                    notifier.applyAdjustment(adjustment),
                 onItemUpdated: (updated) {
                   if (!mounted) return;
                   notifier.updateItemInState(updated);
@@ -243,6 +250,8 @@ class _InventoryFeatureScreenState extends State<InventoryFeatureScreen> {
         key: const ValueKey('inventory-adjustments'),
         adjustments: state.adjustments,
         items: items,
+        performedBy: performedBy,
+        onAdjustStock: (adjustment) => notifier.applyAdjustment(adjustment),
         showAppBar: false,
       ),
       ReportsScreen(

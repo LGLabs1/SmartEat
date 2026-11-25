@@ -33,7 +33,6 @@ class FinanceOverviewTab extends StatelessWidget {
     required this.onAddPayable,
     required this.onOpenExpense,
     required this.onOpenPayable,
-    required this.onExport,
   });
 
   final List<Map<String, dynamic>> expenses;
@@ -52,7 +51,6 @@ class FinanceOverviewTab extends StatelessWidget {
   final VoidCallback onOpenPayables;
   final VoidCallback onAddExpense;
   final VoidCallback onAddPayable;
-  final VoidCallback onExport;
   final ValueChanged<Map<String, dynamic>> onOpenExpense;
   final ValueChanged<Map<String, dynamic>> onOpenPayable;
 
@@ -393,10 +391,6 @@ class FinanceOverviewTab extends StatelessWidget {
               icon: Icons.show_chart_rounded,
               iconColor: AppTheme.sageAccent,
               badge: 'Last 14 days',
-              action: TextButton.icon(
-                  onPressed: onExport,
-                  icon: const Icon(Icons.download_outlined, size: 16),
-                  label: const Text('Export')),
               child: CashflowTrendChart(
                   points: trendPoints, compactMoney: fmt.moneyCompact)),
           const SizedBox(height: 16),

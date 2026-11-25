@@ -2,15 +2,23 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../../../../services/api_service.dart';
 import '../../../../../models/inventory_item.dart';
+import '../../../../../theme.dart';
+import '../../data/models/stock_adjustment.dart';
+import 'adjustment_dialog.dart';
 
 class AddItemDialog extends StatefulWidget {
   final String? initialCategory;
   final InventoryItem? initialItem;
+  final Future<InventoryItem?> Function(StockAdjustment adjustment)?
+      onAdjustStock;
+  final String? performedBy;
 
   const AddItemDialog({
     Key? key,
     this.initialCategory,
     this.initialItem,
+    this.onAdjustStock,
+    this.performedBy,
   }) : super(key: key);
 
   @override
@@ -243,14 +251,39 @@ class _AddItemDialogState extends State<AddItemDialog> {
     }
   }
 
-  InputDecoration _dec(String label, {String? helper, String? prefix}) {
+  InputDecoration _dec(String label,
+      {String? helper, String? prefix, Widget? suffixIcon}) {
     return InputDecoration(
       labelText: label,
       helperText: helper,
       prefixText: prefix,
+      suffixIcon: suffixIcon,
       border: const OutlineInputBorder(),
       isDense: true,
     );
+  }
+
+  String _formatQty(double value) => value == value.roundToDouble()
+      ? value.toStringAsFixed(0)
+      : value.toStringAsFixed(2);
+
+  Future<void> _openAdjustStock() async {
+    final item = widget.initialItem;
+    if (item == null || widget.onAdjustStock == null) return;
+    final adjustment = await showDialog<StockAdjustment>(
+      context: context,
+      builder: (_) => AdjustmentDialog(
+        items: [item],
+        initialItem: item,
+        performedBy: widget.performedBy,
+      ),
+    );
+    if (adjustment == null) return;
+    final updated = await widget.onAdjustStock!(adjustment);
+    if (updated != null && mounted) {
+      setState(() =>
+          _currentStockController.text = _formatQty(updated.currentStock));
+    }
   }
 
   Widget _sectionTitle(BuildContext context, IconData icon, String title) {
@@ -274,399 +307,422 @@ class _AddItemDialogState extends State<AddItemDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return Dialog(
-      insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
-      clipBehavior: Clip.antiAlias,
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 760, maxHeight: 640),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Container(
-              padding: const EdgeInsets.all(20),
-              color: Theme.of(context).colorScheme.primaryContainer,
-              child: Row(
-                children: [
-                  Icon(
-                    isEdit ? Icons.edit_outlined : Icons.add_box_outlined,
-                    color: Theme.of(context).colorScheme.onPrimaryContainer,
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          isEdit ? 'Edit Inventory Item' : 'Add Inventory Item',
-                          style:
-                              Theme.of(context).textTheme.titleLarge?.copyWith(
-                                    fontWeight: FontWeight.bold,
-                                    color: Theme.of(context)
-                                        .colorScheme
-                                        .onPrimaryContainer,
-                                  ),
-                        ),
-                        Text(
-                          'Fields marked * are required',
-                          style:
-                              Theme.of(context).textTheme.bodySmall?.copyWith(
-                                    color: Theme.of(context)
-                                        .colorScheme
-                                        .onPrimaryContainer,
-                                  ),
-                        ),
-                      ],
+    return Theme(
+      data: AppTheme.dashboardTheme,
+      child: Dialog(
+        insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+        clipBehavior: Clip.antiAlias,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 760, maxHeight: 640),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Container(
+                padding: const EdgeInsets.fromLTRB(20, 16, 12, 16),
+                decoration:
+                    const BoxDecoration(gradient: AppTheme.sageGradient),
+                child: Row(
+                  children: [
+                    Icon(
+                      isEdit ? Icons.edit_outlined : Icons.add_box_outlined,
+                      color: Colors.white,
                     ),
-                  ),
-                ],
-              ),
-            ),
-            Flexible(
-              child: Form(
-                key: _formKey,
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.all(20),
-                  child: LayoutBuilder(
-                    builder: (context, constraints) {
-                      final twoCol = constraints.maxWidth >= 560;
-                      final half = twoCol
-                          ? (constraints.maxWidth - 16) / 2
-                          : constraints.maxWidth;
-                      return Column(
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          _sectionTitle(
-                              context, Icons.info_outline, 'Basic Information'),
-                          TextFormField(
-                            controller: _nameController,
-                            decoration: _dec('Item Name *'),
-                            textInputAction: TextInputAction.next,
-                            validator: (value) =>
-                                value == null || value.trim().isEmpty
-                                    ? 'Item name is required'
-                                    : null,
+                          Text(
+                            isEdit
+                                ? 'Edit Inventory Item'
+                                : 'Add Inventory Item',
+                            style: Theme.of(context)
+                                .textTheme
+                                .titleLarge
+                                ?.copyWith(
+                                  fontWeight: FontWeight.w800,
+                                  color: Colors.white,
+                                ),
                           ),
-                          const SizedBox(height: 16),
-                          Wrap(
-                            spacing: 16,
-                            runSpacing: 16,
-                            children: [
-                              SizedBox(
-                                width: half,
-                                child: DropdownButtonFormField<String>(
-                                  value: _selectedCategory,
-                                  decoration: _dec('Category *'),
-                                  isExpanded: true,
-                                  items: _categoryOptions
-                                      .map((cat) => DropdownMenuItem(
-                                          value: cat, child: Text(cat)))
-                                      .toList(),
-                                  onChanged: (value) {
-                                    setState(() {
-                                      _selectedCategory = value;
-                                      _categoryController.text = value ?? '';
-                                    });
-                                  },
-                                  validator: (value) =>
-                                      value == null || value.isEmpty
-                                          ? 'Category is required'
-                                          : null,
-                                ),
-                              ),
-                              SizedBox(
-                                width: half,
-                                child: TextFormField(
-                                  controller: _skuController,
-                                  decoration:
-                                      _dec('SKU / Barcode', helper: 'Optional'),
-                                  textInputAction: TextInputAction.next,
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 16),
-                          TextFormField(
-                            controller: _descriptionController,
-                            decoration: _dec('Description',
-                                helper: 'Optional short description'),
-                            textInputAction: TextInputAction.next,
-                          ),
-                          const SizedBox(height: 24),
-                          _sectionTitle(context, Icons.straighten,
-                              'Units & Stock Levels'),
-                          Wrap(
-                            spacing: 16,
-                            runSpacing: 16,
-                            children: [
-                              SizedBox(
-                                width: half,
-                                child: DropdownButtonFormField<String>(
-                                  value: _selectedUnit,
-                                  decoration: _dec('Unit of Measure *'),
-                                  isExpanded: true,
-                                  items: _unitOptions
-                                      .map((unit) => DropdownMenuItem(
-                                          value: unit, child: Text(unit)))
-                                      .toList(),
-                                  onChanged: (value) {
-                                    setState(() {
-                                      _selectedUnit = value;
-                                      _unitController.text = value ?? '';
-                                    });
-                                  },
-                                  validator: (value) =>
-                                      value == null || value.isEmpty
-                                          ? 'Unit is required'
-                                          : null,
-                                ),
-                              ),
-                              SizedBox(
-                                width: half,
-                                child: TextFormField(
-                                  controller: _currentStockController,
-                                  enabled: !isEdit,
-                                  decoration: _dec(
-                                    'Current Stock *',
-                                    helper: isEdit
-                                        ? 'Use Adjust Stock to change quantity'
-                                        : null,
-                                  ),
-                                  keyboardType:
-                                      const TextInputType.numberWithOptions(
-                                          decimal: true),
-                                  inputFormatters: [
-                                    FilteringTextInputFormatter.allow(
-                                        RegExp(r'^\d*\.?\d*'))
-                                  ],
-                                  validator: (value) {
-                                    if (value == null || value.trim().isEmpty) {
-                                      return 'Current stock is required';
-                                    }
-                                    final d = double.tryParse(value);
-                                    if (d == null || d < 0)
-                                      return 'Enter valid stock';
-                                    return null;
-                                  },
-                                ),
-                              ),
-                              SizedBox(
-                                width: half,
-                                child: TextFormField(
-                                  controller: _minStockController,
-                                  decoration: _dec('Min Stock *',
-                                      helper: 'Low-stock alert threshold'),
-                                  keyboardType:
-                                      const TextInputType.numberWithOptions(
-                                          decimal: true),
-                                  inputFormatters: [
-                                    FilteringTextInputFormatter.allow(
-                                        RegExp(r'^\d*\.?\d*'))
-                                  ],
-                                  validator: (value) {
-                                    if (value == null || value.trim().isEmpty) {
-                                      return 'Min stock is required';
-                                    }
-                                    final d = double.tryParse(value);
-                                    if (d == null || d < 0)
-                                      return 'Enter valid stock';
-                                    return null;
-                                  },
-                                ),
-                              ),
-                              SizedBox(
-                                width: half,
-                                child: TextFormField(
-                                  controller: _reorderPointController,
-                                  decoration: _dec('Reorder Point',
-                                      helper:
-                                          'Reorder when stock reaches this'),
-                                  keyboardType:
-                                      const TextInputType.numberWithOptions(
-                                          decimal: true),
-                                  inputFormatters: [
-                                    FilteringTextInputFormatter.allow(
-                                        RegExp(r'^\d*\.?\d*'))
-                                  ],
-                                ),
-                              ),
-                              SizedBox(
-                                width: half,
-                                child: TextFormField(
-                                  controller: _maxStockController,
-                                  decoration: _dec('Max Stock',
-                                      helper: 'Used for restock suggestions'),
-                                  keyboardType:
-                                      const TextInputType.numberWithOptions(
-                                          decimal: true),
-                                  inputFormatters: [
-                                    FilteringTextInputFormatter.allow(
-                                        RegExp(r'^\d*\.?\d*'))
-                                  ],
-                                ),
-                              ),
-                              SizedBox(
-                                width: half,
-                                child: TextFormField(
-                                  controller: _safetyStockController,
-                                  decoration: _dec('Safety Stock',
-                                      helper: 'Buffer above min stock'),
-                                  keyboardType:
-                                      const TextInputType.numberWithOptions(
-                                          decimal: true),
-                                  inputFormatters: [
-                                    FilteringTextInputFormatter.allow(
-                                        RegExp(r'^\d*\.?\d*'))
-                                  ],
-                                ),
-                              ),
-                              SizedBox(
-                                width: half,
-                                child: TextFormField(
-                                  controller: _leadTimeController,
-                                  decoration: _dec('Lead Time (days)',
-                                      helper: 'Supplier delivery time'),
-                                  keyboardType: TextInputType.number,
-                                  inputFormatters: [
-                                    FilteringTextInputFormatter.digitsOnly
-                                  ],
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 24),
-                          _sectionTitle(
-                              context, Icons.payments_outlined, 'Pricing'),
-                          Wrap(
-                            spacing: 16,
-                            runSpacing: 16,
-                            children: [
-                              SizedBox(
-                                width: half,
-                                child: TextFormField(
-                                  controller: _unitCostController,
-                                  decoration: _dec('Unit Cost *', prefix: '₱ '),
-                                  keyboardType:
-                                      const TextInputType.numberWithOptions(
-                                          decimal: true),
-                                  inputFormatters: [
-                                    FilteringTextInputFormatter.allow(
-                                        RegExp(r'^\d*\.?\d*'))
-                                  ],
-                                  validator: (value) {
-                                    if (value == null || value.trim().isEmpty) {
-                                      return 'Unit cost is required';
-                                    }
-                                    final d = double.tryParse(value);
-                                    if (d == null || d < 0)
-                                      return 'Enter valid cost';
-                                    return null;
-                                  },
-                                ),
-                              ),
-                              SizedBox(
-                                width: half,
-                                child: TextFormField(
-                                  controller: _sellingPriceController,
-                                  decoration: _dec('Selling Price',
-                                      prefix: '₱ ', helper: 'Optional'),
-                                  keyboardType:
-                                      const TextInputType.numberWithOptions(
-                                          decimal: true),
-                                  inputFormatters: [
-                                    FilteringTextInputFormatter.allow(
-                                        RegExp(r'^\d*\.?\d*'))
-                                  ],
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 24),
-                          _sectionTitle(
-                              context,
-                              Icons.settings_suggest_outlined,
-                              'Inventory Settings'),
-                          Wrap(
-                            spacing: 16,
-                            runSpacing: 16,
-                            children: [
-                              SizedBox(
-                                width: half,
-                                child: DropdownButtonFormField<String>(
-                                  value: _consumptionMode,
-                                  decoration: _dec('Consumption Mode *'),
-                                  isExpanded: true,
-                                  items: const [
-                                    DropdownMenuItem(
-                                      value: 'direct',
-                                      child: Text(
-                                          'Direct - decrement stock on sales'),
-                                    ),
-                                    DropdownMenuItem(
-                                      value: 'recipe_pending',
-                                      child: Text(
-                                          'Recipe ingredient - awaiting dish mapping'),
-                                    ),
-                                  ],
-                                  onChanged: (value) {
-                                    if (value != null)
-                                      setState(() => _consumptionMode = value);
-                                  },
-                                ),
-                              ),
-                              SizedBox(
-                                width: half,
-                                child: TextFormField(
-                                  controller: _supplierController,
-                                  decoration:
-                                      _dec('Supplier', helper: 'Optional'),
-                                  textInputAction: TextInputAction.next,
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 16),
-                          TextFormField(
-                            controller: _notesController,
-                            decoration: _dec('Notes',
-                                helper: 'Optional internal notes'),
-                            maxLines: 3,
-                            minLines: 2,
+                          Text(
+                            'Fields marked * are required',
+                            style: const TextStyle(
+                              color: Colors.white70,
+                              fontSize: 12,
+                            ),
                           ),
                         ],
-                      );
-                    },
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: 'Close',
+                      icon: const Icon(Icons.close, color: Colors.white),
+                      onPressed: () => Navigator.of(context).pop(),
+                    ),
+                  ],
+                ),
+              ),
+              Flexible(
+                child: Form(
+                  key: _formKey,
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.all(20),
+                    child: LayoutBuilder(
+                      builder: (context, constraints) {
+                        final twoCol = constraints.maxWidth >= 560;
+                        final half = twoCol
+                            ? (constraints.maxWidth - 16) / 2
+                            : constraints.maxWidth;
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            _sectionTitle(context, Icons.info_outline,
+                                'Basic Information'),
+                            TextFormField(
+                              controller: _nameController,
+                              decoration: _dec('Item Name *'),
+                              textInputAction: TextInputAction.next,
+                              validator: (value) =>
+                                  value == null || value.trim().isEmpty
+                                      ? 'Item name is required'
+                                      : null,
+                            ),
+                            const SizedBox(height: 16),
+                            Wrap(
+                              spacing: 16,
+                              runSpacing: 16,
+                              children: [
+                                SizedBox(
+                                  width: half,
+                                  child: DropdownButtonFormField<String>(
+                                    value: _selectedCategory,
+                                    decoration: _dec('Category *'),
+                                    isExpanded: true,
+                                    items: _categoryOptions
+                                        .map((cat) => DropdownMenuItem(
+                                            value: cat, child: Text(cat)))
+                                        .toList(),
+                                    onChanged: (value) {
+                                      setState(() {
+                                        _selectedCategory = value;
+                                        _categoryController.text = value ?? '';
+                                      });
+                                    },
+                                    validator: (value) =>
+                                        value == null || value.isEmpty
+                                            ? 'Category is required'
+                                            : null,
+                                  ),
+                                ),
+                                SizedBox(
+                                  width: half,
+                                  child: TextFormField(
+                                    controller: _skuController,
+                                    decoration: _dec('SKU / Barcode',
+                                        helper: 'Optional'),
+                                    textInputAction: TextInputAction.next,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 16),
+                            TextFormField(
+                              controller: _descriptionController,
+                              decoration: _dec('Description',
+                                  helper: 'Optional short description'),
+                              textInputAction: TextInputAction.next,
+                            ),
+                            const SizedBox(height: 24),
+                            _sectionTitle(context, Icons.straighten,
+                                'Units & Stock Levels'),
+                            Wrap(
+                              spacing: 16,
+                              runSpacing: 16,
+                              children: [
+                                SizedBox(
+                                  width: half,
+                                  child: DropdownButtonFormField<String>(
+                                    value: _selectedUnit,
+                                    decoration: _dec('Unit of Measure *'),
+                                    isExpanded: true,
+                                    items: _unitOptions
+                                        .map((unit) => DropdownMenuItem(
+                                            value: unit, child: Text(unit)))
+                                        .toList(),
+                                    onChanged: (value) {
+                                      setState(() {
+                                        _selectedUnit = value;
+                                        _unitController.text = value ?? '';
+                                      });
+                                    },
+                                    validator: (value) =>
+                                        value == null || value.isEmpty
+                                            ? 'Unit is required'
+                                            : null,
+                                  ),
+                                ),
+                                SizedBox(
+                                  width: half,
+                                  child: TextFormField(
+                                    controller: _currentStockController,
+                                    enabled: !isEdit,
+                                    decoration: _dec(
+                                      'Current Stock *',
+                                      helper: isEdit
+                                          ? 'Quantity is changed through Adjust Stock'
+                                          : null,
+                                      suffixIcon:
+                                          isEdit && widget.onAdjustStock != null
+                                              ? IconButton(
+                                                  tooltip: 'Adjust stock',
+                                                  icon: const Icon(Icons.tune),
+                                                  onPressed: _openAdjustStock,
+                                                )
+                                              : null,
+                                    ),
+                                    keyboardType:
+                                        const TextInputType.numberWithOptions(
+                                            decimal: true),
+                                    inputFormatters: [
+                                      FilteringTextInputFormatter.allow(
+                                          RegExp(r'^\d*\.?\d*'))
+                                    ],
+                                    validator: (value) {
+                                      if (value == null ||
+                                          value.trim().isEmpty) {
+                                        return 'Current stock is required';
+                                      }
+                                      final d = double.tryParse(value);
+                                      if (d == null || d < 0)
+                                        return 'Enter valid stock';
+                                      return null;
+                                    },
+                                  ),
+                                ),
+                                SizedBox(
+                                  width: half,
+                                  child: TextFormField(
+                                    controller: _minStockController,
+                                    decoration: _dec('Min Stock *',
+                                        helper: 'Low-stock alert threshold'),
+                                    keyboardType:
+                                        const TextInputType.numberWithOptions(
+                                            decimal: true),
+                                    inputFormatters: [
+                                      FilteringTextInputFormatter.allow(
+                                          RegExp(r'^\d*\.?\d*'))
+                                    ],
+                                    validator: (value) {
+                                      if (value == null ||
+                                          value.trim().isEmpty) {
+                                        return 'Min stock is required';
+                                      }
+                                      final d = double.tryParse(value);
+                                      if (d == null || d < 0)
+                                        return 'Enter valid stock';
+                                      return null;
+                                    },
+                                  ),
+                                ),
+                                SizedBox(
+                                  width: half,
+                                  child: TextFormField(
+                                    controller: _reorderPointController,
+                                    decoration: _dec('Reorder Point',
+                                        helper:
+                                            'Reorder when stock reaches this'),
+                                    keyboardType:
+                                        const TextInputType.numberWithOptions(
+                                            decimal: true),
+                                    inputFormatters: [
+                                      FilteringTextInputFormatter.allow(
+                                          RegExp(r'^\d*\.?\d*'))
+                                    ],
+                                  ),
+                                ),
+                                SizedBox(
+                                  width: half,
+                                  child: TextFormField(
+                                    controller: _maxStockController,
+                                    decoration: _dec('Max Stock',
+                                        helper: 'Used for restock suggestions'),
+                                    keyboardType:
+                                        const TextInputType.numberWithOptions(
+                                            decimal: true),
+                                    inputFormatters: [
+                                      FilteringTextInputFormatter.allow(
+                                          RegExp(r'^\d*\.?\d*'))
+                                    ],
+                                  ),
+                                ),
+                                SizedBox(
+                                  width: half,
+                                  child: TextFormField(
+                                    controller: _safetyStockController,
+                                    decoration: _dec('Safety Stock',
+                                        helper: 'Buffer above min stock'),
+                                    keyboardType:
+                                        const TextInputType.numberWithOptions(
+                                            decimal: true),
+                                    inputFormatters: [
+                                      FilteringTextInputFormatter.allow(
+                                          RegExp(r'^\d*\.?\d*'))
+                                    ],
+                                  ),
+                                ),
+                                SizedBox(
+                                  width: half,
+                                  child: TextFormField(
+                                    controller: _leadTimeController,
+                                    decoration: _dec('Lead Time (days)',
+                                        helper: 'Supplier delivery time'),
+                                    keyboardType: TextInputType.number,
+                                    inputFormatters: [
+                                      FilteringTextInputFormatter.digitsOnly
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 24),
+                            _sectionTitle(
+                                context, Icons.payments_outlined, 'Pricing'),
+                            Wrap(
+                              spacing: 16,
+                              runSpacing: 16,
+                              children: [
+                                SizedBox(
+                                  width: half,
+                                  child: TextFormField(
+                                    controller: _unitCostController,
+                                    decoration:
+                                        _dec('Unit Cost *', prefix: '₱ '),
+                                    keyboardType:
+                                        const TextInputType.numberWithOptions(
+                                            decimal: true),
+                                    inputFormatters: [
+                                      FilteringTextInputFormatter.allow(
+                                          RegExp(r'^\d*\.?\d*'))
+                                    ],
+                                    validator: (value) {
+                                      if (value == null ||
+                                          value.trim().isEmpty) {
+                                        return 'Unit cost is required';
+                                      }
+                                      final d = double.tryParse(value);
+                                      if (d == null || d < 0)
+                                        return 'Enter valid cost';
+                                      return null;
+                                    },
+                                  ),
+                                ),
+                                SizedBox(
+                                  width: half,
+                                  child: TextFormField(
+                                    controller: _sellingPriceController,
+                                    decoration: _dec('Selling Price',
+                                        prefix: '₱ ', helper: 'Optional'),
+                                    keyboardType:
+                                        const TextInputType.numberWithOptions(
+                                            decimal: true),
+                                    inputFormatters: [
+                                      FilteringTextInputFormatter.allow(
+                                          RegExp(r'^\d*\.?\d*'))
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 24),
+                            _sectionTitle(
+                                context,
+                                Icons.settings_suggest_outlined,
+                                'Inventory Settings'),
+                            Wrap(
+                              spacing: 16,
+                              runSpacing: 16,
+                              children: [
+                                SizedBox(
+                                  width: half,
+                                  child: DropdownButtonFormField<String>(
+                                    value: _consumptionMode,
+                                    decoration: _dec('Consumption Mode *'),
+                                    isExpanded: true,
+                                    items: const [
+                                      DropdownMenuItem(
+                                        value: 'direct',
+                                        child: Text(
+                                            'Direct - decrement stock on sales'),
+                                      ),
+                                      DropdownMenuItem(
+                                        value: 'recipe_pending',
+                                        child: Text(
+                                            'Recipe ingredient - awaiting dish mapping'),
+                                      ),
+                                    ],
+                                    onChanged: (value) {
+                                      if (value != null)
+                                        setState(
+                                            () => _consumptionMode = value);
+                                    },
+                                  ),
+                                ),
+                                SizedBox(
+                                  width: half,
+                                  child: TextFormField(
+                                    controller: _supplierController,
+                                    decoration:
+                                        _dec('Supplier', helper: 'Optional'),
+                                    textInputAction: TextInputAction.next,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 16),
+                            TextFormField(
+                              controller: _notesController,
+                              decoration: _dec('Notes',
+                                  helper: 'Optional internal notes'),
+                              maxLines: 3,
+                              minLines: 2,
+                            ),
+                          ],
+                        );
+                      },
+                    ),
                   ),
                 ),
               ),
-            ),
-            const Divider(height: 1),
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  TextButton(
-                    onPressed:
-                        _isLoading ? null : () => Navigator.of(context).pop(),
-                    child: const Text('Cancel'),
-                  ),
-                  const SizedBox(width: 8),
-                  FilledButton.icon(
-                    onPressed: _isLoading ? null : _saveItem,
-                    icon: _isLoading
-                        ? const SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.check),
-                    label: Text(isEdit ? 'Save Changes' : 'Add Item'),
-                  ),
-                ],
+              const Divider(height: 1),
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    OutlinedButton.icon(
+                      onPressed:
+                          _isLoading ? null : () => Navigator.of(context).pop(),
+                      icon: const Icon(Icons.close),
+                      label: const Text('Cancel'),
+                    ),
+                    const SizedBox(width: 8),
+                    FilledButton.icon(
+                      onPressed: _isLoading ? null : _saveItem,
+                      icon: _isLoading
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.check),
+                      label: Text(isEdit ? 'Save Changes' : 'Add Item'),
+                    ),
+                  ],
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );

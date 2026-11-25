@@ -7,7 +7,7 @@ import '../../../../widgets/dashboard/section_card.dart';
 import '../../data/business_kpis.dart';
 import '../../data/finance_format.dart';
 import '../../data/finance_metrics.dart';
-import 'finance_category_bar.dart';
+import 'finance_category_pie_chart.dart';
 import 'finance_kpi_grid.dart';
 
 /// Monthly finance report with P&L, growth, menu profitability, COGS/waste and forecast.
@@ -23,7 +23,6 @@ class FinanceReportsTab extends StatefulWidget {
     this.damagedItems = const [],
     this.salesForecast = const [],
     required this.fmt,
-    required this.budgets,
     required this.onEditBudgets,
     required this.onExport,
   });
@@ -37,7 +36,6 @@ class FinanceReportsTab extends StatefulWidget {
   final List<Map<String, dynamic>> damagedItems;
   final List<Map<String, dynamic>> salesForecast;
   final FinanceFormat fmt;
-  final Map<String, double> budgets;
   final VoidCallback onEditBudgets;
   final Future<void> Function(DateTime month) onExport;
 
@@ -79,8 +77,6 @@ class _FinanceReportsTabState extends State<FinanceReportsTab> {
       final d = FinanceMetrics.expenseDate(e);
       return d != null && d.year == _month.year && d.month == _month.month;
     }).toList();
-    final totalExpenses = monthExpenses.fold<double>(
-        0, (sum, e) => sum + FinanceMetrics.amountOf(e));
     final sales =
         BusinessKpis.summarizeOrders(widget.orders, start: start, end: end);
     final prevSales = BusinessKpis.summarizeOrders(widget.orders,
@@ -380,18 +376,9 @@ class _FinanceReportsTabState extends State<FinanceReportsTab> {
                     icon: Icons.pie_chart_outline,
                     title: 'No expenses for $_monthName',
                     subtitle: 'Nothing recorded in this month.')
-                : Column(children: [
-                    for (final entry in categoryData)
-                      FinanceCategoryBar(
-                          category: entry.key,
-                          amount: entry.value,
-                          percent: totalExpenses > 0
-                              ? entry.value / totalExpenses * 100
-                              : 0,
-                          color: financeCategoryColor(entry.key),
-                          budget: widget.budgets[entry.key],
-                          money: widget.fmt.money)
-                  ])),
+                : FinanceCategoryPieChart(
+                    data: categoryData.take(6).toList(),
+                    money: widget.fmt.money)),
         const SizedBox(height: 16),
         Row(children: [
           Expanded(

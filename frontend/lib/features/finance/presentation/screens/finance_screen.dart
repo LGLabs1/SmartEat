@@ -1119,7 +1119,6 @@ class _FinanceScreenState extends State<FinanceScreen> {
           damagedItems: _damagedItems,
           salesForecast: _salesForecast,
           fmt: _fmt,
-          budgets: _budgets,
           onEditBudgets: _editBudgets,
           onExport: _exportExpenses,
         );
@@ -1151,7 +1150,6 @@ class _FinanceScreenState extends State<FinanceScreen> {
           onAddPayable: _addPayable,
           onOpenExpense: _openExpense,
           onOpenPayable: _openPayable,
-          onExport: () => _exportExpenses(),
         );
     }
   }

@@ -1,13 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-import 'package:provider/provider.dart';
 import '../../../../../models/inventory_item.dart';
 import '../../../../../theme.dart';
 import '../../../../../widgets/dashboard/empty_state.dart';
 import '../../../../../widgets/dashboard/kpi_card.dart';
 import '../../../../../widgets/responsive_search_field.dart';
 import '../../data/models/purchase_receipt.dart';
-import '../providers/purchase_list_notifier.dart';
 
 /// Durable purchase history (GRN). Shows every recorded receipt with a KPI
 /// summary, search/filter controls, and expandable per-line breakdowns.
@@ -93,9 +91,6 @@ class _PurchasesScreenState extends State<PurchasesScreen> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final listNotifier = widget.onOpenPurchaseList == null
-        ? null
-        : context.watch<PurchaseListNotifier>();
     final filtered = _filtered;
 
     final totalSpend = filtered.fold<double>(0, (s, p) => s + _total(p));
@@ -133,17 +128,6 @@ class _PurchasesScreenState extends State<PurchasesScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                if (widget.onOpenPurchaseList != null)
-                  SizedBox(
-                    width: double.infinity,
-                    child: FilledButton.icon(
-                      onPressed: widget.onOpenPurchaseList,
-                      icon: const Icon(Icons.playlist_add_check_outlined),
-                      label: const Text('Open Shopping List'),
-                    ),
-                  ),
-                if (widget.onOpenPurchaseList != null)
-                  const SizedBox(height: 12),
                 Row(
                   children: [
                     Expanded(
@@ -214,6 +198,18 @@ class _PurchasesScreenState extends State<PurchasesScreen> {
                   children: [
                     _dateRangeChip(context),
                     if (suppliers.isNotEmpty) _supplierDropdown(suppliers),
+                    if (widget.onOpenPurchaseList != null)
+                      FilledButton.icon(
+                        key: const Key('purchases-shopping-list-button'),
+                        onPressed: widget.onOpenPurchaseList,
+                        icon: const Icon(Icons.playlist_add_check_outlined,
+                            size: 16),
+                        label: const Text('Shopping List'),
+                        style: FilledButton.styleFrom(
+                          visualDensity: VisualDensity.compact,
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
+                      ),
                   ],
                 ),
               ],
@@ -241,32 +237,6 @@ class _PurchasesScreenState extends State<PurchasesScreen> {
                     ),
                   ),
                 ),
-                const SizedBox(height: 12),
-                if (widget.onOpenPurchaseList != null)
-                  Card(
-                    elevation: 0,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14),
-                      side: BorderSide(color: theme.colorScheme.outlineVariant),
-                    ),
-                    child: ListTile(
-                      onTap: widget.onOpenPurchaseList,
-                      leading: CircleAvatar(
-                        backgroundColor:
-                            theme.colorScheme.primary.withValues(alpha: 0.12),
-                        child: Icon(Icons.shopping_basket_outlined,
-                            color: theme.colorScheme.secondary),
-                      ),
-                      title: const Text('View shopping list'),
-                      subtitle: listNotifier == null
-                          ? const Text('Review & record planned purchases')
-                          : listNotifier.list.isEmpty
-                              ? const Text('No pending items — tap to create')
-                              : Text(
-                                  '${listNotifier.pendingCount} pending • ${_money(listNotifier.pendingCost)}'),
-                      trailing: const Icon(Icons.arrow_forward_ios, size: 14),
-                    ),
-                  ),
                 const SizedBox(height: 12),
                 if (filtered.isEmpty)
                   const Padding(
