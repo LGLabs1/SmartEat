@@ -180,16 +180,6 @@ class _ReportsScreenState extends State<ReportsScreen> {
     );
   }
 
-  Future<void> _printPdfReport() {
-    return _runPdfAction(() => ReportPdfService.printReport(
-          title: 'Inventory Report',
-          subtitle: 'Stock health, value, and consumption summary',
-          filePrefix: 'inventory_report',
-          sections: _buildReportSections(),
-          footer: 'SmartEat Inventory Reports',
-        ));
-  }
-
   Future<void> _sharePdfReport() {
     return _runPdfAction(() => ReportPdfService.shareReport(
           title: 'Inventory Report',
@@ -254,47 +244,11 @@ class _ReportsScreenState extends State<ReportsScreen> {
 
     return Scaffold(
       appBar: widget.showAppBar
-          ? AppBar(
-              title: const Text('Inventory Reports'),
-              actions: [
-                IconButton(
-                  icon: const Icon(Icons.print_outlined),
-                  tooltip: 'Print report',
-                  onPressed: _printReport,
-                ),
-              ],
-            )
+          ? AppBar(title: const Text('Inventory Reports'))
           : null,
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          Row(children: [
-            Expanded(
-              child: FilledButton.icon(
-                onPressed: _printPdfReport,
-                icon: const Icon(Icons.print_outlined),
-                label: const Text('Print PDF'),
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: OutlinedButton.icon(
-                onPressed: _sharePdfReport,
-                icon: const Icon(Icons.share_outlined),
-                label: const Text('Share PDF'),
-              ),
-            ),
-          ]),
-          const SizedBox(height: 8),
-          SizedBox(
-            width: double.infinity,
-            child: OutlinedButton.icon(
-              onPressed: _printReport,
-              icon: const Icon(Icons.print_outlined),
-              label: const Text('Print to Bluetooth Printer'),
-            ),
-          ),
-          const SizedBox(height: 16),
           sectionHeader('Key Metrics & Health', AppTheme.sageAccent),
           HealthScoreCard(result: health),
           const SizedBox(height: 16),
@@ -717,6 +671,27 @@ class _ReportsScreenState extends State<ReportsScreen> {
               onTap: () {},
             ),
           ),
+          const SizedBox(height: 16),
+          Row(children: [
+            Expanded(
+              child: OutlinedButton.icon(
+                key: const Key('inventory-bluetooth-print-button'),
+                onPressed: _printReport,
+                icon: const Icon(Icons.print_outlined),
+                label: const Text('Print PDF via Bluetooth printer'),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: OutlinedButton.icon(
+                key: const Key('inventory-download-pdf-button'),
+                onPressed: _sharePdfReport,
+                icon: const Icon(Icons.download_outlined),
+                label: const Text('Download PDF'),
+              ),
+            ),
+          ]),
+          const SizedBox(height: 24),
         ],
       ),
     );

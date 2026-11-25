@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../../services/receipt_printer_service.dart';
 import '../../../../services/report_pdf_service.dart';
 import '../../../../theme.dart';
 import '../../../../widgets/dashboard/empty_state.dart';
@@ -24,7 +25,6 @@ class FinanceReportsTab extends StatefulWidget {
     this.salesForecast = const [],
     required this.fmt,
     required this.onEditBudgets,
-    required this.onExport,
   });
 
   final List<Map<String, dynamic>> expenses;
@@ -37,7 +37,6 @@ class FinanceReportsTab extends StatefulWidget {
   final List<Map<String, dynamic>> salesForecast;
   final FinanceFormat fmt;
   final VoidCallback onEditBudgets;
-  final Future<void> Function(DateTime month) onExport;
 
   @override
   State<FinanceReportsTab> createState() => _FinanceReportsTabState();
@@ -62,6 +61,35 @@ class _FinanceReportsTabState extends State<FinanceReportsTab> {
         SnackBar(content: Text('Could not open report: $e')),
       );
     }
+  }
+
+  List<String> _printerLines(List<ReportPdfSection> sections) {
+    final lines = <String>[];
+    for (var i = 0; i < sections.length; i++) {
+      if (i > 0) lines.add(ReceiptPrinterService.documentDivider);
+      lines.add('${ReceiptPrinterService.documentSection}${sections[i].title}');
+      lines.addAll(sections[i].lines);
+    }
+    return lines;
+  }
+
+  Future<void> _printBluetoothReport(List<ReportPdfSection> sections) async {
+    final result = await ReceiptPrinterService.printDocument(
+      title: 'Financial Report',
+      subtitle: _monthName,
+      lines: _printerLines(sections),
+      footer: 'SmartEat Financial Reports',
+    );
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          result.printed
+              ? 'Financial report sent to printer.'
+              : result.error ?? 'Could not print financial report.',
+        ),
+      ),
+    );
   }
 
   @override
@@ -348,10 +376,10 @@ class _FinanceReportsTabState extends State<FinanceReportsTab> {
             ])),
         const SizedBox(height: 16),
         SectionCard(
-            title: 'Menu Profitability (Recipe Costing)',
+            title: 'Menu Profitability (Recipe & Direct Stock Costing)',
             icon: Icons.restaurant_menu_rounded,
             iconColor: AppTheme.sageSuccess,
-            badge: 'Estimates when recipe costing exists',
+            badge: 'Estimates when recipe or linked-stock costing exists',
             child: performanceRows.isEmpty
                 ? const EmptyState(
                     icon: Icons.restaurant_menu_outlined,
@@ -382,21 +410,17 @@ class _FinanceReportsTabState extends State<FinanceReportsTab> {
         const SizedBox(height: 16),
         Row(children: [
           Expanded(
-            child: FilledButton.icon(
-              onPressed: () => _runPdfAction(() => ReportPdfService.printReport(
-                    title: 'Financial Report',
-                    subtitle: _monthName,
-                    filePrefix: 'financial_report',
-                    sections: reportSections,
-                    footer: 'SmartEat Financial Reports',
-                  )),
+            child: OutlinedButton.icon(
+              key: const Key('finance-bluetooth-print-button'),
+              onPressed: () => _printBluetoothReport(reportSections),
               icon: const Icon(Icons.print_outlined),
-              label: const Text('Print PDF'),
+              label: const Text('Print PDF via Bluetooth printer'),
             ),
           ),
           const SizedBox(width: 12),
           Expanded(
             child: OutlinedButton.icon(
+              key: const Key('finance-download-pdf-button'),
               onPressed: () => _runPdfAction(() => ReportPdfService.shareReport(
                     title: 'Financial Report',
                     subtitle: _monthName,
@@ -404,18 +428,11 @@ class _FinanceReportsTabState extends State<FinanceReportsTab> {
                     sections: reportSections,
                     footer: 'SmartEat Financial Reports',
                   )),
-              icon: const Icon(Icons.share_outlined),
-              label: const Text('Share PDF'),
+              icon: const Icon(Icons.download_outlined),
+              label: const Text('Download PDF'),
             ),
           ),
         ]),
-        const SizedBox(height: 10),
-        SizedBox(
-            width: double.infinity,
-            child: OutlinedButton.icon(
-                onPressed: () => widget.onExport(_month),
-                icon: const Icon(Icons.download_outlined),
-                label: Text('Export $_monthName CSV'))),
         const SizedBox(height: 24),
       ],
     );
@@ -484,30 +501,36 @@ class _MenuProfit extends StatelessWidget {
   final MenuProfitRow row;
   final FinanceFormat fmt;
   @override
-  Widget build(BuildContext context) => Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Row(children: [
-        Expanded(
-            child:
-                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text((row.item['name'] ?? 'Unknown').toString(),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontWeight: FontWeight.w600)),
+  Widget build(BuildContext context) {
+    final errorColor = Theme.of(context).colorScheme.error;
+    return Padding(
+        padding: const EdgeInsets.only(bottom: 8),
+        child: Row(children: [
+          Expanded(
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                Text((row.item['name'] ?? 'Unknown').toString(),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontWeight: FontWeight.w600)),
+                Text(
+                    'Sold ${row.quantity.toStringAsFixed(0)} • Rev ${fmt.money(row.revenue)}${row.hasCosting ? " • Profit/item ${fmt.money(row.profitPerItem)}" : " • Costing missing"}',
+                    style: TextStyle(
+                        fontSize: 12,
+                        color: row.hasCosting
+                            ? Theme.of(context).colorScheme.onSurfaceVariant
+                            : errorColor))
+              ])),
           Text(
-              'Sold ${row.quantity.toStringAsFixed(0)} • Rev ${fmt.money(row.revenue)}${row.hasCosting ? " • Profit/item ${fmt.money(row.profitPerItem)}" : " • Costing missing"}',
+              row.hasCosting
+                  ? '${fmt.money(row.profit)} (${row.marginPercent.toStringAsFixed(1)}%)'
+                  : 'N/A',
               style: TextStyle(
-                  fontSize: 12,
-                  color: Theme.of(context).colorScheme.onSurfaceVariant))
-        ])),
-        Text(
-            row.hasCosting
-                ? '${fmt.money(row.profit)} (${row.marginPercent.toStringAsFixed(1)}%)'
-                : 'N/A',
-            style: TextStyle(
-                fontWeight: FontWeight.w700,
-                color: row.profit >= 0
-                    ? AppTheme.sageSuccess
-                    : Theme.of(context).colorScheme.error))
-      ]));
+                  fontWeight: FontWeight.w700,
+                  color: !row.hasCosting
+                      ? errorColor
+                      : (row.profit >= 0 ? AppTheme.sageSuccess : errorColor)))
+        ]));
+  }
 }

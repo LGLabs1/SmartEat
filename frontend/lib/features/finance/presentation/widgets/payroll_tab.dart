@@ -15,7 +15,7 @@ class FinancePayrollTab extends StatelessWidget {
     required this.fmt,
     required this.staffUsersStream,
     required this.staffProfilesStream,
-    this.onNavigateToStaff,
+    this.onStaffTap,
   });
 
   final String? eateryId;
@@ -24,7 +24,7 @@ class FinancePayrollTab extends StatelessWidget {
       staffUsersStream;
   final Stream<QuerySnapshot<Map<String, dynamic>>> Function(String)
       staffProfilesStream;
-  final VoidCallback? onNavigateToStaff;
+  final void Function(String uid, String name)? onStaffTap;
 
   @override
   Widget build(BuildContext context) {
@@ -47,13 +47,6 @@ class FinancePayrollTab extends StatelessWidget {
           title: 'Staff Payroll',
           icon: Icons.groups_outlined,
           iconColor: const Color(0xFF818CF8),
-          action: onNavigateToStaff == null
-              ? null
-              : TextButton.icon(
-                  onPressed: onNavigateToStaff,
-                  icon: const Icon(Icons.arrow_forward_ios, size: 12),
-                  label: const Text('Manage'),
-                ),
           child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
             stream: staffUsersStream(id),
             builder: (context, usersSnap) {
@@ -120,7 +113,10 @@ class FinancePayrollTab extends StatelessWidget {
                           profile: profileByUid[entry.key] ??
                               const <String, dynamic>{},
                           fmt: fmt,
-                          onTap: onNavigateToStaff,
+                          onTap: () => onStaffTap?.call(
+                            entry.key,
+                            _displayName(entry.value, entry.key),
+                          ),
                         ),
                     ],
                   );

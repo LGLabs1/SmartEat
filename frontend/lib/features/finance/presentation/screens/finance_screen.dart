@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../../../screens/inventory_screen.dart';
-import '../../../../screens/staff_management_screen.dart';
 import '../../../../services/api_service.dart';
 import '../../../../services/auth_provider.dart';
 import '../../../../theme.dart';
@@ -25,6 +24,7 @@ import '../widgets/payable_payment_dialog.dart';
 import '../widgets/payables_tab.dart';
 import '../widgets/payroll_tab.dart';
 import '../widgets/reports_tab.dart';
+import '../widgets/staff_payment_history_dialog.dart';
 
 /// Finance module shell. Owns the firestore-backed finance data, filters and
 /// settings; delegates presentation to per-tab widgets under features/finance.
@@ -896,24 +896,6 @@ class _FinanceScreenState extends State<FinanceScreen> {
     }
   }
 
-  Future<void> _exportExpenses([DateTime? month]) async {
-    final rows = month == null
-        ? _expenses
-        : _expenses.where((expense) {
-            final date = FinanceMetrics.expenseDate(expense);
-            return date != null &&
-                date.year == month.year &&
-                date.month == month.month;
-          }).toList();
-    final name = month == null
-        ? 'expenses'
-        : 'expenses_${month.year}-${month.month.toString().padLeft(2, '0')}';
-    await _exportCsv(
-      name,
-      FinanceExportService.buildExpensesCsv(rows, _fmt),
-    );
-  }
-
   Future<void> _exportPayables() async {
     await _exportCsv(
       'payables',
@@ -947,14 +929,14 @@ class _FinanceScreenState extends State<FinanceScreen> {
     );
   }
 
-  /// Opens Staff Management as a pushed route so back returns to Finance.
-  void _openStaff() {
-    Navigator.of(context, rootNavigator: true).push(
-      MaterialPageRoute<void>(
-        builder: (_) => const StaffManagementScreen(
-          showAppBar: true,
-          initialTabIndex: 2,
-        ),
+  void _openPaymentHistory(String uid, String name) {
+    showDialog<void>(
+      context: context,
+      builder: (_) => StaffPaymentHistoryDialog(
+        eateryId: _eateryId,
+        uid: uid,
+        name: name,
+        fmt: _fmt,
       ),
     );
   }
@@ -1014,8 +996,8 @@ class _FinanceScreenState extends State<FinanceScreen> {
               FeatureTabItem(
                   label: 'Expenses', icon: Icons.receipt_long_outlined),
               FeatureTabItem(label: 'Payables', icon: Icons.payment_outlined),
-              FeatureTabItem(label: 'Reports', icon: Icons.analytics_outlined),
               FeatureTabItem(label: 'Payroll', icon: Icons.groups_outlined),
+              FeatureTabItem(label: 'Reports', icon: Icons.analytics_outlined),
             ],
             selectedIndex: _index,
           ),
@@ -1027,8 +1009,8 @@ class _FinanceScreenState extends State<FinanceScreen> {
           AdminTabItem(label: 'Overview', icon: Icons.dashboard_outlined),
           AdminTabItem(label: 'Expenses', icon: Icons.receipt_long_outlined),
           AdminTabItem(label: 'Payables', icon: Icons.payment_outlined),
-          AdminTabItem(label: 'Reports', icon: Icons.analytics_outlined),
           AdminTabItem(label: 'Payroll', icon: Icons.groups_outlined),
+          AdminTabItem(label: 'Reports', icon: Icons.analytics_outlined),
         ],
         selectedIndex: _index,
         onTap: _selectSection,
@@ -1109,6 +1091,14 @@ class _FinanceScreenState extends State<FinanceScreen> {
           onExport: _exportPayables,
         );
       case 3:
+        return FinancePayrollTab(
+          eateryId: _eateryId,
+          fmt: _fmt,
+          staffUsersStream: _staffUsersFor,
+          staffProfilesStream: _staffProfilesFor,
+          onStaffTap: _openPaymentHistory,
+        );
+      case 4:
         return FinanceReportsTab(
           expenses: _expenses,
           payables: _payables,
@@ -1120,15 +1110,6 @@ class _FinanceScreenState extends State<FinanceScreen> {
           salesForecast: _salesForecast,
           fmt: _fmt,
           onEditBudgets: _editBudgets,
-          onExport: _exportExpenses,
-        );
-      case 4:
-        return FinancePayrollTab(
-          eateryId: _eateryId,
-          fmt: _fmt,
-          staffUsersStream: _staffUsersFor,
-          staffProfilesStream: _staffProfilesFor,
-          onNavigateToStaff: _openStaff,
         );
       default:
         return FinanceOverviewTab(

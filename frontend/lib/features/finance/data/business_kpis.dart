@@ -449,8 +449,10 @@ class BusinessKpis {
           item['count'] ??
           item['soldLast30Days']);
       final servingCost = _num(item['costPerServing']);
-      final unitCost =
+      final menuUnitCost =
           servingCost > 0 ? servingCost : _num(item['costPerUnit']);
+      final unitCost =
+          menuUnitCost > 0 ? menuUnitCost : _num(item['directUnitCost']);
       final hasCosting = unitCost > 0 && qty > 0;
       final estimatedCogs = hasCosting ? unitCost * qty : 0.0;
       rows.add(MenuProfitRow(

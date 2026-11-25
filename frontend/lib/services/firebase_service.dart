@@ -3866,7 +3866,25 @@ class FirebaseService {
       // Merge recipe/menu costing fields for "Gross Margin (by Menu Costing)".
       // This is additive and does not affect Actual COGS (movement-based).
       try {
+        double positiveCost(dynamic value) {
+          final parsed = value is num
+              ? value.toDouble()
+              : double.tryParse(value?.toString().trim() ?? '');
+          return parsed != null && parsed > 0 ? parsed : 0.0;
+        }
+
         final menuItems = await getMenuItems();
+        final needsInventoryCost = menuItems.any((m) =>
+            (m['inventoryItemId'] ?? '').toString().trim().isNotEmpty &&
+            (m['recipeId'] ?? '').toString().trim().isEmpty);
+        final inventoryItems = needsInventoryCost
+            ? await getInventoryItems()
+            : <Map<String, dynamic>>[];
+        final inventoryById = <String, Map<String, dynamic>>{
+          for (final item in inventoryItems)
+            if ((item['id'] ?? '').toString().isNotEmpty)
+              (item['id'] as String): item,
+        };
         final menuById = <String, Map<String, dynamic>>{
           for (final m in menuItems)
             if ((m['id'] ?? '').toString().isNotEmpty) (m['id'] as String): m,
@@ -3892,6 +3910,25 @@ class FirebaseService {
           if (menu['costingSource'] != null) {
             stat['costingSource'] = menu['costingSource'];
           }
+
+          final inventoryId = (menu['inventoryItemId'] ?? '').toString().trim();
+          if (inventoryId.isEmpty ||
+              (menu['recipeId'] ?? '').toString().trim().isNotEmpty) {
+            continue;
+          }
+          stat['inventoryItemId'] = inventoryId;
+          if (positiveCost(menu['costPerServing']) > 0 ||
+              positiveCost(menu['costPerUnit']) > 0) {
+            continue;
+          }
+          final inventory = inventoryById[inventoryId];
+          if (inventory == null) continue;
+          final directCost = positiveCost(inventory['unitCost']) > 0
+              ? positiveCost(inventory['unitCost'])
+              : positiveCost(inventory['lastPurchaseCost']);
+          if (directCost <= 0) continue;
+          stat['directUnitCost'] = directCost;
+          stat['costingSource'] = 'direct_inventory';
         }
       } catch (_) {}
 
