@@ -47,7 +47,12 @@ const corsOptions = {
     return callback(error);
   },
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'x-cron-secret'],
+  allowedHeaders: [
+    'Content-Type',
+    'Authorization',
+    'x-cron-secret',
+    'x-eatery-id',
+  ],
   exposedHeaders: ['Retry-After'],
   credentials: false,
   maxAge: 600,
