@@ -18,6 +18,8 @@ import 'briefing_history.dart';
 import 'briefing_history_service.dart';
 
 class AIAssistantProvider extends ChangeNotifier {
+  static const Duration _sageStreamTimeout = Duration(seconds: 240);
+
   // ── UI panel state ───────────────────────────────────────────────────────
   bool _isExpanded = false;
   bool get isExpanded => _isExpanded;
@@ -889,9 +891,9 @@ class AIAssistantProvider extends ChangeNotifier {
         history: trimmedHistory,
         context: contextString,
       ).timeout(
-        const Duration(seconds: 125),
-        onTimeout: (sink) => sink
-            .addError(TimeoutException('AI response took too long (>125s)')),
+        _sageStreamTimeout,
+        onTimeout: (sink) => sink.addError(TimeoutException(
+            'AI response took too long (>${_sageStreamTimeout.inSeconds}s)')),
       );
 
       await for (final token in stream) {

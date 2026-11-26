@@ -29,7 +29,12 @@ function sageDisabledResponse(streaming = false) {
 // Note: newer Gemini models are "thinking" models - reasoning consumes
 // tokens first, so the budget must leave room for both thoughts and answer.
 const MAX_OUTPUT_TOKENS = parseInt(process.env.GEMINI_MAX_OUTPUT_TOKENS, 10) || 2000;
-const GEMINI_TIMEOUT = parseInt(process.env.GEMINI_TIMEOUT_MS, 10) || 60000;
+const MIN_GEMINI_TIMEOUT_MS = 180000;
+const DEFAULT_GEMINI_TIMEOUT_MS = MIN_GEMINI_TIMEOUT_MS;
+const GEMINI_TIMEOUT = Math.max(
+  parseInt(process.env.GEMINI_TIMEOUT_MS, 10) || DEFAULT_GEMINI_TIMEOUT_MS,
+  MIN_GEMINI_TIMEOUT_MS,
+);
 
 // ---------------------------------------------------------------------------
 // Gemini request helpers (used by both the blocking and streaming paths)
@@ -669,7 +674,7 @@ STRICT RULE: Use ONLY the exact numbers provided above. Never invent sales numbe
           contents: [{ role: 'user', parts: [{ text: prompt }] }],
           generationConfig: { temperature: 0.5, maxOutputTokens: 300 },
         },
-        { headers: geminiHeaders(), timeout: 60000 }
+        { headers: geminiHeaders(), timeout: GEMINI_TIMEOUT }
       );
 
       aiSummary = extractGeminiText(aiRes.data).trim();
