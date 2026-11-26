@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-import '../../../../../models/inventory_item.dart';
-import '../../../../../theme.dart';
-import '../../../../../widgets/dashboard/empty_state.dart';
-import '../../../../../widgets/dashboard/kpi_card.dart';
-import '../../../../../widgets/responsive_search_field.dart';
+import '../../../../models/inventory_item.dart';
+import '../../../../theme.dart';
+import '../../../../widgets/dashboard/empty_state.dart';
+import '../../../../widgets/dashboard/kpi_card.dart';
+import '../../../../widgets/period/date_range_selector.dart';
+import '../../../../widgets/responsive_search_field.dart';
 import '../../data/models/purchase_receipt.dart';
 
 /// Durable purchase history (GRN). Shows every recorded receipt with a KPI
@@ -100,6 +101,11 @@ class _PurchasesScreenState extends State<PurchasesScreen> {
         .where((p) =>
             p.receivedAt.year == now.year && p.receivedAt.month == now.month)
         .fold<double>(0, (s, p) => s + _total(p));
+    final periodLabel = _dateRange == null ? 'This Month' : 'Range Spend';
+    final periodSpend = _dateRange == null ? monthSpend : totalSpend;
+    final periodDescription = _dateRange == null
+        ? 'Purchase spend for the current month (based on receipt dates).'
+        : 'Purchase spend within the selected date range.';
 
     final suppliers = <String>{
       for (final p in widget.purchases)
@@ -154,12 +160,11 @@ class _PurchasesScreenState extends State<PurchasesScreen> {
                     const SizedBox(width: 8),
                     Expanded(
                       child: KpiCard(
-                        title: 'This Month',
-                        value: _money(monthSpend),
+                        title: periodLabel,
+                        value: _money(periodSpend),
                         icon: Icons.calendar_month_outlined,
                         color: AppTheme.sageSuccess,
-                        description:
-                            'Purchase spend for the current month (based on receipt dates).',
+                        description: periodDescription,
                       ),
                     ),
                     const SizedBox(width: 8),
@@ -267,25 +272,9 @@ class _PurchasesScreenState extends State<PurchasesScreen> {
   }
 
   Widget _dateRangeChip(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final hasRange = _dateRange != null;
-    return ActionChip(
-      avatar: Icon(Icons.date_range,
-          size: 16, color: hasRange ? scheme.primary : null),
-      label: Text(
-        hasRange
-            ? '${DateFormat('MMM d').format(_dateRange!.start)} → ${DateFormat('MMM d').format(_dateRange!.end)}'
-            : 'Date range',
-      ),
-      onPressed: () async {
-        final picked = await showDateRangePicker(
-          context: context,
-          firstDate: DateTime(2000),
-          lastDate: DateTime(2100),
-          initialDateRange: _dateRange,
-        );
-        if (picked != null) setState(() => _dateRange = picked);
-      },
+    return DateRangeSelector(
+      range: _dateRange,
+      onChanged: (range) => setState(() => _dateRange = range),
     );
   }
 

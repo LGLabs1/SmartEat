@@ -13,6 +13,7 @@ import '../../../../widgets/skeleton_loaders.dart';
 import '../../data/finance_export_service.dart';
 import '../../data/finance_format.dart';
 import '../../data/finance_metrics.dart';
+import '../../data/report_period.dart';
 import '../widgets/expense_detail_sheet.dart';
 import '../widgets/expense_form_dialog.dart';
 import '../widgets/expenses_tab.dart';
@@ -74,6 +75,7 @@ class _FinanceScreenState extends State<FinanceScreen> {
   DateTimeRange? _expenseDateRange;
   String _searchQuery = '';
   String _payablesSegment = 'upcoming';
+  DateTime _selectedReportMonth = ReportPeriod.month(DateTime.now());
 
   String? _eateryId;
   String _currencySymbol = '₱';
@@ -285,6 +287,86 @@ class _FinanceScreenState extends State<FinanceScreen> {
     }
   }
 
+  List<Map<String, dynamic>> _itemPerformanceFrom(dynamic raw) {
+    List<Map<String, dynamic>> asList(dynamic value, List<String> path) {
+      try {
+        if (value is List)
+          return value
+              .whereType<Map>()
+              .map((e) => Map<String, dynamic>.from(e))
+              .toList();
+        if (value is! Map) return const [];
+        for (final key in path) {
+          final v = value[key];
+          if (v is List)
+            return v
+                .whereType<Map>()
+                .map((e) => Map<String, dynamic>.from(e))
+                .toList();
+        }
+        final data = value['data'];
+        if (data is List)
+          return data
+              .whereType<Map>()
+              .map((e) => Map<String, dynamic>.from(e))
+              .toList();
+        if (data is Map) {
+          for (final key in path) {
+            final v = data[key];
+            if (v is List)
+              return v
+                  .whereType<Map>()
+                  .map((e) => Map<String, dynamic>.from(e))
+                  .toList();
+          }
+        }
+      } catch (_) {}
+      return const [];
+    }
+
+    final r = asList(raw, const ['items']);
+    if (r.isNotEmpty) return r;
+    if (raw is Map) {
+      final m = raw;
+      final d = m['data'];
+      if (d is Map && d['items'] is List)
+        return (d['items'] as List)
+            .whereType<Map>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList();
+      if (d is List)
+        return d
+            .whereType<Map>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList();
+      if (m['items'] is List)
+        return (m['items'] as List)
+            .whereType<Map>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList();
+    }
+    return r;
+  }
+
+  Future<void> _reloadItemPerformance(DateTime month) async {
+    final target = ReportPeriod.month(month);
+    try {
+      final result = await ApiService.getItemPerformance(
+        startDate: ReportPeriod.month(target),
+        endDate: ReportPeriod.exclusiveEnd(target),
+      );
+      if (!mounted || target != _selectedReportMonth) return;
+      setState(() => _itemPerformance = _itemPerformanceFrom(result));
+    } catch (_) {}
+  }
+
+  void _onReportMonthChanged(DateTime month) {
+    final target = ReportPeriod.month(month);
+    if (target == _selectedReportMonth) return;
+    setState(() => _selectedReportMonth = target);
+    _reloadItemPerformance(target);
+  }
+
   Future<void> _load() async {
     setState(() {
       _isLoading = true;
@@ -307,7 +389,12 @@ class _FinanceScreenState extends State<FinanceScreen> {
         safe(ApiService.getExpenses(), 'getExpenses'),
         safe(ApiService.getPayables(), 'getPayables'),
         safe(_getEateryId(), 'getEateryId', null),
-        safe(ApiService.getItemPerformance(), 'getItemPerformance',
+        safe(
+            ApiService.getItemPerformance(
+              startDate: ReportPeriod.month(_selectedReportMonth),
+              endDate: ReportPeriod.exclusiveEnd(_selectedReportMonth),
+            ),
+            'getItemPerformance',
             const <String, dynamic>{'data': <String, dynamic>{}}),
         safe(
             ApiService.getDailySalesAnalytics(days: 62),
@@ -360,30 +447,7 @@ class _FinanceScreenState extends State<FinanceScreen> {
       final expenses = asList(results[0]);
       final payables = asList(results[1]);
       final eateryId = (results[2] ?? '').toString().trim();
-      final itemPerformance = () {
-        final r = asList(results[3], const ['items']);
-        if (r.isNotEmpty) return r;
-        if (results[3] is Map) {
-          final m = results[3] as Map;
-          final d = m['data'];
-          if (d is Map && d['items'] is List)
-            return (d['items'] as List)
-                .whereType<Map>()
-                .map((e) => Map<String, dynamic>.from(e))
-                .toList();
-          if (d is List)
-            return d
-                .whereType<Map>()
-                .map((e) => Map<String, dynamic>.from(e))
-                .toList();
-          if (m['items'] is List)
-            return (m['items'] as List)
-                .whereType<Map>()
-                .map((e) => Map<String, dynamic>.from(e))
-                .toList();
-        }
-        return r;
-      }();
+      final itemPerformance = _itemPerformanceFrom(results[3]);
       final dailySales = () {
         final r = asList(results[4], const ['dailySales']);
         if (r.isNotEmpty) return r;
@@ -1109,6 +1173,8 @@ class _FinanceScreenState extends State<FinanceScreen> {
           damagedItems: _damagedItems,
           salesForecast: _salesForecast,
           fmt: _fmt,
+          selectedMonth: _selectedReportMonth,
+          onMonthChanged: _onReportMonthChanged,
           onEditBudgets: _editBudgets,
         );
       default:

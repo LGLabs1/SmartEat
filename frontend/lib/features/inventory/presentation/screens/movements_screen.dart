@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-import '../../../../../models/inventory_item.dart';
-import '../../../../../theme.dart';
-import '../../../../../widgets/dashboard/empty_state.dart';
-import '../../../../../widgets/dashboard/kpi_card.dart';
-import '../../../../../widgets/responsive_search_field.dart';
+import '../../../../models/inventory_item.dart';
+import '../../../../theme.dart';
+import '../../../../widgets/dashboard/empty_state.dart';
+import '../../../../widgets/dashboard/kpi_card.dart';
+import '../../../../widgets/period/date_range_selector.dart';
+import '../../../../widgets/responsive_search_field.dart';
 import '../../data/models/stock_movement.dart';
 
 String movementTypeLabel(StockMovementType type) {
@@ -343,25 +344,9 @@ class _MovementsScreenState extends State<MovementsScreen> {
   }
 
   Widget _dateRangeChip(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final hasRange = _dateRange != null;
-    return ActionChip(
-      avatar: Icon(Icons.date_range,
-          size: 16, color: hasRange ? scheme.primary : null),
-      label: Text(
-        hasRange
-            ? '${DateFormat('MMM d').format(_dateRange!.start)} → ${DateFormat('MMM d').format(_dateRange!.end)}'
-            : 'Date range',
-      ),
-      onPressed: () async {
-        final picked = await showDateRangePicker(
-          context: context,
-          firstDate: DateTime(2000),
-          lastDate: DateTime(2100),
-          initialDateRange: _dateRange,
-        );
-        if (picked != null) setState(() => _dateRange = picked);
-      },
+    return DateRangeSelector(
+      range: _dateRange,
+      onChanged: (range) => setState(() => _dateRange = range),
     );
   }
 

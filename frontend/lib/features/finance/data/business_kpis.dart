@@ -1,5 +1,6 @@
 import 'finance_format.dart';
 import 'finance_metrics.dart';
+import 'report_period.dart';
 
 class OrderFinanceFacts {
   const OrderFinanceFacts({
@@ -351,10 +352,26 @@ class BusinessKpis {
     required List<Map<String, dynamic>> stockMovements,
     DateTime? start,
     DateTime? end,
+    DateTime? asOf,
   }) {
+    final stockByItem = <String, double>{};
+    if (asOf != null) {
+      for (final movement in stockMovements) {
+        final id = (movement['itemId'] ?? '').toString();
+        if (id.isEmpty) continue;
+        final d = _asDate(movement['timestamp']) ??
+            _asDate(movement['createdAt']) ??
+            _asDate(movement['date']);
+        if (d == null || d.isAfter(asOf)) continue;
+        stockByItem[id] = (stockByItem[id] ?? 0) + _num(movement['changeBase']);
+      }
+    }
+
     double inventoryValue = 0;
     for (final item in inventoryItems) {
-      final stock = _num(item['currentStock']);
+      final id = (item['id'] ?? '').toString();
+      final reconstructed = stockByItem[id];
+      final stock = reconstructed ?? _num(item['currentStock']);
       final lastPurchase = _num(item['lastPurchaseCost']);
       final unitCost = _num(item['unitCost']);
       final avg = _num(item['avgCost']);
@@ -479,9 +496,21 @@ class BusinessKpis {
     if (actual.sourceLabel.startsWith('Actual COGS (sale')) {
       return actual;
     }
-    final estimated = menuProfitRows(itemPerformance)
-        .where((r) => r.hasCosting)
-        .fold<double>(0, (sum, r) => sum + r.estimatedCogs);
+    bool inPeriod(Map<String, dynamic> item) {
+      if (start == null && end == null) return true;
+      final d = _asDate(item['date']) ??
+          _asDate(item['lastSoldAt']) ??
+          _asDate(item['soldAt']);
+      if (d == null) return true;
+      if (start != null && d.isBefore(start)) return false;
+      if (end != null && d.isAfter(end)) return false;
+      return true;
+    }
+
+    final estimated =
+        menuProfitRows(itemPerformance.where(inPeriod).toList(growable: false))
+            .where((r) => r.hasCosting)
+            .fold<double>(0, (sum, r) => sum + r.estimatedCogs);
     return CogsKpi(
       amount: estimated,
       sourceLabel: 'Estimated COGS (recipe/menu costing fallback)',
@@ -492,8 +521,9 @@ class BusinessKpis {
   static PayablesKpi payablesKpi(
     List<Map<String, dynamic>> payables, {
     DateTime? now,
+    DateTime? asOf,
   }) {
-    final today = now ?? DateTime.now();
+    final today = asOf ?? now ?? DateTime.now();
     final dayStart = startOfDay(today);
     final weekEnd = dayStart.add(const Duration(days: 7));
     final monthEnd = DateTime(today.year, today.month + 1, 0, 23, 59, 59, 999);
@@ -507,22 +537,35 @@ class BusinessKpis {
       if (!d.isBefore(dayStart) && !d.isAfter(weekEnd)) dueThisWeek++;
       if (!d.isBefore(dayStart) && !d.isAfter(monthEnd)) dueThisMonth++;
     }
+    final periodEnd = asOf != null
+        ? DateTime(today.year, today.month, today.day, 23, 59, 59, 999)
+        : null;
     return PayablesKpi(
-      outstanding: FinanceMetrics.outstandingPayables(payables),
+      outstanding: FinanceMetrics.outstandingPayables(payables, end: periodEnd),
       overdue: FinanceMetrics.overdueAmount(payables, now: today),
       dueToday: dueToday,
       dueThisWeek: dueThisWeek,
       dueThisMonth: dueThisMonth,
-      estimatedVariable: FinanceMetrics.estimatedOutstanding(payables),
+      estimatedVariable:
+          FinanceMetrics.estimatedOutstanding(payables, end: periodEnd),
     );
   }
 
   static ForecastKpi forecastKpi({
     required List<Map<String, dynamic>> salesForecast,
     required List<Map<String, dynamic>> menuProfitRowsData,
+    DateTime? anchorMonth,
   }) {
+    final range =
+        anchorMonth == null ? null : ReportPeriod.monthRange(anchorMonth);
     double revenue = 0;
     for (final point in salesForecast) {
+      final pointMonth = _asDate(point['date']) ?? _asDate(point['month']);
+      if (range != null &&
+          pointMonth != null &&
+          !ReportPeriod.contains(range, pointMonth)) {
+        continue;
+      }
       revenue += _num(point['predictedRevenue'] ??
           point['predictedSales'] ??
           point['revenue']);

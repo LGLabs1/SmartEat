@@ -5,9 +5,11 @@ import '../../../../services/report_pdf_service.dart';
 import '../../../../theme.dart';
 import '../../../../widgets/dashboard/empty_state.dart';
 import '../../../../widgets/dashboard/section_card.dart';
+import '../../../../widgets/period/month_selector.dart';
 import '../../data/business_kpis.dart';
 import '../../data/finance_format.dart';
 import '../../data/finance_metrics.dart';
+import '../../data/report_period.dart';
 import 'finance_category_pie_chart.dart';
 import 'finance_kpi_grid.dart';
 
@@ -24,6 +26,8 @@ class FinanceReportsTab extends StatefulWidget {
     this.damagedItems = const [],
     this.salesForecast = const [],
     required this.fmt,
+    this.selectedMonth,
+    this.onMonthChanged,
     required this.onEditBudgets,
   });
 
@@ -36,6 +40,8 @@ class FinanceReportsTab extends StatefulWidget {
   final List<Map<String, dynamic>> damagedItems;
   final List<Map<String, dynamic>> salesForecast;
   final FinanceFormat fmt;
+  final DateTime? selectedMonth;
+  final ValueChanged<DateTime>? onMonthChanged;
   final VoidCallback onEditBudgets;
 
   @override
@@ -43,14 +49,21 @@ class FinanceReportsTab extends StatefulWidget {
 }
 
 class _FinanceReportsTabState extends State<FinanceReportsTab> {
-  int _monthOffset = 0;
-  DateTime get _month {
-    final now = DateTime.now();
-    return DateTime(now.year, now.month + _monthOffset, 1);
-  }
+  DateTime _localMonth = ReportPeriod.month(DateTime.now());
+  DateTime get _month =>
+      ReportPeriod.month(widget.selectedMonth ?? _localMonth);
 
-  String get _monthName =>
-      '${FinanceFormat.monthLabel(_month.month)} ${_month.year}';
+  String get _monthName => ReportPeriod.label(_month);
+
+  void _handleMonthChanged(DateTime month) {
+    final target = ReportPeriod.month(month);
+    final callback = widget.onMonthChanged;
+    if (callback != null) {
+      callback(target);
+      return;
+    }
+    setState(() => _localMonth = target);
+  }
 
   Future<void> _runPdfAction(Future<void> Function() action) async {
     try {
@@ -95,11 +108,19 @@ class _FinanceReportsTabState extends State<FinanceReportsTab> {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final start = BusinessKpis.startOfMonth(_month);
-    final end = DateTime(_month.year, _month.month + 1, 0, 23, 59, 59, 999);
-    final prev = DateTime(_month.year, _month.month - 1, 1);
-    final prevStart = BusinessKpis.startOfMonth(prev);
-    final prevEnd = DateTime(prev.year, prev.month + 1, 0, 23, 59, 59, 999);
+    final range = ReportPeriod.monthRange(_month);
+    final start = range.start;
+    final end = range.end;
+    final asOf = ReportPeriod.endOfMonth(_month);
+    final previousRange = ReportPeriod.previousMonthRange(_month);
+    final prevStart = previousRange.start;
+    final prevEnd = previousRange.end;
+    final monthPerformance = widget.itemPerformance.where((item) {
+      final d = FinanceFormat.asDate(item['date']) ??
+          FinanceFormat.asDate(item['lastSoldAt']) ??
+          FinanceFormat.asDate(item['soldAt']);
+      return d == null || ReportPeriod.contains(range, d);
+    }).toList(growable: false);
 
     final monthExpenses = widget.expenses.where((e) {
       final d = FinanceMetrics.expenseDate(e);
@@ -115,7 +136,7 @@ class _FinanceReportsTabState extends State<FinanceReportsTab> {
         start: prevStart, end: prevEnd);
     final cogs = BusinessKpis.resolveCogs(
         stockMovements: widget.stockMovements,
-        itemPerformance: widget.itemPerformance,
+        itemPerformance: monthPerformance,
         start: start,
         end: end);
     final grossProfit = sales.revenue - cogs.amount;
@@ -135,14 +156,15 @@ class _FinanceReportsTabState extends State<FinanceReportsTab> {
         damagedItems: widget.damagedItems,
         stockMovements: widget.stockMovements,
         start: start,
-        end: end);
-    final payableKpi =
-        BusinessKpis.payablesKpi(widget.payables, now: DateTime.now());
-    final menuRows = BusinessKpis.menuProfitRows(widget.itemPerformance);
+        end: end,
+        asOf: asOf);
+    final payableKpi = BusinessKpis.payablesKpi(widget.payables, asOf: asOf);
+    final menuRows = BusinessKpis.menuProfitRows(monthPerformance);
     final performanceRows =
         menuRows.where((r) => r.revenue > 0 || r.quantity > 0).toList();
     final forecast = BusinessKpis.forecastKpi(
         salesForecast: widget.salesForecast,
+        anchorMonth: _month,
         menuProfitRowsData: menuRows
             .map(
                 (r) => {'revenue': r.revenue, 'estimatedCogs': r.estimatedCogs})
@@ -233,21 +255,19 @@ class _FinanceReportsTabState extends State<FinanceReportsTab> {
                 borderRadius: BorderRadius.circular(AppTheme.cardRadius),
                 side: BorderSide(color: Colors.white.withValues(alpha: 0.1))),
             child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                 child: Row(children: [
-                  IconButton(
-                      onPressed: () => setState(() => _monthOffset--),
-                      icon: const Icon(Icons.chevron_left)),
+                  const Icon(Icons.analytics_outlined, size: 18),
+                  const SizedBox(width: 10),
                   Expanded(
-                      child: Text(_monthName,
-                          textAlign: TextAlign.center,
+                      child: Text('Report period: $_monthName',
                           style: const TextStyle(
-                              fontSize: 17, fontWeight: FontWeight.bold))),
-                  IconButton(
-                      onPressed: _monthOffset < 0
-                          ? () => setState(() => _monthOffset++)
-                          : null,
-                      icon: const Icon(Icons.chevron_right))
+                              fontSize: 16, fontWeight: FontWeight.bold))),
+                  MonthSelector(
+                    month: _month,
+                    onMonthChanged: _handleMonthChanged,
+                  ),
                 ]))),
         const SizedBox(height: 16),
         FinanceKpiGrid(kpis: [
@@ -336,12 +356,12 @@ class _FinanceReportsTabState extends State<FinanceReportsTab> {
                   label: 'Inventory Value',
                   value: widget.fmt.money(inventoryKpi.inventoryValue),
                   description:
-                      'Current on-hand inventory value from quantities and unit costs.'),
+                      'On-hand inventory value as of the selected month end, reconstructed from movements when available.'),
               _Mini(
                   label: 'Inventory Waste',
                   value: widget.fmt.money(inventoryKpi.wasteCost),
                   description:
-                      'Month-to-date waste cost from damaged/write-off records when available.'),
+                      'Waste cost from damaged/write-off records in the selected month when available.'),
               _Mini(
                   label: 'Consumption',
                   value: inventoryKpi.hasActualConsumption
@@ -357,7 +377,7 @@ class _FinanceReportsTabState extends State<FinanceReportsTab> {
                   value:
                       '${payableKpi.dueToday}/${payableKpi.dueThisWeek}/${payableKpi.dueThisMonth}',
                   description:
-                      'Number of payable bills due today, this week, and this month.'),
+                      'Payable bills due on the selected month end, within seven days, and within that month.'),
               _Mini(
                   label: 'Forecast Revenue (30d)',
                   value: widget.fmt.money(forecast.forecastRevenue),

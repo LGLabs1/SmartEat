@@ -5,11 +5,16 @@ import 'package:provider/provider.dart';
 import '../../../../services/auth_provider.dart';
 import '../../../../theme.dart';
 import '../../../../utils/staff_utils.dart';
+import '../../../../widgets/dashboard/section_card.dart';
+import '../../../../widgets/dashboard/sage_hover_card.dart';
+import '../../../../widgets/feature_tab_header.dart';
+import '../../../../widgets/smart_eat_header.dart';
 import '../../data/staff_service.dart';
 
-/// Staff-facing history of the signed-in user's own payroll payouts.
 class MyPayrollScreen extends StatefulWidget {
-  const MyPayrollScreen({super.key});
+  const MyPayrollScreen({super.key, this.showAppBar = true});
+
+  final bool showAppBar;
 
   @override
   State<MyPayrollScreen> createState() => _MyPayrollScreenState();
@@ -29,29 +34,55 @@ class _MyPayrollScreenState extends State<MyPayrollScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('My payroll')),
-      body: FutureBuilder<Map<String, dynamic>?>(
-        future: _profileFuture,
-        builder: (context, snapshot) {
-          if (snapshot.connectionState != ConnectionState.done) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          if (snapshot.hasError) {
-            return _Message(text: 'Failed to load profile: ${snapshot.error}');
-          }
-          if (_uid.isEmpty) {
-            return const _Message(text: 'You are not signed in.');
-          }
-          final profile = snapshot.data;
-          final eateryId = (profile?['eateryId'] ?? '').toString().trim();
-          if (eateryId.isEmpty) {
-            return const _Message(
-              text: 'Your account is not linked to an eatery yet.',
-            );
-          }
-          return _PayoutHistory(eateryId: eateryId, uid: _uid);
-        },
+    final content = Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const FeatureTabHeader(
+          title: 'My payroll',
+          tabs: [
+            FeatureTabItem(label: 'Payouts', icon: Icons.payments_outlined),
+          ],
+          selectedIndex: 0,
+        ),
+        Expanded(
+          child: FutureBuilder<Map<String, dynamic>?>(
+            future: _profileFuture,
+            builder: (context, snapshot) {
+              if (snapshot.connectionState != ConnectionState.done) {
+                return const Center(child: CircularProgressIndicator());
+              }
+              if (snapshot.hasError) {
+                return _Message(
+                  text: 'Failed to load profile: ${snapshot.error}',
+                );
+              }
+              if (_uid.isEmpty) {
+                return const _Message(text: 'You are not signed in.');
+              }
+              final profile = snapshot.data;
+              final eateryId = (profile?['eateryId'] ?? '').toString().trim();
+              if (eateryId.isEmpty) {
+                return const _Message(
+                  text: 'Your account is not linked to an eatery yet.',
+                );
+              }
+              return _PayoutHistory(eateryId: eateryId, uid: _uid);
+            },
+          ),
+        ),
+      ],
+    );
+    if (!widget.showAppBar) return content;
+    return Theme(
+      data: AppTheme.dashboardTheme,
+      child: Scaffold(
+        backgroundColor: AppTheme.sageNavy,
+        appBar: SmartEatHeader(
+          titleText: 'My payroll',
+          showBackButton: true,
+          actions: const [SizedBox(width: 4)],
+        ),
+        body: content,
       ),
     );
   }
@@ -84,26 +115,23 @@ class _PayoutHistory extends StatelessWidget {
         final summary = staffPayoutSummary(payouts);
 
         return ListView(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(AppTheme.pagePadding),
           children: [
             _SummaryCard(summary: summary),
-            const SizedBox(height: 20),
-            Text(
-              'History',
-              style: Theme.of(context)
-                  .textTheme
-                  .titleMedium
-                  ?.copyWith(fontWeight: FontWeight.w800),
+            const SizedBox(height: 16),
+            SectionCard(
+              title: 'Payout history',
+              icon: Icons.history_outlined,
+              badge: '${payouts.length}',
+              child: payouts.isEmpty
+                  ? const _EmptyState()
+                  : Column(
+                      children: [
+                        for (final payout in payouts)
+                          _PayoutCard(payout: payout),
+                      ],
+                    ),
             ),
-            const SizedBox(height: 8),
-            if (payouts.isEmpty)
-              const _EmptyState()
-            else
-              for (final payout in payouts)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
-                  child: _PayoutCard(payout: payout),
-                ),
           ],
         );
       },
@@ -120,62 +148,41 @@ class _SummaryCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
 
-    return Card(
-      elevation: 0,
-      color: scheme.primaryContainer.withValues(alpha: 0.45),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(14),
-        side: BorderSide(color: scheme.primary.withValues(alpha: 0.25)),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(Icons.account_balance_wallet, color: scheme.primary),
-                const SizedBox(width: 8),
-                Text(
-                  'Payout summary',
-                  style: TextStyle(
-                    fontWeight: FontWeight.w800,
-                    color: scheme.onPrimaryContainer,
-                  ),
+    return SectionCard(
+      title: 'Payout summary',
+      icon: Icons.account_balance_wallet_outlined,
+      badge: '${summary.count} ${summary.count == 1 ? 'record' : 'records'}',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: _SummaryTile(
+                  label: 'Weekly payouts',
+                  value: _money(summary.paid),
+                  color: AppTheme.sageSuccess,
                 ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            Row(
-              children: [
-                Expanded(
-                  child: _SummaryTile(
-                    label: 'Weekly payouts',
-                    value: _money(summary.paid),
-                    color: AppTheme.sageSuccess,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: _SummaryTile(
-                    label: 'Advances',
-                    value: _money(summary.advances),
-                    color: AppTheme.warning,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Text(
-              '${summary.count} ${summary.count == 1 ? 'record' : 'records'} · '
-              'advances are deducted from weekly pay',
-              style: TextStyle(
-                fontSize: 12,
-                color: scheme.onSurfaceVariant,
               ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: _SummaryTile(
+                  label: 'Advances',
+                  value: _money(summary.advances),
+                  color: AppTheme.warning,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Text(
+            'Advances are deducted from weekly pay',
+            style: TextStyle(
+              fontSize: 12,
+              color: scheme.onSurfaceVariant,
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
@@ -250,34 +257,50 @@ class _PayoutCard extends StatelessWidget {
       if (paidBy.isNotEmpty) 'by $paidBy',
       if (paidAt.isNotEmpty) paidAt,
     ];
+    final accent = isAdvance ? AppTheme.warning : AppTheme.sageSuccess;
 
-    return Card(
-      elevation: 0,
-      color: AppTheme.sagePanel,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: BorderSide(color: Colors.white.withValues(alpha: 0.1)),
-      ),
-      child: ListTile(
-        leading: CircleAvatar(
-          backgroundColor: isAdvance ? AppTheme.warning : AppTheme.sageSuccess,
-          child: Icon(
-            isAdvance ? Icons.trending_up : Icons.payments_outlined,
-            color: Colors.white,
+    return SageHoverCard(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(12),
+      accent: accent,
+      child: Row(
+        children: [
+          CircleAvatar(
+            backgroundColor: accent,
+            child: Icon(
+              isAdvance ? Icons.trending_up : Icons.payments_outlined,
+              color: Colors.white,
+            ),
           ),
-        ),
-        title: Text(
-          weekStart.isEmpty ? 'Unknown week' : 'Week of $weekStart',
-          style: const TextStyle(fontWeight: FontWeight.w700),
-        ),
-        subtitle: Text(details.join(' · ')),
-        trailing: Text(
-          isAdvance ? '-${_money(amount)}' : _money(amount),
-          style: TextStyle(
-            fontWeight: FontWeight.w800,
-            color: isAdvance ? AppTheme.warning : AppTheme.sageSuccess,
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  weekStart.isEmpty ? 'Unknown week' : 'Week of $weekStart',
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  details.join(' · '),
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
           ),
-        ),
+          const SizedBox(width: 8),
+          Text(
+            isAdvance ? '-${_money(amount)}' : _money(amount),
+            style: TextStyle(
+              fontWeight: FontWeight.w800,
+              color: accent,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -289,12 +312,12 @@ class _EmptyState extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 48),
+      padding: const EdgeInsets.symmetric(vertical: 32),
       child: Column(
         children: [
           Icon(
             Icons.receipt_long_outlined,
-            size: 56,
+            size: 48,
             color: Colors.white.withValues(alpha: 0.3),
           ),
           const SizedBox(height: 12),

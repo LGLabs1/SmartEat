@@ -10,11 +10,14 @@ import '../services/api_service.dart';
 
 import '../services/auth_provider.dart';
 
+import '../services/menu_form_options.dart';
+
 import '../theme.dart';
 
 import '../widgets/admin/admin_bottom_tabs.dart';
 import '../widgets/dashboard/dashboard_back_handler.dart';
 import '../widgets/feature_tab_header.dart';
+import '../widgets/menu_image_picker.dart';
 
 import '../features/inventory/domain/services/menu_availability.dart';
 
@@ -1195,6 +1198,8 @@ class _MenuGridCard extends StatelessWidget {
 
     final isAvailable = manualAvailability is bool ? manualAvailability : true;
 
+    final unavailabilityReason = menuUnavailabilityReason(item);
+
     final imageUrl = (item['imageUrl'] ?? '').toString().trim();
 
     final rawImageAlignmentX = item['imageAlignmentX'] is num
@@ -1274,53 +1279,58 @@ class _MenuGridCard extends StatelessWidget {
                 Positioned(
                   top: 6,
                   left: 6,
-                  child: Material(
-                    color: Colors.transparent,
-                    child: InkWell(
-                      onTap: onToggleAvailability == null
-                          ? null
-                          : () => onToggleAvailability!.call(!isAvailable),
-                      borderRadius: BorderRadius.circular(999),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 10, vertical: 7),
-                        decoration: BoxDecoration(
-                          color: isAvailable
-                              ? theme.colorScheme.secondaryContainer
-                                  .withValues(alpha: 0.96)
-                              : theme.colorScheme.errorContainer
-                                  .withValues(alpha: 0.96),
-                          borderRadius: BorderRadius.circular(999),
-                          border: Border.all(
+                  child: Tooltip(
+                    message: unavailabilityReason.isEmpty
+                        ? 'Tap to toggle availability'
+                        : unavailabilityReason,
+                    child: Material(
+                      color: Colors.transparent,
+                      child: InkWell(
+                        onTap: onToggleAvailability == null
+                            ? null
+                            : () => onToggleAvailability!.call(!isAvailable),
+                        borderRadius: BorderRadius.circular(999),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 10, vertical: 7),
+                          decoration: BoxDecoration(
                             color: isAvailable
-                                ? theme.colorScheme.secondary
-                                    .withValues(alpha: 0.45)
-                                : theme.colorScheme.error
-                                    .withValues(alpha: 0.45),
-                          ),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              isAvailable ? Icons.check_circle : Icons.cancel,
-                              size: 14,
+                                ? theme.colorScheme.secondaryContainer
+                                    .withValues(alpha: 0.96)
+                                : theme.colorScheme.errorContainer
+                                    .withValues(alpha: 0.96),
+                            borderRadius: BorderRadius.circular(999),
+                            border: Border.all(
                               color: isAvailable
-                                  ? theme.colorScheme.onSecondaryContainer
-                                  : theme.colorScheme.onErrorContainer,
+                                  ? theme.colorScheme.secondary
+                                      .withValues(alpha: 0.45)
+                                  : theme.colorScheme.error
+                                      .withValues(alpha: 0.45),
                             ),
-                            const SizedBox(width: 5),
-                            Text(
-                              isAvailable ? 'Available' : 'Unavailable',
-                              style: TextStyle(
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                isAvailable ? Icons.check_circle : Icons.cancel,
+                                size: 14,
                                 color: isAvailable
                                     ? theme.colorScheme.onSecondaryContainer
                                     : theme.colorScheme.onErrorContainer,
-                                fontWeight: FontWeight.w700,
-                                fontSize: 11,
                               ),
-                            ),
-                          ],
+                              const SizedBox(width: 5),
+                              Text(
+                                isAvailable ? 'Available' : 'Unavailable',
+                                style: TextStyle(
+                                  color: isAvailable
+                                      ? theme.colorScheme.onSecondaryContainer
+                                      : theme.colorScheme.onErrorContainer,
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: 11,
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
                       ),
                     ),
@@ -2043,20 +2053,6 @@ class _AddItemDialogState extends State<_AddItemDialog> {
 
   bool _loadingRecipes = true;
 
-  static const List<String> _categoryOptions = <String>[
-    'Chicken',
-    'Pork',
-    'Beef',
-    'Seafood',
-    'Veggies',
-    'Egg',
-    'Tofu',
-    'Rice',
-    'Noodles',
-    'Dessert',
-    'Drinks',
-  ];
-
   @override
   void initState() {
     super.initState();
@@ -2390,7 +2386,7 @@ class _AddItemDialogState extends State<_AddItemDialog> {
                                     child: Wrap(
                                         spacing: 8,
                                         runSpacing: 8,
-                                        children: _categoryOptions.map((c) {
+                                        children: menuCategoryOptions.map((c) {
                                           final selected =
                                               state.value?.contains(c) ?? false;
 
@@ -2459,6 +2455,14 @@ class _AddItemDialogState extends State<_AddItemDialog> {
                           const SizedBox(height: 20),
                           _sectionTitle(context, Icons.image_outlined,
                               'Image (optional)'),
+                          MenuImagePickerField(
+                            imageUrlController: _imageUrlController,
+                            onImageUploaded: (_) => setState(() {
+                              _imageAlignmentX = 0;
+                              _imageAlignmentY = 0;
+                            }),
+                          ),
+                          const SizedBox(height: 12),
                           TextFormField(
                               controller: _imageUrlController,
                               decoration: _dec('Dish Image URL',
@@ -2688,20 +2692,6 @@ class _EditItemDialogState extends State<_EditItemDialog> {
   List<Map<String, dynamic>> _recipes = [];
 
   bool _loadingRecipes = true;
-
-  static const List<String> _categoryOptions = <String>[
-    'Chicken',
-    'Pork',
-    'Beef',
-    'Seafood',
-    'Veggies',
-    'Egg',
-    'Tofu',
-    'Rice',
-    'Noodles',
-    'Dessert',
-    'Drinks',
-  ];
 
   @override
   void initState() {
@@ -3088,7 +3078,7 @@ class _EditItemDialogState extends State<_EditItemDialog> {
                                   child: Wrap(
                                       spacing: 8,
                                       runSpacing: 8,
-                                      children: _categoryOptions.map((c) {
+                                      children: menuCategoryOptions.map((c) {
                                         final selected =
                                             state.value?.contains(c) ?? false;
 
@@ -3154,6 +3144,16 @@ class _EditItemDialogState extends State<_EditItemDialog> {
                           const SizedBox(height: 20),
                           _sectionTitle(context, Icons.image_outlined,
                               'Image (optional)'),
+                          MenuImagePickerField(
+                            imageUrlController: _imageUrlController,
+                            menuItemId:
+                                (widget.item['id'] ?? '').toString().trim(),
+                            onImageUploaded: (_) => setState(() {
+                              _imageAlignmentX = 0;
+                              _imageAlignmentY = 0;
+                            }),
+                          ),
+                          const SizedBox(height: 12),
                           TextFormField(
                               controller: _imageUrlController,
                               decoration: _dec('Dish Image URL',

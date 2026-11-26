@@ -659,14 +659,27 @@ class ApiService {
     return {'data': data};
   }
 
-  static Future<Map<String, dynamic>> getIngredientUsageByMenuItem(
-      {int days = 30}) async {
-    final data = await FirebaseService.getIngredientUsageByMenuItem(days: days);
+  static Future<Map<String, dynamic>> getIngredientUsageByMenuItem({
+    int days = 30,
+    DateTime? startDate,
+    DateTime? endDate,
+  }) async {
+    final data = await FirebaseService.getIngredientUsageByMenuItem(
+      days: days,
+      startDate: startDate,
+      endDate: endDate,
+    );
     return {'data': data};
   }
 
-  static Future<Map<String, dynamic>> getItemPerformance() async {
-    final data = await FirebaseService.getItemPerformance();
+  static Future<Map<String, dynamic>> getItemPerformance({
+    DateTime? startDate,
+    DateTime? endDate,
+  }) async {
+    final data = await FirebaseService.getItemPerformance(
+      startDate: startDate,
+      endDate: endDate,
+    );
     return {'data': data};
   }
 

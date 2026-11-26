@@ -61,7 +61,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   // spelled out here rather than sprinkled as bare literals — inserting or
   // reordering a tab is a one-line change instead of a sweep.
   static const int _adminTabCount = 7;
-  static const int _staffTabCount = 3;
+  static const int _staffTabCount = 4;
 
   // Admin: Home, Menu, Orders, Inventory, Analytics, Finance, Staff
   static const int _adminHomeTab = AdminTabIndex.home;
@@ -72,10 +72,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
   static const int _adminFinanceTab = AdminTabIndex.finance;
   static const int _adminStaffTab = AdminTabIndex.staff;
 
-  // Staff: POS, Orders, Menu
+  // Staff: POS, Orders, Menu, My payroll
   static const int _staffPosTab = 0;
   static const int _staffOrdersTab = 1;
   static const int _staffMenuTab = 2;
+  static const int _staffPayrollTab = 3;
 
   // The remembered tab is scoped per dashboard. A single shared key let one
   // role's index leak into the other's layout, where it silently fell out of
@@ -109,6 +110,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
   bool _adminViewEnabled = true;
   final GlobalKey<InventoryScreenState> _inventoryKey =
       GlobalKey<InventoryScreenState>();
+  final GlobalKey<State<StaffManagementScreen>> _staffManagementKey =
+      GlobalKey<State<StaffManagementScreen>>();
+  int _staffManagementInitialTab = 0;
   String _eateryName = '';
   String _eateryId = '';
   String _displayName = '';
@@ -630,6 +634,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
         return 'Orders';
       case _staffMenuTab:
         return 'Menu';
+      case _staffPayrollTab:
+        return 'My payroll';
       default:
         return 'Smart Eat';
     }
@@ -664,6 +670,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
         return 'orders';
       case _staffMenuTab:
         return 'menu';
+      case _staffPayrollTab:
+        return 'payroll';
       default:
         return 'general';
     }
@@ -702,6 +710,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
           return _staffOrdersTab;
         case 'menu':
           return _staffMenuTab;
+        case 'payroll':
+          return _staffPayrollTab;
       }
     }
     return null;
@@ -860,9 +870,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 key: k,
                 globalSearchQuery: _globalSearchQuery,
                 showAppBar: false,
+                initialTabIndex: _staffManagementInitialTab,
                 onBackHandlerChanged: (handler) =>
                     _registerBackHandler(_adminStaffTab, handler),
-              )),
+              ),
+          fixedKey: _staffManagementKey),
     ];
 
     final staffTabs = <Widget>[
@@ -882,6 +894,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 showAppBar: false,
                 onBackHandlerChanged: (handler) =>
                     _registerBackHandler(_staffMenuTab, handler),
+              )),
+      _lazyTab(
+          _staffPayrollTab,
+          (k) => MyPayrollScreen(
+                key: k,
+                showAppBar: false,
               )),
     ];
 
@@ -959,8 +977,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         controller: _globalSearchController,
                         onChanged: (v) => _globalSearchQuery.value = v,
                         onSubmitted: openResults,
-                        onTap: () =>
-                            openResults(_globalSearchQuery.value),
+                        onTap: () => openResults(_globalSearchQuery.value),
                         decoration: InputDecoration(
                           hintText: searchHint,
                           prefixIcon:
@@ -1371,18 +1388,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       );
                     },
                   ),
-                  SageNavItem(
+                  _buildNavItem(
                     icon: Icons.payments_outlined,
                     label: 'My payroll',
-                    selected: false,
-                    onTap: () {
-                      _closeSidebarOnNarrow();
-                      Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (_) => const MyPayrollScreen(),
-                        ),
-                      );
-                    },
+                    index: _staffPayrollTab,
                   ),
                 ],
                 const Divider(height: 24),
@@ -1411,7 +1420,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   selected: false,
                   onTap: () {
                     _closeSidebarOnNarrow();
-                    Navigator.of(context).pushNamed('/profile');
+                    Navigator.of(context).pushNamed(
+                      '/profile',
+                      arguments: _openTeamAttendanceFromProfile,
+                    );
                   },
                 ),
                 const Divider(height: 24),
@@ -1451,6 +1463,41 @@ class _DashboardScreenState extends State<DashboardScreen> {
     if (MediaQuery.sizeOf(context).width < 768 && _sidebarVisible) {
       setState(() => _sidebarVisible = false);
     }
+  }
+
+  void _openTeamAttendanceFromProfile() {
+    if (!mounted || !_isAdminRole) return;
+    final controller = _staffManagementTabController();
+    if (controller != null) {
+      controller.animateTo(
+        1,
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOutCubic,
+      );
+    } else {
+      final alreadyMounted = _staffManagementKey.currentContext != null;
+      _staffManagementInitialTab = 1;
+      if (alreadyMounted) {
+        _tabGenerations[_adminStaffTab] =
+            (_tabGenerations[_adminStaffTab] ?? 0) + 1;
+      }
+    }
+    _goToTab(_adminStaffTab);
+  }
+
+  TabController? _staffManagementTabController() {
+    final root = _staffManagementKey.currentContext;
+    if (root == null) return null;
+    TabController? controller;
+    void visit(Element element) {
+      if (controller != null) return;
+      controller = DefaultTabController.maybeOf(element);
+      if (controller != null) return;
+      element.visitChildElements(visit);
+    }
+
+    root.visitChildElements(visit);
+    return controller;
   }
 }
 

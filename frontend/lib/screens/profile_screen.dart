@@ -20,7 +20,9 @@ import '../widgets/smart_eat_header.dart';
 import 'staff_management_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
-  const ProfileScreen({Key? key}) : super(key: key);
+  const ProfileScreen({Key? key, this.onOpenTeamAttendance}) : super(key: key);
+
+  final VoidCallback? onOpenTeamAttendance;
 
   @override
   State<ProfileScreen> createState() => _ProfileScreenState();
@@ -689,6 +691,7 @@ class _ProfileScreenState extends State<ProfileScreen>
         backgroundColor: AppTheme.sageNavy,
         appBar: SmartEatHeader(
           titleText: 'Profile',
+          showBackButton: true,
           actions: [
             const SageHeaderButton(),
             IconButton(
@@ -1232,6 +1235,14 @@ class _ProfileScreenState extends State<ProfileScreen>
       trailing: IconButton(
         tooltip: 'Open attendance',
         onPressed: () {
+          final callback = widget.onOpenTeamAttendance;
+          if (callback != null) {
+            callback();
+            if (Navigator.of(context).canPop()) {
+              Navigator.of(context).pop();
+            }
+            return;
+          }
           Navigator.of(context).push(
             MaterialPageRoute(
               builder: (_) => const StaffManagementScreen(initialTabIndex: 1),
@@ -1556,7 +1567,8 @@ class _ProfileScreenState extends State<ProfileScreen>
             leading: context.watch<NotificationBadgeProvider>().unreadCount > 0
                 ? Badge(
                     label: Text(
-                      context.watch<NotificationBadgeProvider>().unreadCount > 99
+                      context.watch<NotificationBadgeProvider>().unreadCount >
+                              99
                           ? '99+'
                           : '${context.watch<NotificationBadgeProvider>().unreadCount}',
                     ),

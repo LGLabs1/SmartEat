@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../models/business_context.dart';
+import '../services/briefing_history.dart';
 
 class SageBriefingContent {
   final String id;
@@ -57,6 +58,22 @@ class SageBriefingContent {
       };
 }
 
+class _BriefingHighlight {
+  const _BriefingHighlight({
+    required this.key,
+    required this.label,
+    required this.value,
+    required this.icon,
+    required this.color,
+  });
+
+  final String key;
+  final String label;
+  final String value;
+  final IconData icon;
+  final Color color;
+}
+
 class SageBriefingCard extends StatelessWidget {
   const SageBriefingCard({
     super.key,
@@ -90,8 +107,6 @@ class SageBriefingCard extends StatelessWidget {
     final yesterdayRevenue =
         NumberFormat.currency(symbol: '₱', decimalDigits: 2)
             .format(ctx.yesterdayRevenue);
-    final todayRevenue = NumberFormat.currency(symbol: '₱', decimalDigits: 2)
-        .format(ctx.todayRevenue);
     final bestSeller = ctx.todayBestSeller == 'None' ||
             ctx.todayBestSellerQty == 0
         ? 'No sales have been recorded yet today. I\'ll continue monitoring your business throughout the day.'
@@ -189,11 +204,16 @@ class SageBriefingCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final highlights = _buildHighlights(content);
+    final maxHeight =
+        (MediaQuery.sizeOf(context).height - 48).clamp(180.0, double.infinity);
+
     return Dialog(
-      insetPadding: const EdgeInsets.symmetric(horizontal: 20),
+      insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
       backgroundColor: Colors.transparent,
       child: Container(
         width: 420,
+        constraints: BoxConstraints(maxHeight: maxHeight.toDouble()),
         padding: const EdgeInsets.all(20),
         decoration: BoxDecoration(
           color: Colors.white,
@@ -206,94 +226,302 @@ class SageBriefingCard extends StatelessWidget {
             ),
           ],
         ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Container(
-                  width: 42,
-                  height: 42,
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFDBEAFE),
-                    borderRadius: BorderRadius.circular(14),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    width: 42,
+                    height: 42,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFDBEAFE),
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: const Icon(Icons.auto_awesome_rounded,
+                        color: Color(0xFF2563EB)),
                   ),
-                  child: const Icon(Icons.auto_awesome_rounded,
-                      color: Color(0xFF2563EB)),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        content.periodLabel,
-                        style: const TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: 0.8,
-                          color: Color(0xFF3B82F6),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          content.periodLabel,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 0.8,
+                            color: Color(0xFF3B82F6),
+                          ),
                         ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        content.title,
-                        style: const TextStyle(
-                          fontSize: 24,
-                          fontWeight: FontWeight.bold,
-                          color: Color(0xFF0F172A),
+                        const SizedBox(height: 4),
+                        Text(
+                          content.title,
+                          style: const TextStyle(
+                            fontSize: 24,
+                            fontWeight: FontWeight.bold,
+                            color: Color(0xFF0F172A),
+                          ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 18),
-            Text(
-              content.summary,
-              style: const TextStyle(
-                fontSize: 15,
-                height: 1.6,
-                color: Color(0xFF334155),
+                ],
               ),
-            ),
-            const SizedBox(height: 20),
-            Row(
-              children: [
-                Expanded(
-                  child: TextButton(
-                    onPressed: onDismiss,
-                    style: TextButton.styleFrom(
-                      foregroundColor: const Color(0xFF475569),
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                    ),
-                    child: const Text('Dismiss'),
-                  ),
+              const SizedBox(height: 18),
+              Text(
+                content.summary,
+                style: const TextStyle(
+                  fontSize: 15,
+                  height: 1.6,
+                  color: Color(0xFF334155),
                 ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: ElevatedButton.icon(
-                    onPressed: onAskSage,
-                    icon:
-                        const Icon(Icons.chat_bubble_outline_rounded, size: 18),
-                    label: const Text('Ask Sage'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF2563EB),
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
+              ),
+              if (highlights.isNotEmpty) ...[
+                const SizedBox(height: 18),
+                LayoutBuilder(
+                  builder: (context, constraints) {
+                    final cardWidth = highlights.length == 1
+                        ? constraints.maxWidth
+                        : (constraints.maxWidth - 10) / 2;
+                    return Wrap(
+                      spacing: 10,
+                      runSpacing: 10,
+                      children: [
+                        for (final highlight in highlights)
+                          SizedBox(
+                            width: cardWidth,
+                            child: _buildHighlightCard(highlight),
+                          ),
+                      ],
+                    );
+                  },
+                ),
+              ],
+              const SizedBox(height: 20),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextButton(
+                      onPressed: onDismiss,
+                      style: TextButton.styleFrom(
+                        foregroundColor: const Color(0xFF475569),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                      ),
+                      child: const Text('Dismiss'),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      onPressed: onAskSage,
+                      icon: const Icon(Icons.chat_bubble_outline_rounded,
+                          size: 18),
+                      label: const Text('Ask Sage'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF2563EB),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
                       ),
                     ),
                   ),
-                ),
-              ],
-            ),
-          ],
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );
+  }
+
+  Widget _buildHighlightCard(_BriefingHighlight highlight) {
+    final color = highlight.color;
+    return Container(
+      key: Key(highlight.key),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.06),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: color.withOpacity(0.22)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 28,
+            height: 28,
+            decoration: BoxDecoration(
+              color: color.withOpacity(0.14),
+              borderRadius: BorderRadius.circular(9),
+            ),
+            child: Icon(highlight.icon, size: 16, color: color),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  highlight.label,
+                  style: TextStyle(
+                    fontSize: 9.5,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0.7,
+                    color: color,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  highlight.value,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 12.5,
+                    height: 1.25,
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xFF1E293B),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  static List<_BriefingHighlight> _buildHighlights(
+      SageBriefingContent content) {
+    final fields = parseBriefingDetail(content.detailText);
+    final inventoryAlert = fields['Inventory Alerts'] ?? '';
+    final revenueLine = fields['Yesterday Summary'] ?? '';
+    final forecast = fields["Today's Forecast"] ?? '';
+    final bestSeller = fields['Best Seller'] ?? '';
+    final healthLabel = fields['Business Health'] ?? content.businessHealth;
+    final highlights = <_BriefingHighlight>[];
+
+    final criticalCount = _countFromFields(fields, 'Critical Stock Count') ??
+        (RegExp(r'critical|out of stock|zero stock', caseSensitive: false)
+                .hasMatch(inventoryAlert)
+            ? 1
+            : 0);
+    if (criticalCount > 0) {
+      highlights.add(_BriefingHighlight(
+        key: 'sage-briefing-highlight-critical-stock',
+        label: 'CRITICAL STOCK',
+        value: criticalCount > 1
+            ? '$criticalCount items need immediate restock'
+            : '${_inventoryLead(inventoryAlert)} needs immediate restock',
+        icon: Icons.inventory_2_rounded,
+        color: const Color(0xFFDC2626),
+      ));
+    }
+
+    final lowCount = _countFromFields(fields, 'Low Stock Count') ??
+        _lowStockCount(inventoryAlert);
+    if (lowCount != null && lowCount > 0) {
+      highlights.add(_BriefingHighlight(
+        key: 'sage-briefing-highlight-low-stock',
+        label: 'LOW STOCK',
+        value: '$lowCount item${lowCount == 1 ? '' : 's'} below minimum',
+        icon: Icons.warning_amber_rounded,
+        color: const Color(0xFFD97706),
+      ));
+    }
+
+    final percentMatch =
+        RegExp(r'(-?\d+(?:\.\d+)?)\s*%').firstMatch(revenueLine);
+    final percent = double.tryParse(percentMatch?.group(1) ?? '');
+    final isDrop = revenueLine.toLowerCase().contains('lower than yesterday') ||
+        (percent != null && percent < 0);
+    final isSevere = isDrop || (percent != null && percent.abs() >= 10);
+    if (isSevere) {
+      highlights.add(_BriefingHighlight(
+        key: 'sage-briefing-highlight-revenue',
+        label: isDrop ? 'REVENUE DROP' : 'REVENUE SURGE',
+        value: percent != null
+            ? '${percent.abs().toStringAsFixed(1)}% '
+                '${isDrop ? 'down' : 'up'} vs yesterday'
+            : 'Lower than yesterday',
+        icon: isDrop ? Icons.trending_down_rounded : Icons.trending_up_rounded,
+        color: isDrop ? const Color(0xFFE11D48) : const Color(0xFF059669),
+      ));
+    }
+
+    final healthScore = healthScoreFromLabel(healthLabel);
+    if (healthScore != null && healthScore < 40) {
+      highlights.add(_BriefingHighlight(
+        key: 'sage-briefing-highlight-health',
+        label: 'BUSINESS HEALTH',
+        value: healthLabel,
+        icon: Icons.monitor_heart_outlined,
+        color: const Color(0xFF7C3AED),
+      ));
+    }
+
+    final forecastAmount =
+        RegExp(r'₱[\d,]+(?:\.\d+)?').firstMatch(forecast)?.group(0);
+    if (forecastAmount != null) {
+      highlights.add(_BriefingHighlight(
+        key: 'sage-briefing-highlight-forecast',
+        label: 'FORECAST',
+        value: '$forecastAmount next peak',
+        icon: Icons.insights_rounded,
+        color: const Color(0xFF2563EB),
+      ));
+    } else if (bestSeller.isNotEmpty &&
+        bestSeller.toLowerCase() != 'no sales yet') {
+      highlights.add(_BriefingHighlight(
+        key: 'sage-briefing-highlight-best-seller',
+        label: 'BEST SELLER',
+        value: bestSeller,
+        icon: Icons.star_rounded,
+        color: const Color(0xFF2563EB),
+      ));
+    }
+
+    return highlights.take(4).toList(growable: false);
+  }
+
+  static int? _countFromFields(Map<String, String> fields, String label) {
+    final digits = fields[label]?.replaceAll(RegExp(r'[^0-9-]'), '');
+    if (digits == null || digits.isEmpty) return null;
+    final count = int.tryParse(digits);
+    return count != null && count > 0 ? count : null;
+  }
+
+  static int? _lowStockCount(String alert) {
+    if (alert.trim().isEmpty) return null;
+    final patterns = [
+      RegExp(r'(?:low[\s-]*stock|below minimum|items?)[^0-9]{0,24}(\d+)',
+          caseSensitive: false),
+      RegExp(r'(\d+)[^0-9]{0,24}(?:low[\s-]*stock|items?|below minimum)',
+          caseSensitive: false),
+    ];
+    for (final pattern in patterns) {
+      final match = pattern.firstMatch(alert);
+      final count = int.tryParse(match?.group(1) ?? '');
+      if (count != null && count > 0) return count;
+    }
+    final lower = alert.toLowerCase();
+    if ((lower.contains('low') || lower.contains('below minimum')) &&
+        !lower.contains('critical')) {
+      return 1;
+    }
+    return null;
+  }
+
+  static String _inventoryLead(String alert) {
+    final match =
+        RegExp(r'^\s*([^,.:]+?)\s+(?:is|are|needs)\b', caseSensitive: false)
+            .firstMatch(alert);
+    final lead = match?.group(1)?.trim() ?? '';
+    return lead.isEmpty ? 'Stock item' : lead;
   }
 }

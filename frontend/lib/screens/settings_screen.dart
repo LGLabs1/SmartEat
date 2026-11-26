@@ -7,7 +7,6 @@ import '../services/auth_provider.dart';
 import '../services/pos_settings_service.dart';
 import '../theme.dart';
 import '../widgets/bluetooth_printer_sheet.dart';
-import '../widgets/download_apps_card.dart';
 import '../widgets/sage_header_button.dart';
 import '../widgets/smart_eat_header.dart';
 import 'package:provider/provider.dart';
@@ -376,9 +375,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
             // App Settings Section
             _buildSectionHeader('App Settings'),
             _buildAppSettingsCard(),
-            const SizedBox(height: 24),
-            _buildSectionHeader('Get Smart Eat'),
-            const DownloadAppsCard(),
             const SizedBox(height: 32),
 
             // Danger Zone

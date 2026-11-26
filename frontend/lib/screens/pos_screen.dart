@@ -704,16 +704,18 @@ class _POSScreenState extends State<POSScreen> {
     final isAvailable = manualAvailability is bool ? manualAvailability : true;
     final rawIssues = item['stockIssues'];
     final hasStockIssues = rawIssues is List && rawIssues.isNotEmpty;
-    final issueSummary = (item['stockIssueSummary'] ?? '').toString().trim();
+    final unavailabilityReason = menuUnavailabilityReason(item);
 
     if (nextQty > 0 &&
         (!isAvailable || (isLinked && (servings <= 0 || hasStockIssues)))) {
       HapticHelper.error();
       final message = !isAvailable
-          ? 'This item is unavailable.'
-          : (issueSummary.isEmpty
+          ? (unavailabilityReason.isEmpty
+              ? 'This item is unavailable.'
+              : 'This item is unavailable: $unavailabilityReason')
+          : (unavailabilityReason.isEmpty
               ? 'This item is out of stock.'
-              : 'Not enough stock: $issueSummary');
+              : unavailabilityReason);
       _showInlineError(message);
       return;
     }
@@ -773,9 +775,9 @@ class _POSScreenState extends State<POSScreen> {
     if (exceeded) {
       HapticHelper.error();
       _showInlineError(
-        issueSummary.isEmpty
+        unavailabilityReason.isEmpty
             ? 'Only $servings left in stock.'
-            : 'Not enough stock: $issueSummary',
+            : 'Not enough stock: $unavailabilityReason',
       );
     }
   }
@@ -1083,7 +1085,7 @@ class _POSScreenState extends State<POSScreen> {
           manualAvailability is bool ? manualAvailability : true;
       final rawIssues = menu['stockIssues'];
       final hasStockIssues = rawIssues is List && rawIssues.isNotEmpty;
-      final issueSummary = (menu['stockIssueSummary'] ?? '').toString().trim();
+      final unavailabilityReason = menuUnavailabilityReason(menu);
 
       final qtyRaw = cart['quantity'];
       final qty = qtyRaw is num
@@ -1095,7 +1097,7 @@ class _POSScreenState extends State<POSScreen> {
           (isLinked && qty > servings)) {
         final name = (menu['name'] ?? cart['name'] ?? 'Item').toString();
         invalid.add(
-          issueSummary.isEmpty ? name : '$name ($issueSummary)',
+          unavailabilityReason.isEmpty ? name : '$name ($unavailabilityReason)',
         );
       }
     }
@@ -2317,17 +2319,12 @@ class _MenuItemCard extends StatelessWidget {
     final manualOn = manualAvailability is bool ? manualAvailability : true;
     final rawIssues = item['stockIssues'];
     final hasStockIssues = rawIssues is List && rawIssues.isNotEmpty;
-    final issueSummary = (item['stockIssueSummary'] ?? '').toString().trim();
+    final unavailabilityReason = menuUnavailabilityReason(item);
     final stockOut = isLinked && (servings <= 0 || hasStockIssues);
     final isAvailable = manualOn && !stockOut;
     final canAdd = isAvailable;
-    final statusText = !manualOn
-        ? 'Unavailable'
-        : (stockOut
-            ? (issueSummary.isEmpty
-                ? 'Out of stock'
-                : 'Out of stock: $issueSummary')
-            : 'Available');
+    final statusText =
+        unavailabilityReason.isEmpty ? 'Available' : unavailabilityReason;
 
     final priceRaw = item['price'] ?? 0;
     final price = priceRaw is num

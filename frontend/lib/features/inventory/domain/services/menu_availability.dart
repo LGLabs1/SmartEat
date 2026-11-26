@@ -3,6 +3,79 @@ import 'dart:math' as math;
 import 'recipe_consumption.dart';
 import 'unit_conversion.dart';
 
+const String menuNoUnavailabilityReason = 'No reason provided';
+
+String menuUnavailabilityReason(Map<String, dynamic> item) {
+  final manualAvailability = item['isAvailable'];
+  final manualOn = manualAvailability is bool ? manualAvailability : true;
+
+  final inventoryItemId = (item['inventoryItemId'] ?? '').toString().trim();
+  final recipeId = (item['recipeId'] ?? '').toString().trim();
+  final isLinked = inventoryItemId.isNotEmpty ||
+      recipeId.isNotEmpty ||
+      item['isDirectInventoryLinked'] == true ||
+      item['isRecipeLinked'] == true;
+
+  final rawIssues = item['stockIssues'];
+  final issues = rawIssues is List ? rawIssues : const <dynamic>[];
+
+  final servingsRaw = item['availableServings'];
+  final servings = servingsRaw is num
+      ? servingsRaw.toInt()
+      : int.tryParse((servingsRaw ?? '').toString().trim());
+
+  final stockCaused =
+      issues.isNotEmpty || (isLinked && servings != null && servings <= 0);
+
+  if (stockCaused) return _formatStockReason(item, issues);
+  if (!manualOn) return menuNoUnavailabilityReason;
+  return '';
+}
+
+String _formatStockReason(Map<String, dynamic> item, List<dynamic> issues) {
+  final summary = _stockIssueSummary(item, issues);
+  final severities = issues
+      .whereType<Map>()
+      .map((issue) => (issue['severity'] ?? '').toString().trim().toLowerCase())
+      .where((severity) => severity.isNotEmpty)
+      .toSet();
+
+  String prefix;
+  if (severities.contains('insufficient') ||
+      severities.contains('incompatible')) {
+    prefix = 'Not enough stock';
+  } else if (severities.isNotEmpty &&
+      severities
+          .every((severity) => severity == 'missing' || severity == 'empty')) {
+    prefix = 'Unavailable';
+  } else {
+    prefix = 'Out of stock';
+  }
+
+  return summary.isEmpty ? prefix : '$prefix: $summary';
+}
+
+String _stockIssueSummary(Map<String, dynamic> item, List<dynamic> issues) {
+  final stored = (item['stockIssueSummary'] ?? '').toString().trim();
+  if (stored.isNotEmpty) return stored;
+
+  final names = issues
+      .whereType<Map>()
+      .map((issue) => (issue['name'] ?? '').toString().trim())
+      .where((name) => name.isNotEmpty)
+      .toSet()
+      .toList();
+  if (names.isNotEmpty) return names.take(3).join(', ');
+
+  final messages = issues
+      .whereType<Map>()
+      .map((issue) => (issue['message'] ?? '').toString().trim())
+      .where((message) => message.isNotEmpty)
+      .toSet()
+      .toList();
+  return messages.take(3).join(', ');
+}
+
 class MenuStockIssue {
   const MenuStockIssue({
     required this.name,

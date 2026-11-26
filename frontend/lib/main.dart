@@ -191,10 +191,19 @@ class SmartEatApp extends StatelessWidget {
                 data: AppTheme.dashboardTheme,
                 child: const AuthGate(child: NotificationsScreen()),
               ),
-          '/profile': (context) => Theme(
-                data: AppTheme.dashboardTheme,
-                child: const AuthGate(child: ProfileScreen()),
+          '/profile': (context) {
+            final arguments = ModalRoute.of(context)?.settings.arguments;
+            final onOpenTeamAttendance =
+                arguments is VoidCallback ? arguments : null;
+            return Theme(
+              data: AppTheme.dashboardTheme,
+              child: AuthGate(
+                child: ProfileScreen(
+                  onOpenTeamAttendance: onOpenTeamAttendance,
+                ),
               ),
+            );
+          },
           '/about': (context) => const AuthGate(child: AboutScreen()),
         },
         debugShowCheckedModeBanner: false,

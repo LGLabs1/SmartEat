@@ -290,4 +290,69 @@ void main() {
       expect(item['stockIssueSummary'], 'Bottled Water');
     });
   });
+
+  group('menuUnavailabilityReason', () {
+    test('is empty for available items', () {
+      expect(
+        menuUnavailabilityReason({
+          'name': 'Water',
+          'isAvailable': true,
+          'inventoryItemId': 'bottle',
+          'availableServings': 5,
+        }),
+        isEmpty,
+      );
+    });
+
+    test('uses the shared no-reason label for manual admin toggle', () {
+      expect(
+        menuUnavailabilityReason({'name': 'Water', 'isAvailable': false}),
+        menuNoUnavailabilityReason,
+      );
+    });
+
+    test('uses out of stock summary when stock caused unavailability', () {
+      expect(
+        menuUnavailabilityReason({
+          'isAvailable': false,
+          'inventoryItemId': 'bottle',
+          'availableServings': 0,
+          'stockIssues': [
+            {'name': 'Bottled Water', 'severity': 'out_of_stock'},
+          ],
+          'stockIssueSummary': 'Bottled Water',
+        }),
+        'Out of stock: Bottled Water',
+      );
+    });
+
+    test('uses insufficient stock wording for insufficient ingredients', () {
+      expect(
+        menuUnavailabilityReason({
+          'isAvailable': true,
+          'recipeId': 'recipe',
+          'availableServings': 0,
+          'stockIssues': [
+            {'name': 'Rice', 'severity': 'insufficient'},
+          ],
+        }),
+        'Not enough stock: Rice',
+      );
+    });
+
+    test('derives a reason from issue names when summary is missing', () {
+      expect(
+        menuUnavailabilityReason({
+          'isAvailable': false,
+          'recipeId': 'recipe',
+          'availableServings': 0,
+          'stockIssues': [
+            {'name': 'Egg', 'severity': 'out_of_stock'},
+            {'name': 'Milk', 'severity': 'out_of_stock'},
+          ],
+        }),
+        'Out of stock: Egg, Milk',
+      );
+    });
+  });
 }

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../../../theme.dart';
 import '../../../../widgets/dashboard/empty_state.dart';
+import '../../../../widgets/period/date_range_selector.dart';
 import '../../../../widgets/responsive_search_field.dart';
 import '../../data/finance_format.dart';
 import '../../data/finance_metrics.dart';
@@ -297,28 +298,9 @@ class FinanceExpensesTab extends StatelessWidget {
   }
 
   Widget _dateRangeChip(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final hasRange = dateRange != null;
-    return ActionChip(
-      avatar: Icon(
-        Icons.date_range,
-        size: 16,
-        color: hasRange ? scheme.primary : null,
-      ),
-      label: Text(
-        hasRange
-            ? '${FinanceFormat.date(dateRange!.start)} → ${FinanceFormat.date(dateRange!.end)}'
-            : 'Date range',
-      ),
-      onPressed: () async {
-        final picked = await showDateRangePicker(
-          context: context,
-          firstDate: DateTime(2000),
-          lastDate: DateTime(2100),
-          initialDateRange: dateRange,
-        );
-        if (picked != null) onDateRangeChanged(picked);
-      },
+    return DateRangeSelector(
+      range: dateRange,
+      onChanged: onDateRangeChanged,
     );
   }
 

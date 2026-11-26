@@ -19,6 +19,8 @@ void main() {
       ),
     ));
 
+    expect(find.byKey(const Key('month-selector-chip')), findsOneWidget);
+
     await tester.scrollUntilVisible(
       find.byKey(const Key('finance-bluetooth-print-button')),
       500,

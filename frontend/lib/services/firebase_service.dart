@@ -1856,6 +1856,21 @@ class FirebaseService {
     return double.tryParse(value?.toString() ?? '') ?? fallback;
   }
 
+  static double _positiveCost(dynamic value) {
+    final parsed = value is num
+        ? value.toDouble()
+        : double.tryParse(value?.toString().trim() ?? '');
+    return parsed != null && parsed > 0 ? parsed : 0.0;
+  }
+
+  static double _inventoryUnitCost(Map<String, dynamic> inventory) {
+    final unit = _positiveCost(inventory['unitCost']);
+    if (unit > 0) return unit;
+    final lastPurchase = _positiveCost(inventory['lastPurchaseCost']);
+    if (lastPurchase > 0) return lastPurchase;
+    return _positiveCost(inventory['avgCost']);
+  }
+
   static Future<List<Map<String, dynamic>>> _loadInventoryForDeduction(
     String eateryId,
   ) async {
@@ -2042,22 +2057,23 @@ class FirebaseService {
               .doc(movementId);
       final movementSnap = await tx.get(movementRef);
       if (!movementSnap.exists) {
-        final unitCostAtEvent = _asDouble(inventoryItem['unitCost'], 0.0);
+        final unitCostAtEvent = _inventoryUnitCost(inventoryItem);
         final serverTime = FieldValue.serverTimestamp();
-        tx.set(
-          movementRef,
-          buildOrderConsumptionMovement(
-            orderId: orderId,
-            eateryId: eateryId,
-            itemId: inventoryItemId,
-            qtyBeforeBase: currentStock,
-            qtyAfterBase: nextStock,
-            changeBase: -required,
-            unitCostAtEvent: unitCostAtEvent,
-            timestamp: serverTime,
-            performedBy: performedBy,
-          ),
+        final movement = buildOrderConsumptionMovement(
+          orderId: orderId,
+          eateryId: eateryId,
+          itemId: inventoryItemId,
+          qtyBeforeBase: currentStock,
+          qtyAfterBase: nextStock,
+          changeBase: -required,
+          unitCostAtEvent: unitCostAtEvent,
+          timestamp: serverTime,
+          performedBy: performedBy,
         );
+        final isDirect = plan.lines.any((line) =>
+            line.inventoryItemId == inventoryItemId && line.source == 'direct');
+        if (isDirect) movement['reasonCode'] = 'pos_direct_order';
+        tx.set(movementRef, movement);
       }
 
       final minStock = _asDouble(inventoryItem['minStock'], 5.0);
@@ -3630,9 +3646,11 @@ class FirebaseService {
   /// This is read-only and separate from Actual COGS (stock movements).
   static Future<Map<String, dynamic>> getIngredientUsageByMenuItem({
     int days = 30,
+    DateTime? startDate,
+    DateTime? endDate,
   }) async {
     try {
-      final orders = await getOrders();
+      final orders = await getOrders(startDate: startDate, endDate: endDate);
       final menuItems = await getMenuItems();
       final recipes = await getRecipes();
       final inventory = await getInventoryItems();
@@ -3645,11 +3663,14 @@ class FirebaseService {
           if ((r['id'] ?? '').toString().isNotEmpty) (r['id'] as String): r,
       };
       final invByNormName = <String, Map<String, dynamic>>{};
+      final invById = <String, Map<String, dynamic>>{};
       for (final i in inventory) {
         final k = _norm((i['name'] ?? '').toString());
         if (k.isNotEmpty) invByNormName[k] = i;
+        final id = (i['id'] ?? '').toString();
+        if (id.isNotEmpty) invById[id] = i;
       }
-      final cutoff = DateTime.now().subtract(Duration(days: days));
+      final cutoff = startDate ?? DateTime.now().subtract(Duration(days: days));
       DateTime? parseDate(dynamic v) {
         if (v is Timestamp) return v.toDate();
         if (v is DateTime) return v;
@@ -3666,6 +3687,7 @@ class FirebaseService {
             parseDate(order['updatedAt']) ??
             parseDate(order['createdAt']);
         if (when != null && when.isBefore(cutoff)) continue;
+        if (when != null && endDate != null && when.isAfter(endDate)) continue;
         final items = order['items'] as List<dynamic>? ?? const [];
         for (final raw in items) {
           final it = raw as Map? ?? const {};
@@ -3677,23 +3699,65 @@ class FirebaseService {
           final menuName = (menu['name'] ?? 'Menu item').toString();
           final recipeId = (menu['recipeId'] ?? '').toString();
           final recipe = recipeById[recipeId];
-          if (recipe == null) continue;
-          final recipeYield = RecipeConsumption.recipeYield(recipe);
-          final ingredients =
-              recipe['ingredients'] as List<dynamic>? ?? const [];
           final menuAgg = byMenu.putIfAbsent(
               menuItemId,
               () => {
                     'menuItemId': menuItemId,
                     'menuItemName': menuName,
                     'recipeId': recipeId,
-                    'recipeName': (recipe['name'] ?? '').toString(),
+                    'recipeName': (recipe?['name'] ?? '').toString(),
                     'quantitySold': 0.0,
                     'estimatedIngredientCost': 0.0,
                     'ingredients': <Map<String, dynamic>>[],
                   });
           menuAgg['quantitySold'] =
               (menuAgg['quantitySold'] as double) + qtySold;
+
+          if (recipe == null) {
+            final inventoryId =
+                (menu['inventoryItemId'] ?? '').toString().trim();
+            final inv = invById[inventoryId] ?? invByNormName[_norm(menuName)];
+            final resolvedId = inventoryId.isNotEmpty
+                ? inventoryId
+                : (inv?['id'] ?? '').toString().trim();
+            final unitCost = inv == null ? 0.0 : _inventoryUnitCost(inv);
+            if (resolvedId.isEmpty || unitCost <= 0) continue;
+            final usedCost = qtySold * unitCost;
+            final agg = byIngredient.putIfAbsent(
+                resolvedId,
+                () => {
+                      'ingredientKey': resolvedId,
+                      'inventoryItemId': resolvedId,
+                      'name': (inv?['name'] ?? menuName).toString(),
+                      'unit': (inv?['unit'] ?? '').toString(),
+                      'usedQty': 0.0,
+                      'estimatedCost': 0.0,
+                      'menuItems': <String, double>{},
+                      'reasonCode': 'direct_inventory',
+                    });
+            agg['usedQty'] = (agg['usedQty'] as double) + qtySold;
+            agg['estimatedCost'] = (agg['estimatedCost'] as double) + usedCost;
+            (agg['menuItems'] as Map<String, double>)[menuName] =
+                ((agg['menuItems'] as Map<String, double>)[menuName] ?? 0) +
+                    qtySold;
+            menuAgg['reasonCode'] = 'direct_inventory';
+            menuAgg['estimatedIngredientCost'] =
+                (menuAgg['estimatedIngredientCost'] as double) + usedCost;
+            menuAgg['ingredients'] = [
+              {
+                'name': (inv?['name'] ?? menuName).toString(),
+                'unit': (inv?['unit'] ?? '').toString(),
+                'usedQty': qtySold,
+                'estimatedCost': usedCost,
+                'reasonCode': 'direct_inventory',
+              },
+            ];
+            continue;
+          }
+
+          final recipeYield = RecipeConsumption.recipeYield(recipe);
+          final ingredients =
+              recipe['ingredients'] as List<dynamic>? ?? const [];
           double menuCost = 0;
           final menuIngAgg = <String, Map<String, dynamic>>{};
           for (final ingRaw in ingredients) {
@@ -3724,6 +3788,7 @@ class FirebaseService {
                       'usedQty': 0.0,
                       'estimatedCost': 0.0,
                       'menuItems': <String, double>{},
+                      'reasonCode': 'recipe',
                     });
             agg['usedQty'] = (agg['usedQty'] as double) + usedQty;
             agg['estimatedCost'] = (agg['estimatedCost'] as double) + usedCost;
@@ -3737,6 +3802,7 @@ class FirebaseService {
                       'unit': (ing['unit'] ?? '').toString(),
                       'usedQty': 0.0,
                       'estimatedCost': 0.0,
+                      'reasonCode': 'recipe',
                     });
             mi['usedQty'] = (mi['usedQty'] as double) + usedQty;
             mi['estimatedCost'] = (mi['estimatedCost'] as double) + usedCost;
@@ -3771,6 +3837,8 @@ class FirebaseService {
         'ingredients': ingredientList,
         'menuItems': menuList,
         'days': days,
+        if (startDate != null) 'startDate': startDate.toIso8601String(),
+        if (endDate != null) 'endDate': endDate.toIso8601String(),
       };
     } catch (e) {
       throw Exception('Failed to compute ingredient usage: $e');
@@ -3824,11 +3892,14 @@ class FirebaseService {
     }
   }
 
-  static Future<Map<String, dynamic>> getItemPerformance() async {
+  static Future<Map<String, dynamic>> getItemPerformance({
+    DateTime? startDate,
+    DateTime? endDate,
+  }) async {
     try {
       final itemStats = <String, Map<String, dynamic>>{};
 
-      final orders = await getOrders();
+      final orders = await getOrders(startDate: startDate, endDate: endDate);
 
       for (final order in orders) {
         final status = (order['status'] ?? '').toString().toLowerCase();
@@ -3866,12 +3937,7 @@ class FirebaseService {
       // Merge recipe/menu costing fields for "Gross Margin (by Menu Costing)".
       // This is additive and does not affect Actual COGS (movement-based).
       try {
-        double positiveCost(dynamic value) {
-          final parsed = value is num
-              ? value.toDouble()
-              : double.tryParse(value?.toString().trim() ?? '');
-          return parsed != null && parsed > 0 ? parsed : 0.0;
-        }
+        double positiveCost(dynamic value) => _positiveCost(value);
 
         final menuItems = await getMenuItems();
         final needsInventoryCost = menuItems.any((m) =>
@@ -3894,9 +3960,15 @@ class FirebaseService {
             if ((m['name'] ?? '').toString().isNotEmpty)
               (m['name'] as String).toLowerCase().trim(): m,
         };
+        final menuByInventoryId = <String, Map<String, dynamic>>{
+          for (final m in menuItems)
+            if ((m['inventoryItemId'] ?? '').toString().trim().isNotEmpty)
+              (m['inventoryItemId'] as String).trim(): m,
+        };
         for (final stat in itemStats.values) {
           final statId = stat['id']?.toString();
           final menu = menuById[statId] ??
+              menuByInventoryId[statId] ??
               menuByName[(stat['name'] ?? '').toString().toLowerCase().trim()];
           if (menu == null) continue;
           if (menu['costPerServing'] != null) {
@@ -3921,11 +3993,10 @@ class FirebaseService {
               positiveCost(menu['costPerUnit']) > 0) {
             continue;
           }
-          final inventory = inventoryById[inventoryId];
+          final inventory = inventoryById[inventoryId] ??
+              inventoryById[(stat['id'] ?? '').toString().trim()];
           if (inventory == null) continue;
-          final directCost = positiveCost(inventory['unitCost']) > 0
-              ? positiveCost(inventory['unitCost'])
-              : positiveCost(inventory['lastPurchaseCost']);
+          final directCost = _inventoryUnitCost(inventory);
           if (directCost <= 0) continue;
           stat['directUnitCost'] = directCost;
           stat['costingSource'] = 'direct_inventory';
@@ -3936,6 +4007,8 @@ class FirebaseService {
         'items': itemStats.values.toList()
           ..sort((a, b) =>
               (b['revenue'] as double).compareTo(a['revenue'] as double)),
+        if (startDate != null) 'startDate': startDate.toIso8601String(),
+        if (endDate != null) 'endDate': endDate.toIso8601String(),
       };
     } catch (e) {
       throw Exception('Failed to fetch item performance: $e');

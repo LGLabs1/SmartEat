@@ -4,11 +4,13 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
 import '../features/finance/data/business_kpis.dart';
 import '../features/finance/data/finance_metrics.dart';
+import '../features/finance/data/report_period.dart';
 import '../services/api_service.dart';
 import '../theme.dart';
 import '../widgets/admin/admin_bottom_tabs.dart';
 import '../widgets/dashboard/dashboard_back_handler.dart';
 import '../widgets/feature_tab_header.dart';
+import '../widgets/period/month_selector.dart';
 
 Widget analyticsCompactTabIcon(
   IconData icon,
@@ -272,19 +274,8 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
   List<Map<String, dynamic>> _payables = [];
   bool _isLoading = false;
 
-  int _rangeDays = 7;
   int _selectedRangeDays = 14;
-  DateTimeRange? _customRange;
-  String? _selectedMonthYear;
-  DateTime? _selectedMonth;
-
-  // Year/Month slicers (new)
-  int? _selectedYear; // null = All
-  int? _selectedMonthNumber; // null = All (1-12 when selected)
-
-  // Cached availability (derived from orders, not from currently displayed chart data)
-  List<int> _availableYears = [];
-  final Map<int, List<int>> _availableMonthsByYear = {};
+  DateTime _selectedMonth = ReportPeriod.month(DateTime.now());
 
   final NumberFormat _currency = NumberFormat.currency(
       locale: 'en_PH', symbol: '\u20B1', decimalDigits: 2);
@@ -407,10 +398,6 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
       }
     };
     _tabController.addListener(_tabListener);
-    // Initialize year/month slicers to All (show all data)
-    _selectedYear = null; // All years
-    _selectedMonthNumber = null; // All months
-    _loadAvailability();
     _loadAnalyticsData();
     widget.onBackHandlerChanged?.call(
       DashboardBackHandler(
@@ -430,58 +417,6 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
     );
   }
 
-  Future<void> _loadAvailability() async {
-    try {
-      final now = DateTime.now();
-      final res = await ApiService.getOrdersByDateRange(
-        startDate: DateTime(2000, 1, 1),
-        endDate: now,
-      );
-
-      final orders = res['data'] as List<dynamic>? ?? const [];
-      final yearsSet = <int>{};
-      final monthsByYear = <int, Set<int>>{};
-
-      DateTime? parseCreatedAt(dynamic createdAt) {
-        if (createdAt is Timestamp) return createdAt.toDate();
-        if (createdAt is DateTime) return createdAt;
-        if (createdAt is int)
-          return DateTime.fromMillisecondsSinceEpoch(createdAt);
-        if (createdAt is String) return DateTime.tryParse(createdAt);
-        return null;
-      }
-
-      for (final order in orders) {
-        if (order is! Map) continue;
-        final status = (order['status'] ?? '').toString().toLowerCase();
-        if (status != 'completed') continue;
-
-        final created = parseCreatedAt(order['createdAt']);
-        if (created == null) continue;
-
-        yearsSet.add(created.year);
-        (monthsByYear[created.year] ??= <int>{}).add(created.month);
-      }
-
-      final years = yearsSet.toList()..sort((a, b) => b.compareTo(a));
-      final normalizedMonthsByYear = <int, List<int>>{};
-      for (final entry in monthsByYear.entries) {
-        final months = entry.value.toList()..sort();
-        normalizedMonthsByYear[entry.key] = months;
-      }
-
-      if (!mounted) return;
-      setState(() {
-        _availableYears = years;
-        _availableMonthsByYear
-          ..clear()
-          ..addAll(normalizedMonthsByYear);
-      });
-    } catch (_) {
-      // ignore availability errors; slicers will fall back to current chart data
-    }
-  }
-
   @override
   void dispose() {
     widget.onBackHandlerChanged?.call(null);
@@ -494,35 +429,10 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
     setState(() => _isLoading = true);
 
     try {
-      DateTime startDate;
-      DateTime endDate = DateTime.now();
-      int days = _rangeDays;
-
-      // Handle Year/Month slicer selections
-      if (_selectedYear != null && _selectedMonthNumber != null) {
-        // Specific year and month selected
-        startDate = DateTime(_selectedYear!, _selectedMonthNumber!, 1);
-        endDate = DateTime(
-            _selectedYear!, _selectedMonthNumber! + 1, 0, 23, 59, 59, 999);
-        days = endDate.difference(startDate).inDays + 1;
-      } else if (_selectedYear != null && _selectedMonthNumber == null) {
-        // Specific year, all months
-        startDate = DateTime(_selectedYear!, 1, 1);
-        endDate = DateTime(_selectedYear!, 12, 31, 23, 59, 59, 999);
-        days = 365;
-      } else if (_selectedYear == null && _selectedMonthNumber != null) {
-        // All years, specific month (use current year as fallback)
-        final now = DateTime.now();
-        startDate = DateTime(now.year, _selectedMonthNumber!, 1);
-        endDate =
-            DateTime(now.year, _selectedMonthNumber! + 1, 0, 23, 59, 59, 999);
-        days = endDate.difference(startDate).inDays + 1;
-      } else {
-        // All years, all months - get all historical data
-        final earliest = _getEarliestDate(endDate);
-        startDate = earliest;
-        days = endDate.difference(startDate).inDays + 1;
-      }
+      final range = ReportPeriod.monthRange(_selectedMonth);
+      final startDate = range.start;
+      final endDate = range.end;
+      final days = endDate.difference(startDate).inDays + 1;
 
       final ordersForRangeFuture = ApiService.getOrdersByDateRange(
         startDate: startDate,
@@ -540,7 +450,10 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
               _processOrdersToDailySales(const [], days, startDate);
           return {'data': salesData};
         }),
-        ApiService.getItemPerformance(),
+        ApiService.getItemPerformance(
+          startDate: startDate,
+          endDate: ReportPeriod.exclusiveEnd(_selectedMonth),
+        ),
         ApiService.getOrdersForecast(days: _selectedRangeDays),
         ApiService.getSalesForecast(days: _selectedRangeDays),
         ApiService.getRecommendations(),
@@ -672,24 +585,21 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                         final isWide = constraints.maxWidth >= 800;
 
                         if (isWide) {
-                          // Wide layout: Year/Month slicers + KPIs in one row
                           return Row(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              // Year/Month slicers
-                              _buildYearMonthSlicers(),
+                              _buildMonthSlicer(),
                               const SizedBox(width: 10),
                               Expanded(child: _buildCompactKpiRow()),
                             ],
                           );
                         } else {
-                          // Narrow layout: stacked vertically with smaller cards
                           return Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Row(
                                 children: [
-                                  _buildYearMonthSlicers(),
+                                  _buildMonthSlicer(),
                                   const SizedBox(width: 10),
                                 ],
                               ),
@@ -772,17 +682,11 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
     final month = _summaryStats!['month'] ?? {};
     final menuItems = _summaryStats!['menuItems'] ?? 0;
 
-    // Calculate finance KPIs
-    final now = DateTime.now();
-    final currentMonthStart = DateTime(now.year, now.month, 1);
+    final monthRange = ReportPeriod.monthRange(_selectedMonth);
 
     final currentMonthExpenses = _expenses.where((e) {
-      final dateStr = e['date']?.toString() ?? e['createdAt']?.toString();
-      if (dateStr == null) return false;
-      final date = DateTime.tryParse(dateStr);
-      if (date == null) return false;
-      return date.year == currentMonthStart.year &&
-          date.month == currentMonthStart.month;
+      final date = FinanceMetrics.expenseDate(e);
+      return date != null && ReportPeriod.contains(monthRange, date);
     }).toList();
 
     final totalExpenses = currentMonthExpenses.fold<double>(
@@ -907,571 +811,35 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
     );
   }
 
-  Widget _buildRangeSelector(BuildContext context) {
-    final now = DateTime.now();
-    final hasCustom = _customRange != null;
-    final isForecastTab = _tabController.index == 2;
-
-    // Calculate date ranges for tooltips (only for non-forecast tabs)
-    String getRangeTooltip(int days) {
-      final start = now.subtract(Duration(days: days - 1));
-      return '${DateFormat('M/d').format(start)} - ${DateFormat('M/d').format(now)}';
-    }
-
-    final currentMonthStart = DateTime(now.year, now.month, 1);
-    final currentMonthTooltip =
-        '${DateFormat('M/d').format(currentMonthStart)} - ${DateFormat('M/d').format(now)}';
-
-    String displayValue;
-    if (isForecastTab) {
-      // Forecast tab shows "Next X days"
-      displayValue = 'Next $_selectedRangeDays days';
-    } else if (hasCustom) {
-      displayValue =
-          '${DateFormat('MMM d').format(_customRange!.start)} - ${DateFormat('MMM d').format(_customRange!.end)}';
-    } else if (_rangeDays == -2) {
-      displayValue = 'This Month';
-    } else if (_rangeDays == -4) {
-      displayValue = _selectedMonthYear ?? 'Pick Month';
-    } else {
-      displayValue = 'Last $_rangeDays days';
-    }
-
+  Widget _buildMonthSlicer() {
     return Container(
       decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surface,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: Theme.of(context).colorScheme.outline),
+        color: AppTheme.sagePanel,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.2)),
       ),
-      child: Material(
-        color: Colors.transparent,
-        child: PopupMenuButton<int>(
-          key: ValueKey('range_selector_${_tabController.index}'),
-          initialValue: isForecastTab
-              ? _selectedRangeDays
-              : (hasCustom ? -1 : _rangeDays),
-          onSelected: (v) async {
-            // Handle Forecast tab (Next X days)
-            if (isForecastTab) {
-              setState(() {
-                _selectedRangeDays = v;
-              });
-              await _loadAnalyticsData();
-              return;
-            }
-
-            // Handle other tabs (Last X days, Month, Custom)
-            if (v == -1) {
-              final picked = await showDateRangePicker(
-                context: context,
-                firstDate: DateTime(now.year - 2),
-                lastDate: now,
-                initialDateRange: _customRange ??
-                    DateTimeRange(
-                      start: now.subtract(const Duration(days: 7)),
-                      end: now,
-                    ),
-              );
-              if (picked == null) return;
-              final days = picked.end.difference(picked.start).inDays + 1;
-              setState(() {
-                _customRange = picked;
-                _rangeDays = days <= 0 ? 7 : days;
-                _selectedMonth = null;
-                _selectedMonthYear = null;
-              });
-              await _loadAnalyticsData();
-              return;
-            }
-
-            if (v == -4) {
-              // Show month/year picker
-              final selected = await _showMonthYearPicker(context);
-              if (selected == null) return;
-              setState(() {
-                _selectedMonth = selected;
-                _selectedMonthYear = DateFormat('MMM yyyy').format(selected);
-                _rangeDays = -4;
-                _customRange = null;
-              });
-              await _loadAnalyticsData();
-              return;
-            }
-
-            setState(() {
-              _customRange = null;
-              _selectedMonth = null;
-              _selectedMonthYear = null;
-              _rangeDays = v;
-            });
-            await _loadAnalyticsData();
-          },
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  isForecastTab ? Icons.arrow_forward : Icons.calendar_today,
-                  size: 16,
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  displayValue,
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Icon(Icons.arrow_drop_down,
-                    size: 18, color: Colors.white.withValues(alpha: 0.6)),
-              ],
-            ),
-          ),
-          itemBuilder: (context) => isForecastTab
-              ? [
-                  // Forecast tab: Next X days options only
-                  _buildMenuItem(
-                    value: 7,
-                    label: 'Next 7 days',
-                    tooltip: 'Show forecast for next 7 days',
-                    icon: Icons.view_week,
-                    isForecastTab: true,
-                  ),
-                  _buildMenuItem(
-                    value: 14,
-                    label: 'Next 2 weeks',
-                    tooltip: 'Show forecast for next 14 days',
-                    icon: Icons.calendar_view_week,
-                    isForecastTab: true,
-                  ),
-                  _buildMenuItem(
-                    value: 21,
-                    label: 'Next 3 weeks',
-                    tooltip: 'Show forecast for next 21 days',
-                    icon: Icons.date_range,
-                    isForecastTab: true,
-                  ),
-                  _buildMenuItem(
-                    value: 30,
-                    label: 'Next 30 days',
-                    tooltip: 'Show forecast for next 30 days',
-                    icon: Icons.calendar_view_month,
-                    isForecastTab: true,
-                  ),
-                  _buildMenuItem(
-                    value: 90,
-                    label: 'Next 90 days',
-                    tooltip: 'Show forecast for next 90 days',
-                    icon: Icons.date_range,
-                    isForecastTab: true,
-                  ),
-                ]
-              : [
-                  // Other tabs: Last X days, Month, Custom
-                  _buildMenuItem(
-                    value: 7,
-                    label: 'Last 7 days',
-                    tooltip: getRangeTooltip(7),
-                    icon: Icons.view_week,
-                  ),
-                  _buildMenuItem(
-                    value: 30,
-                    label: 'Last 30 days',
-                    tooltip: getRangeTooltip(30),
-                    icon: Icons.calendar_view_month,
-                  ),
-                  _buildMenuItem(
-                    value: 90,
-                    label: 'Last 90 days',
-                    tooltip: getRangeTooltip(90),
-                    icon: Icons.date_range,
-                  ),
-                  const PopupMenuDivider(),
-                  _buildMenuItem(
-                    value: -2,
-                    label: 'This Month',
-                    tooltip: currentMonthTooltip,
-                    icon: Icons.calendar_month,
-                  ),
-                  _buildMenuItem(
-                    value: -4,
-                    label: 'Pick Month/Year',
-                    tooltip: 'Select any month and year',
-                    icon: Icons.calendar_month_outlined,
-                  ),
-                  const PopupMenuDivider(),
-                  _buildMenuItem(
-                    value: -1,
-                    label: 'Custom Range',
-                    tooltip: 'Pick your own date range',
-                    icon: Icons.edit_calendar,
-                  ),
-                ],
-        ),
-      ),
-    );
-  }
-
-  PopupMenuItem<int> _buildMenuItem({
-    required int value,
-    required String label,
-    required String tooltip,
-    required IconData icon,
-    bool isForecastTab = false,
-  }) {
-    final isSelected = isForecastTab
-        ? (_selectedRangeDays == value)
-        : ((_rangeDays == value && value != -1) ||
-            (value == -1 && _customRange != null));
-
-    return PopupMenuItem<int>(
-      value: value,
-      child: Tooltip(
-        message: tooltip,
-        preferBelow: false,
-        child: Row(
-          children: [
-            Icon(
-              icon,
-              size: 18,
-              color: isSelected
-                  ? Theme.of(context).colorScheme.primary
-                  : Colors.white.withValues(alpha: 0.6),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                label,
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
-                  color: isSelected
-                      ? Theme.of(context).colorScheme.primary
-                      : Colors.white.withValues(alpha: 0.85),
-                ),
-              ),
-            ),
-            if (isSelected)
-              Icon(
-                Icons.check,
-                size: 18,
-                color: Theme.of(context).colorScheme.primary,
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Future<DateTime?> _showMonthYearPicker(BuildContext context) async {
-    final now = DateTime.now();
-    final earliestDate = _getEarliestDate(now);
-    int selectedMonth = now.month;
-    int selectedYear = now.year;
-    final availableYears = _generateYears(earliestDate.year, now.year);
-
-    return showDialog<DateTime>(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) {
-          final availableMonths =
-              _getAvailableMonths(selectedYear, earliestDate, now);
-          selectedMonth = availableMonths.contains(selectedMonth)
-              ? selectedMonth
-              : availableMonths.first;
-
-          return AlertDialog(
-            title: const Text('Select Month & Year'),
-            content: ConstrainedBox(
-              constraints: const BoxConstraints(minWidth: 280),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  _buildDropdownRow('Year:', selectedYear, availableYears,
-                      (v) => setDialogState(() => selectedYear = v)),
-                  const SizedBox(height: 16),
-                  _buildDropdownRow('Month:', selectedMonth, availableMonths,
-                      (v) => setDialogState(() => selectedMonth = v),
-                      labelBuilder: (m) =>
-                          DateFormat('MMMM').format(DateTime(2024, m, 1))),
-                ],
-              ),
-            ),
-            actions: [
-              TextButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: const Text('Cancel')),
-              ElevatedButton(
-                onPressed: () => Navigator.pop(
-                    context, DateTime(selectedYear, selectedMonth, 1)),
-                child: const Text('Select'),
-              ),
-            ],
-          );
-        },
-      ),
-    );
-  }
-
-  DateTime _getEarliestDate(DateTime fallback) {
-    if (_dailySales.isEmpty)
-      return fallback.subtract(const Duration(days: 365));
-    try {
-      final dates = _dailySales
-          .map((s) => DateTime.tryParse(s['date']?.toString() ?? ''))
-          .where((d) => d != null)
-          .cast<DateTime>()
-          .toList();
-      return dates.isEmpty
-          ? fallback
-          : dates.reduce((a, b) => a.isBefore(b) ? a : b);
-    } catch (_) {
-      return fallback.subtract(const Duration(days: 365));
-    }
-  }
-
-  List<int> _generateYears(int start, int end) =>
-      List.generate(end - start + 1, (i) => start + i).reversed.toList();
-
-  List<int> _getAvailableMonths(int year, DateTime earliest, DateTime now) =>
-      List.generate(12, (i) => i + 1).where((m) {
-        if (year == earliest.year && m < earliest.month) return false;
-        if (year == now.year && m > now.month) return false;
-        return true;
-      }).toList();
-
-  Widget _buildDropdownRow<T>(
-          String label, T value, List<T> items, ValueChanged<T> onChanged,
-          {String Function(T)? labelBuilder}) =>
-      Row(
-        children: [
-          SizedBox(
-              width: 50,
-              child: Text(label,
-                  style: const TextStyle(fontWeight: FontWeight.w600))),
-          Expanded(
-            child: DropdownButton<T>(
-              value: value,
-              isExpanded: true,
-              items: items
-                  .map((i) => DropdownMenuItem(
-                        value: i,
-                        child: Text(labelBuilder?.call(i) ?? i.toString()),
-                      ))
-                  .toList(),
-              onChanged: (v) {
-                if (v != null) onChanged(v);
-              },
-            ),
-          ),
-        ],
-      );
-
-  // Get available years from order data
-  List<int> _getAvailableYears() {
-    if (_dailySales.isEmpty) {
-      final now = DateTime.now();
-      return [now.year];
-    }
-    final years = _dailySales
-        .map((s) {
-          final dateStr = s['date']?.toString() ?? '';
-          final date = DateTime.tryParse(dateStr);
-          return date?.year;
-        })
-        .where((y) => y != null)
-        .cast<int>()
-        .toSet()
-        .toList();
-    years.sort((a, b) => b.compareTo(a)); // Descending
-    return years.isEmpty ? [DateTime.now().year] : years;
-  }
-
-  List<int> _getAvailableYearsFromData() {
-    if (_availableYears.isNotEmpty) return _availableYears;
-    if (_dailySales.isEmpty) return [DateTime.now().year];
-    final years = _dailySales
-        .map((s) => DateTime.tryParse(s['date']?.toString() ?? '')?.year)
-        .where((y) => y != null)
-        .cast<int>()
-        .toSet()
-        .toList();
-    years.sort((a, b) => b.compareTo(a));
-    return years.isEmpty ? [DateTime.now().year] : years;
-  }
-
-  List<int> _getAvailableMonthsForYear(int year) {
-    final months = _availableMonthsByYear[year];
-    if (months != null && months.isNotEmpty) return months;
-
-    // fallback to current chart data (better than showing all 12 months)
-    final fallback = _dailySales
-        .map((s) => DateTime.tryParse(s['date']?.toString() ?? ''))
-        .where((d) => d != null && d!.year == year)
-        .map((d) => d!.month)
-        .toSet()
-        .toList()
-      ..sort();
-    return fallback;
-  }
-
-  List<int> _getAvailableMonthsForAllYears() {
-    if (_availableMonthsByYear.isNotEmpty) {
-      final set = <int>{};
-      for (final months in _availableMonthsByYear.values) {
-        set.addAll(months);
-      }
-      final all = set.toList()..sort();
-      return all;
-    }
-
-    final fallback = _dailySales
-        .map((s) => DateTime.tryParse(s['date']?.toString() ?? ''))
-        .where((d) => d != null)
-        .map((d) => d!.month)
-        .toSet()
-        .toList()
-      ..sort();
-    return fallback;
-  }
-
-  // Build Year/Month slicers
-  Widget _buildYearMonthSlicers() {
-    final availableYears = _getAvailableYearsFromData();
-    final availableMonths = _selectedYear != null
-        ? _getAvailableMonthsForYear(_selectedYear!)
-        : _getAvailableMonthsForAllYears();
-
-    // Validate and fix selected year if needed (silently)
-    if (_selectedYear != null && !availableYears.contains(_selectedYear)) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) {
-          setState(() => _selectedYear = availableYears.first);
-        }
-      });
-    }
-    // Note: We don't reset _selectedMonthNumber here to preserve user selection
-    // The dropdown will show the selected value even if not in current data
-
-    BoxDecoration box() => BoxDecoration(
-          color: AppTheme.sagePanel,
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: Colors.white.withValues(alpha: 0.2)),
-        );
-
-    final yearSlicer = Container(
-      decoration: box(),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           Text(
-            'Year',
+            'Period',
             style: TextStyle(
               fontSize: 12,
               fontWeight: FontWeight.w600,
               color: Colors.white.withValues(alpha: 0.6),
             ),
           ),
-          const SizedBox(width: 8),
-          DropdownButtonHideUnderline(
-            child: DropdownButton<int?>(
-              value: _selectedYear,
-              isDense: true,
-              icon: Icon(Icons.arrow_drop_down,
-                  size: 18, color: Colors.white.withValues(alpha: 0.6)),
-              items: [
-                const DropdownMenuItem<int?>(value: null, child: Text('All')),
-                ...availableYears.map((year) => DropdownMenuItem<int?>(
-                      value: year,
-                      child: Text(year.toString()),
-                    )),
-              ],
-              onChanged: (value) {
-                setState(() {
-                  _selectedYear = value;
-                  if (value == null) _selectedMonthNumber = null;
-                });
-                _loadAnalyticsData();
-              },
-            ),
+          const SizedBox(width: 6),
+          MonthSelector(
+            month: _selectedMonth,
+            onMonthChanged: (month) {
+              setState(() => _selectedMonth = ReportPeriod.month(month));
+              _loadAnalyticsData();
+            },
           ),
         ],
       ),
-    );
-
-    final monthSlicer = Container(
-      decoration: box(),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            'Month',
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-              color: Colors.white.withValues(alpha: 0.6),
-            ),
-          ),
-          const SizedBox(width: 8),
-          DropdownButtonHideUnderline(
-            child: DropdownButton<int?>(
-              value: _selectedMonthNumber,
-              isDense: true,
-              icon: Icon(Icons.arrow_drop_down,
-                  size: 18, color: Colors.white.withValues(alpha: 0.6)),
-              items: [
-                const DropdownMenuItem<int?>(value: null, child: Text('All')),
-                ...availableMonths.map((month) => DropdownMenuItem<int?>(
-                      value: month,
-                      child: Text(
-                          DateFormat('MMMM').format(DateTime(2024, month, 1))),
-                    )),
-              ],
-              onChanged: (value) {
-                setState(() => _selectedMonthNumber = value);
-                _loadAnalyticsData();
-              },
-            ),
-          ),
-        ],
-      ),
-    );
-
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        yearSlicer,
-        const SizedBox(height: 8),
-        Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            monthSlicer,
-            if (_selectedYear != null || _selectedMonthNumber != null) ...[
-              const SizedBox(width: 8),
-              IconButton(
-                icon: const Icon(Icons.clear, size: 18),
-                tooltip: 'Clear filters',
-                onPressed: () {
-                  setState(() {
-                    _selectedYear = null;
-                    _selectedMonthNumber = null;
-                  });
-                  _loadAnalyticsData();
-                },
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-              ),
-            ],
-          ],
-        ),
-      ],
     );
   }
 
@@ -1540,23 +908,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
   }
 
   Widget _buildSalesTab() {
-    // Build title based on Year/Month slicers
-    String rangeTitle;
-    if (_selectedYear != null && _selectedMonthNumber != null) {
-      // Specific year and month
-      rangeTitle =
-          '${DateFormat('MMMM').format(DateTime(2024, _selectedMonthNumber!, 1))} ${_selectedYear}';
-    } else if (_selectedYear != null && _selectedMonthNumber == null) {
-      // Specific year, all months
-      rangeTitle = 'Year ${_selectedYear}';
-    } else if (_selectedYear == null && _selectedMonthNumber != null) {
-      // All years, specific month
-      rangeTitle =
-          '${DateFormat('MMMM').format(DateTime(2024, _selectedMonthNumber!, 1))} (All Years)';
-    } else {
-      // All years, all months
-      rangeTitle = 'All Time';
-    }
+    final rangeTitle = ReportPeriod.label(_selectedMonth);
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
@@ -3306,19 +2658,19 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
   }
 
   Widget _buildFinanceTab() {
-    final now = DateTime.now();
-    final currentMonth = DateTime(now.year, now.month, 1);
-    final prevMonth = DateTime(now.year, now.month - 1, 1);
-    final prevMonthEnd =
-        DateTime(prevMonth.year, prevMonth.month + 1, 0, 23, 59, 59, 999);
-    final currentMonthEnd =
-        DateTime(currentMonth.year, currentMonth.month + 1, 0, 23, 59, 59, 999);
+    final range = ReportPeriod.monthRange(_selectedMonth);
+    final previousRange = ReportPeriod.previousMonthRange(_selectedMonth);
+    final monthEnd = range.end;
     final mtdSales = BusinessKpis.summarizeOrders(_ordersForRange,
-        start: currentMonth, end: currentMonthEnd);
+        start: range.start, end: monthEnd);
     final cogs = BusinessKpis.resolveCogs(
-        stockMovements: _stockMovements, itemPerformance: _itemPerformance);
+      stockMovements: _stockMovements,
+      itemPerformance: _itemPerformance,
+      start: range.start,
+      end: monthEnd,
+    );
     final opEx = BusinessKpis.operatingExpenses(_expenses,
-        start: currentMonth, end: currentMonthEnd);
+        start: range.start, end: monthEnd);
     final netProfit = mtdSales.netSales - cogs.amount - opEx;
     final profitMargin =
         mtdSales.netSales > 0 ? netProfit / mtdSales.netSales * 100 : 0.0;
@@ -3329,9 +2681,9 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
         .where((r) => r.hasCosting && r.revenue > 0)
         .toList()
       ..sort((a, b) => a.profit.compareTo(b.profit));
-    final payablesKpi = BusinessKpis.payablesKpi(_payables, now: now);
+    final payablesKpi = BusinessKpis.payablesKpi(_payables, asOf: monthEnd);
     final prevSales = BusinessKpis.summarizeOrders(_ordersForRange,
-        start: prevMonth, end: prevMonthEnd);
+        start: previousRange.start, end: previousRange.end);
     final revGrowth = prevSales.netSales > 0
         ? ((mtdSales.netSales - prevSales.netSales) / prevSales.netSales) * 100
         : 0.0;
@@ -3339,13 +2691,13 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
     final currentMonthExpenses = _expenses.where((e) {
       final date = FinanceMetrics.expenseDate(e);
       if (date == null) return false;
-      return date.year == currentMonth.year &&
-          date.month == currentMonth.month &&
+      return !date.isBefore(range.start) &&
+          !date.isAfter(monthEnd) &&
           BusinessKpis.isOperatingExpense(e);
     }).toList();
     final currentTotal = opEx;
     final prevTotal = BusinessKpis.operatingExpenses(_expenses,
-        start: prevMonth, end: prevMonthEnd);
+        start: previousRange.start, end: previousRange.end);
     final changePercent =
         prevTotal > 0 ? ((currentTotal - prevTotal) / prevTotal) * 100 : 0.0;
     final duePayables = _payables
@@ -3363,7 +2715,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
         children: [
           // Month header
           Text(
-            'Financial Overview - ${_getMonthName(currentMonth)}',
+            'Financial Overview - ${ReportPeriod.label(_selectedMonth)}',
             style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 16),
@@ -3375,7 +2727,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
               SizedBox(
                   width: 320,
                   child: _FinanceCard(
-                      title: 'Net Sales (MTD)',
+                      title: 'Net Sales (Month)',
                       value: _currency.format(mtdSales.netSales),
                       subtitle:
                           'Gross ${_currency.format(mtdSales.grossSales)} · Disc ${_currency.format(mtdSales.discounts)} · ${revGrowth >= 0 ? '+' : ''}${revGrowth.toStringAsFixed(1)}% vs prev · ${mtdSales.ordersCount} orders · AOV ${_currency.format(mtdSales.averageOrderValue)}',
@@ -3398,7 +2750,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
               SizedBox(
                   width: 320,
                   child: _FinanceCard(
-                      title: 'Operating Expenses (MTD)',
+                      title: 'Operating Expenses (Month)',
                       value: _currency.format(opEx),
                       subtitle:
                           'Heuristic: excludes inventory purchases; payable payments treated as operating-related.',
@@ -3479,7 +2831,9 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                   start: pStart, end: pEnd);
               final pc = BusinessKpis.resolveCogs(
                   stockMovements: _stockMovements,
-                  itemPerformance: _itemPerformance);
+                  itemPerformance: _itemPerformance,
+                  start: cStart,
+                  end: cEnd);
               final menuRows = BusinessKpis.menuProfitRows(_itemPerformance);
               final rr = menuRows
                   .where((r) => r.hasCosting)
@@ -3508,30 +2862,19 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                   ));
             }
 
-            final todayStart = DateTime(now.year, now.month, now.day);
-            final todayEnd =
-                DateTime(now.year, now.month, now.day, 23, 59, 59, 999);
-            final yday = todayStart.subtract(const Duration(days: 1));
-            final weekStart =
-                todayStart.subtract(Duration(days: now.weekday - 1));
-            final prevWeekStart = weekStart.subtract(const Duration(days: 7));
-            final prevWeekEnd = weekStart.subtract(const Duration(seconds: 1));
-            final yearStart = DateTime(now.year, 1, 1);
-            final prevYearStart = DateTime(now.year - 1, 1, 1);
-            final prevYearEnd = DateTime(now.year - 1, 12, 31, 23, 59, 59, 999);
             return Wrap(spacing: 12, runSpacing: 12, children: [
-              period('Daily (Today)', todayStart, todayEnd, yday,
-                  DateTime(yday.year, yday.month, yday.day, 23, 59, 59, 999)),
-              period('Weekly (This week)', weekStart, todayEnd, prevWeekStart,
-                  prevWeekEnd),
-              period('Yearly (${now.year})', yearStart, todayEnd, prevYearStart,
-                  prevYearEnd),
+              period(
+                  'Selected Month (${ReportPeriod.label(_selectedMonth)})',
+                  range.start,
+                  monthEnd,
+                  previousRange.start,
+                  previousRange.end),
             ]);
           }),
 
           // Category breakdown
           const Text(
-            'Operating Expenses by Category (MTD)',
+            'Operating Expenses by Category (Month)',
             style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 12),
@@ -3597,24 +2940,6 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
         ],
       ),
     );
-  }
-
-  String _getMonthName(DateTime date) {
-    const months = [
-      'January',
-      'February',
-      'March',
-      'April',
-      'May',
-      'June',
-      'July',
-      'August',
-      'September',
-      'October',
-      'November',
-      'December'
-    ];
-    return '${months[date.month - 1]} ${date.year}';
   }
 
   Color _getCategoryColor(String category) {
