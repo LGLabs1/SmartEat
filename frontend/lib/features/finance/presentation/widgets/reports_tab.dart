@@ -5,7 +5,7 @@ import '../../../../services/report_pdf_service.dart';
 import '../../../../theme.dart';
 import '../../../../widgets/dashboard/empty_state.dart';
 import '../../../../widgets/dashboard/section_card.dart';
-import '../../../../widgets/period/month_selector.dart';
+import '../../../../widgets/period/period_navigator.dart';
 import '../../data/business_kpis.dart';
 import '../../data/finance_format.dart';
 import '../../data/finance_metrics.dart';
@@ -26,8 +26,8 @@ class FinanceReportsTab extends StatefulWidget {
     this.damagedItems = const [],
     this.salesForecast = const [],
     required this.fmt,
-    this.selectedMonth,
-    this.onMonthChanged,
+    required this.selection,
+    required this.onSelectionChanged,
     required this.onEditBudgets,
   });
 
@@ -40,8 +40,8 @@ class FinanceReportsTab extends StatefulWidget {
   final List<Map<String, dynamic>> damagedItems;
   final List<Map<String, dynamic>> salesForecast;
   final FinanceFormat fmt;
-  final DateTime? selectedMonth;
-  final ValueChanged<DateTime>? onMonthChanged;
+  final ReportPeriodSelection selection;
+  final ValueChanged<ReportPeriodSelection> onSelectionChanged;
   final VoidCallback onEditBudgets;
 
   @override
@@ -49,21 +49,7 @@ class FinanceReportsTab extends StatefulWidget {
 }
 
 class _FinanceReportsTabState extends State<FinanceReportsTab> {
-  DateTime _localMonth = ReportPeriod.month(DateTime.now());
-  DateTime get _month =>
-      ReportPeriod.month(widget.selectedMonth ?? _localMonth);
-
-  String get _monthName => ReportPeriod.label(_month);
-
-  void _handleMonthChanged(DateTime month) {
-    final target = ReportPeriod.month(month);
-    final callback = widget.onMonthChanged;
-    if (callback != null) {
-      callback(target);
-      return;
-    }
-    setState(() => _localMonth = target);
-  }
+  String get _periodLabel => widget.selection.label();
 
   Future<void> _runPdfAction(Future<void> Function() action) async {
     try {
@@ -89,7 +75,7 @@ class _FinanceReportsTabState extends State<FinanceReportsTab> {
   Future<void> _printBluetoothReport(List<ReportPdfSection> sections) async {
     final result = await ReceiptPrinterService.printDocument(
       title: 'Financial Report',
-      subtitle: _monthName,
+      subtitle: _periodLabel,
       lines: _printerLines(sections),
       footer: 'SmartEat Financial Reports',
     );
@@ -108,11 +94,12 @@ class _FinanceReportsTabState extends State<FinanceReportsTab> {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final range = ReportPeriod.monthRange(_month);
+    final range = widget.selection.range();
     final start = range.start;
     final end = range.end;
-    final asOf = ReportPeriod.endOfMonth(_month);
-    final previousRange = ReportPeriod.previousMonthRange(_month);
+    final asOf = range.end;
+    final previousRange =
+        ReportPeriod.previousMonthRange(widget.selection.month);
     final prevStart = previousRange.start;
     final prevEnd = previousRange.end;
     final monthPerformance = widget.itemPerformance.where((item) {
@@ -124,7 +111,7 @@ class _FinanceReportsTabState extends State<FinanceReportsTab> {
 
     final monthExpenses = widget.expenses.where((e) {
       final d = FinanceMetrics.expenseDate(e);
-      return d != null && d.year == _month.year && d.month == _month.month;
+      return d != null && ReportPeriod.contains(range, d);
     }).toList();
     final sales =
         BusinessKpis.summarizeOrders(widget.orders, start: start, end: end);
@@ -164,7 +151,7 @@ class _FinanceReportsTabState extends State<FinanceReportsTab> {
         menuRows.where((r) => r.revenue > 0 || r.quantity > 0).toList();
     final forecast = BusinessKpis.forecastKpi(
         salesForecast: widget.salesForecast,
-        anchorMonth: _month,
+        anchorMonth: widget.selection.month,
         menuProfitRowsData: menuRows
             .map(
                 (r) => {'revenue': r.revenue, 'estimatedCogs': r.estimatedCogs})
@@ -186,7 +173,7 @@ class _FinanceReportsTabState extends State<FinanceReportsTab> {
 
     final reportSections = <ReportPdfSection>[
       ReportPdfSection(
-        title: '$_monthName summary',
+        title: '$_periodLabel summary',
         lines: [
           'Revenue: ${widget.fmt.money(sales.revenue)}',
           'Orders: ${sales.ordersCount}',
@@ -220,7 +207,7 @@ class _FinanceReportsTabState extends State<FinanceReportsTab> {
       ReportPdfSection(
         title: 'Expenses by category',
         lines: categoryData.isEmpty
-            ? ['No expenses recorded for $_monthName.']
+            ? ['No expenses recorded for $_periodLabel.']
             : [
                 for (final entry in categoryData)
                   '${entry.key}: ${widget.fmt.money(entry.value)}',
@@ -261,12 +248,12 @@ class _FinanceReportsTabState extends State<FinanceReportsTab> {
                   const Icon(Icons.analytics_outlined, size: 18),
                   const SizedBox(width: 10),
                   Expanded(
-                      child: Text('Report period: $_monthName',
+                      child: Text('Report period',
                           style: const TextStyle(
                               fontSize: 16, fontWeight: FontWeight.bold))),
-                  MonthSelector(
-                    month: _month,
-                    onMonthChanged: _handleMonthChanged,
+                  PeriodNavigator(
+                    selection: widget.selection,
+                    onChanged: widget.onSelectionChanged,
                   ),
                 ]))),
         const SizedBox(height: 16),
@@ -294,7 +281,7 @@ class _FinanceReportsTabState extends State<FinanceReportsTab> {
               trendPercent: profitGrowth,
               subtitle: 'Margin ${profitMarginPct.toStringAsFixed(1)}%',
               description:
-                  'Gross profit minus operating expenses for the selected month. Uses the same COGS source shown in Gross Profit.'),
+                  'Gross profit minus operating expenses for the selected period. Uses the same COGS source shown in Gross Profit.'),
           FinanceKpi(
               title: 'Operating Expenses',
               value: widget.fmt.money(operating),
@@ -303,14 +290,14 @@ class _FinanceReportsTabState extends State<FinanceReportsTab> {
               trendPercent: expenseGrowth,
               subtitle: '${expensePct.toStringAsFixed(1)}% of net sales',
               description:
-                  'Operating expenses for the selected month using an expense-category heuristic; inventory purchases/non-operating entries are treated separately when identifiable.'),
+                  'Operating expenses for the selected period using an expense-category heuristic; inventory purchases/non-operating entries are treated separately when identifiable.'),
         ]),
         const SizedBox(height: 16),
         SectionCard(
             title: 'Profit & Loss (Monthly)',
             icon: Icons.receipt_long_rounded,
             iconColor: AppTheme.sageAccent,
-            badge: _monthName,
+            badge: _periodLabel,
             child: Column(children: [
               _RowLine(
                   label: 'Gross Sales',
@@ -356,12 +343,12 @@ class _FinanceReportsTabState extends State<FinanceReportsTab> {
                   label: 'Inventory Value',
                   value: widget.fmt.money(inventoryKpi.inventoryValue),
                   description:
-                      'On-hand inventory value as of the selected month end, reconstructed from movements when available.'),
+                      'On-hand inventory value as of the selected period end, reconstructed from movements when available.'),
               _Mini(
                   label: 'Inventory Waste',
                   value: widget.fmt.money(inventoryKpi.wasteCost),
                   description:
-                      'Waste cost from damaged/write-off records in the selected month when available.'),
+                      'Waste cost from damaged/write-off records in the selected period when available.'),
               _Mini(
                   label: 'Consumption',
                   value: inventoryKpi.hasActualConsumption
@@ -377,7 +364,7 @@ class _FinanceReportsTabState extends State<FinanceReportsTab> {
                   value:
                       '${payableKpi.dueToday}/${payableKpi.dueThisWeek}/${payableKpi.dueThisMonth}',
                   description:
-                      'Payable bills due on the selected month end, within seven days, and within that month.'),
+                      'Payable bills due on the selected period end, within seven days, and within that period.'),
               _Mini(
                   label: 'Forecast Revenue (30d)',
                   value: widget.fmt.money(forecast.forecastRevenue),
@@ -414,7 +401,7 @@ class _FinanceReportsTabState extends State<FinanceReportsTab> {
             title: 'Expenses by Category',
             icon: Icons.pie_chart_outline_rounded,
             iconColor: const Color(0xFFA78BFA),
-            badge: _monthName,
+            badge: _periodLabel,
             action: TextButton.icon(
                 onPressed: widget.onEditBudgets,
                 icon: const Icon(Icons.tune, size: 16),
@@ -422,7 +409,7 @@ class _FinanceReportsTabState extends State<FinanceReportsTab> {
             child: categoryData.isEmpty
                 ? EmptyState(
                     icon: Icons.pie_chart_outline,
-                    title: 'No expenses for $_monthName',
+                    title: 'No expenses for $_periodLabel',
                     subtitle: 'Nothing recorded in this month.')
                 : FinanceCategoryPieChart(
                     data: categoryData.take(6).toList(),
@@ -443,7 +430,7 @@ class _FinanceReportsTabState extends State<FinanceReportsTab> {
               key: const Key('finance-download-pdf-button'),
               onPressed: () => _runPdfAction(() => ReportPdfService.shareReport(
                     title: 'Financial Report',
-                    subtitle: _monthName,
+                    subtitle: _periodLabel,
                     filePrefix: 'financial_report',
                     sections: reportSections,
                     footer: 'SmartEat Financial Reports',

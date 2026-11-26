@@ -21,14 +21,27 @@ function parseAllowedOrigins(value) {
     .filter(Boolean);
 }
 
+const isDevelopment = process.env.NODE_ENV !== 'production';
 const allowedOrigins = parseAllowedOrigins(process.env.CORS_ORIGIN);
-const allowAnyOrigin =
-  allowedOrigins.includes('*') && process.env.NODE_ENV !== 'production';
+const allowAnyOrigin = allowedOrigins.includes('*') && isDevelopment;
+
+function isDevelopmentLocalOrigin(origin) {
+  return (
+    isDevelopment &&
+    /^http:\/\/(?:localhost|127\.0\.0\.1):\d+$/.test(origin)
+  );
+}
 
 const corsOptions = {
   origin(origin, callback) {
     if (!origin) return callback(null, true);
-    if (allowAnyOrigin || allowedOrigins.includes(origin)) return callback(null, true);
+    if (
+      allowAnyOrigin ||
+      isDevelopmentLocalOrigin(origin) ||
+      allowedOrigins.includes(origin)
+    ) {
+      return callback(null, true);
+    }
     const error = new Error('Origin not allowed by CORS');
     error.status = 403;
     return callback(error);

@@ -6,6 +6,8 @@ import '../../../../../services/api_service.dart';
 import '../../../../../services/receipt_printer_service.dart';
 import '../../../../../services/report_pdf_service.dart';
 import '../../../../../theme.dart';
+import '../../../../../features/finance/data/report_period.dart';
+import '../../../../../widgets/period/period_navigator.dart';
 import '../../data/models/stock_movement.dart';
 import '../../domain/usecases/cogs.dart';
 import '../../domain/usecases/health_score.dart';
@@ -32,6 +34,9 @@ class ReportsScreen extends StatefulWidget {
 class _ReportsScreenState extends State<ReportsScreen> {
   bool _loadingUsage = true;
   Map<String, dynamic> _usage = const {};
+  ReportPeriodSelection _selection = ReportPeriodSelection(
+    month: ReportPeriod.month(DateTime.now()),
+  );
 
   @override
   void initState() {
@@ -41,7 +46,12 @@ class _ReportsScreenState extends State<ReportsScreen> {
 
   Future<void> _loadUsage() async {
     try {
-      final res = await ApiService.getIngredientUsageByMenuItem(days: 30);
+      final range = _selection.range();
+      final res = await ApiService.getIngredientUsageByMenuItem(
+        days: range.end.difference(range.start).inDays + 1,
+        startDate: range.start,
+        endDate: _selection.exclusiveEnd(),
+      );
       if (!mounted) return;
       setState(() {
         _usage = res['data'] as Map<String, dynamic>? ?? const {};
@@ -64,9 +74,12 @@ class _ReportsScreenState extends State<ReportsScreen> {
 
   List<ReportPdfSection> _buildReportSections() {
     final items = widget.items;
-    final movements = widget.movements;
+    final periodRange = _selection.range();
+    final movements = widget.movements
+        .where((m) => ReportPeriod.contains(periodRange, m.timestamp))
+        .toList();
     final health = InventoryHealthScoreUseCase()
-        .compute(items: items, movements: movements);
+        .compute(items: items, movements: widget.movements);
     final lowStock = LowStockReportUseCase().compute(items);
     final value = InventoryValueUseCase().computeTotalValue(items, null);
     final cogs = CogsUseCase().compute(movements);
@@ -133,7 +146,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
       ),
       if (usageLines.isNotEmpty)
         ReportPdfSection(
-          title: 'Top ingredient usage (30 days)',
+          title: 'Top ingredient usage (${_selection.label()})',
           lines: usageLines,
         ),
     ];
@@ -164,7 +177,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
     final sections = _buildReportSections();
     final result = await ReceiptPrinterService.printDocument(
       title: 'Inventory Report',
-      subtitle: 'Stock health, value, and consumption summary',
+      subtitle: _selection.label(),
       lines: _printerLines(sections),
       footer: 'SmartEat Inventory Reports',
     );
@@ -183,7 +196,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
   Future<void> _sharePdfReport() {
     return _runPdfAction(() => ReportPdfService.shareReport(
           title: 'Inventory Report',
-          subtitle: 'Stock health, value, and consumption summary',
+          subtitle: _selection.label(),
           filePrefix: 'inventory_report',
           sections: _buildReportSections(),
           footer: 'SmartEat Inventory Reports',
@@ -193,9 +206,12 @@ class _ReportsScreenState extends State<ReportsScreen> {
   @override
   Widget build(BuildContext context) {
     final items = widget.items;
-    final movements = widget.movements;
+    final periodRange = _selection.range();
+    final movements = widget.movements
+        .where((m) => ReportPeriod.contains(periodRange, m.timestamp))
+        .toList();
     final health = InventoryHealthScoreUseCase()
-        .compute(items: items, movements: movements);
+        .compute(items: items, movements: widget.movements);
     final lowStock = LowStockReportUseCase().compute(items);
     final value = InventoryValueUseCase().computeTotalValue(items, null);
     final cogs = CogsUseCase().compute(movements);
@@ -249,6 +265,14 @@ class _ReportsScreenState extends State<ReportsScreen> {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
+          PeriodNavigator(
+            selection: _selection,
+            onChanged: (selection) {
+              setState(() => _selection = selection);
+              _loadUsage();
+            },
+          ),
+          const SizedBox(height: 16),
           sectionHeader('Key Metrics & Health', AppTheme.sageAccent),
           HealthScoreCard(result: health),
           const SizedBox(height: 16),
@@ -498,7 +522,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    'Estimated from completed orders × linked recipes (last 30 days). Separate from Actual COGS/movement-based stock history.',
+                    'Estimated from completed orders × linked recipes (${_selection.label()}). Separate from Actual COGS/movement-based stock history.',
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
                           color: Theme.of(context).colorScheme.onSurfaceVariant,
                         ),

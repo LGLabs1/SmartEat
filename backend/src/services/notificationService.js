@@ -412,11 +412,12 @@ async function buildAttendanceNotificationSpecs({ tenant, usersSnap, today }) {
         settings.fullDayHours * 60 * 60 * 1000 +
         settings.graceMinutes * 60 * 1000
       : 0;
-    const isLate = Boolean(timeInText) && !timeOutText && Boolean(expectedMillis) && now >= expectedMillis;
-    const isFlagged = data.lateTimeout === true ||
-      (data.needsReview === true && String(data.notes || '').toLowerCase().includes('time out'));
+    const hasCompleteTimes = Boolean(timeInText) && Boolean(timeOutText);
+    const isLate = !hasCompleteTimes && Boolean(timeInText) && !timeOutText && Boolean(expectedMillis) && now >= expectedMillis;
+    const isFlagged = !hasCompleteTimes && (data.lateTimeout === true ||
+      (data.needsReview === true && String(data.notes || '').toLowerCase().includes('time out')));
 
-    if (isLate || isFlagged) {
+    if (!hasCompleteTimes && (isLate || isFlagged)) {
       const overdueText = expectedMillis
         ? attendanceDurationText((now - expectedMillis) / 60000)
         : '';

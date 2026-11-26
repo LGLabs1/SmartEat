@@ -128,6 +128,30 @@ void main() {
     expect(find.text('₱140.00'), findsNWidgets(2));
   });
 
+  testWidgets('complete short stale record is not review', (tester) async {
+    await setSurface(tester, const Size(1200, 1000));
+    await tester.pumpWidget(
+      buildCalendar(
+        records: [
+          {
+            'uid': 'u1',
+            'date': '2026-10-02',
+            'status': 'incomplete',
+            'needsReview': true,
+            'timeIn': DateTime(2026, 10, 2, 9),
+            'timeOut': DateTime(2026, 10, 2, 10),
+            'hoursWorked': 1.0,
+            'workUnit': 0.0,
+            'source': 'self',
+          },
+        ],
+      ),
+    );
+
+    expect(find.text('1 shift needs admin review'), findsNothing);
+    expect(find.text('Under half day'), findsWidgets);
+  });
+
   testWidgets('tapping a day updates the on-duty card', (tester) async {
     await setSurface(tester, const Size(1200, 1000));
     await tester.pumpWidget(buildCalendar());
@@ -173,13 +197,19 @@ void main() {
     expect(encodedDay, DateTime(2026, 10, 2));
   });
 
-  testWidgets('month navigation calls the parent callback', (tester) async {
+  testWidgets('month navigation and month label work without Today button',
+      (tester) async {
     await setSurface(tester, const Size(1200, 1000));
     DateTime? requested;
 
     await tester.pumpWidget(
       buildCalendar(onMonthChanged: (month) => requested = month),
     );
+
+    expect(find.text('Today'), findsNothing);
+    expect(
+        find.byKey(const Key('admin-attendance-month-label')), findsOneWidget);
+    expect(find.text('Oct'), findsOneWidget);
 
     await tester.tap(find.byTooltip('Previous month'));
     await tester.pump();

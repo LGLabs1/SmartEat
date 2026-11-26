@@ -210,6 +210,9 @@ class _AdminAttendanceCalendarState extends State<AdminAttendanceCalendar> {
   String _monthLabel(DateTime date) =>
       '${_monthNames[date.month - 1]} ${date.year}';
 
+  String _monthButtonLabel(DateTime date) =>
+      _monthNames[date.month - 1].substring(0, 3);
+
   String _shortDate(DateTime date) =>
       '${_monthNames[date.month - 1]} ${date.day}';
 
@@ -478,6 +481,7 @@ class _AdminAttendanceCalendarState extends State<AdminAttendanceCalendar> {
                 onPressed: () => _goToMonth(-1),
               ),
               TextButton(
+                key: const Key('admin-attendance-month-label'),
                 onPressed: _goToToday,
                 style: TextButton.styleFrom(
                   minimumSize: const Size(48, 36),
@@ -486,9 +490,10 @@ class _AdminAttendanceCalendarState extends State<AdminAttendanceCalendar> {
                   foregroundColor:
                       isCurrentMonth ? scheme.primary : scheme.onSurface,
                 ),
-                child: const Text(
-                  'Today',
-                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+                child: Text(
+                  _monthButtonLabel(widget.selectedMonth),
+                  style: const TextStyle(
+                      fontSize: 12, fontWeight: FontWeight.w700),
                 ),
               ),
               _NavButton(
@@ -1332,12 +1337,7 @@ bool _isOnDuty(Map<String, dynamic> record) {
   return attendanceRecordStatus(record) != attendanceAbsent;
 }
 
-bool _needsReview(Map<String, dynamic> record) {
-  final status = attendanceRecordStatus(record);
-  return record['needsReview'] == true ||
-      status == attendanceIncomplete ||
-      status == attendanceShort;
-}
+bool _needsReview(Map<String, dynamic> record) => attendanceNeedsReview(record);
 
 double _recordHours(Map<String, dynamic> record) {
   final rawHours = record['hoursWorked'];
@@ -1366,7 +1366,7 @@ _StatusVisual _statusVisual(
       icon: Icons.play_arrow_rounded,
     );
   }
-  if (_needsReview(record)) {
+  if (attendanceNeedsReview(record)) {
     return const _StatusVisual(
       label: 'Needs review',
       color: AppTheme.warning,

@@ -79,6 +79,43 @@ void main() {
     expect(find.text('Live duration'), findsOneWidget);
   });
 
+  testWidgets('complete stale short shift is not marked review',
+      (tester) async {
+    await setSurface(tester, const Size(1200, 1000));
+    final staleRecords = <Map<String, dynamic>>[
+      {
+        'date': '2026-10-02',
+        'status': 'incomplete',
+        'needsReview': true,
+        'timeIn': DateTime(2026, 10, 2, 8),
+        'timeOut': DateTime(2026, 10, 2, 9),
+        'hoursWorked': 1.0,
+        'workUnit': 0.0,
+        'source': 'self',
+      },
+    ];
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.lightTheme,
+        home: Scaffold(
+          body: SingleChildScrollView(
+            padding: const EdgeInsets.all(16),
+            child: StaffAttendanceCalendar(
+              records: staleRecords,
+              selectedMonth: DateTime(2026, 10),
+              isLoading: false,
+              onMonthChanged: (_) {},
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.textContaining('needs admin review'), findsNothing);
+    expect(find.text('Under half day'), findsWidgets);
+  });
+
   testWidgets('tapping a day updates the inline detail panel', (tester) async {
     await setSurface(tester, const Size(1200, 1000));
     await tester.pumpWidget(buildCalendar());
@@ -91,12 +128,18 @@ void main() {
     expect(find.text('8h'), findsWidgets);
   });
 
-  testWidgets('month navigation calls the parent callback', (tester) async {
+  testWidgets('month navigation and month label work without Today button',
+      (tester) async {
     await setSurface(tester, const Size(1200, 1000));
     DateTime? requested;
     await tester.pumpWidget(
       buildCalendar(onMonthChanged: (month) => requested = month),
     );
+
+    expect(find.text('Today'), findsNothing);
+    expect(
+        find.byKey(const Key('staff-attendance-month-label')), findsOneWidget);
+    expect(find.text('Oct'), findsOneWidget);
 
     await tester.tap(find.byTooltip('Previous month'));
     await tester.pump();

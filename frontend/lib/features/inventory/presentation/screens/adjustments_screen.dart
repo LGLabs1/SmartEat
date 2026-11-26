@@ -3,7 +3,9 @@ import 'package:intl/intl.dart';
 import 'package:smarteat/models/inventory_item.dart';
 import 'package:smarteat/theme.dart';
 import 'package:smarteat/widgets/dashboard/empty_state.dart';
+import 'package:smarteat/features/finance/data/report_period.dart';
 import 'package:smarteat/widgets/dashboard/kpi_card.dart';
+import 'package:smarteat/widgets/period/period_navigator.dart';
 import 'package:smarteat/widgets/responsive_search_field.dart';
 import 'package:smarteat/widgets/smart_eat_header.dart';
 
@@ -33,6 +35,9 @@ class AdjustmentsScreen extends StatefulWidget {
 class _AdjustmentsScreenState extends State<AdjustmentsScreen> {
   final _search = TextEditingController();
   String _typeFilter = 'all';
+  ReportPeriodSelection _selection = ReportPeriodSelection(
+    month: ReportPeriod.month(DateTime.now()),
+  );
 
   static const _reasonLabels = {
     'overcount': 'Overcount',
@@ -46,6 +51,9 @@ class _AdjustmentsScreenState extends State<AdjustmentsScreen> {
   List<StockAdjustment> get _visibleAdjustments {
     final query = _search.text.trim().toLowerCase();
     final rows = widget.adjustments.where((adjustment) {
+      if (!ReportPeriod.contains(_selection.range(), adjustment.performedAt)) {
+        return false;
+      }
       if (_typeFilter == 'increase' && adjustment.deltaBase <= 0) return false;
       if (_typeFilter == 'decrease' && adjustment.deltaBase >= 0) return false;
       if (query.isEmpty) return true;
@@ -121,13 +129,13 @@ class _AdjustmentsScreenState extends State<AdjustmentsScreen> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final rows = _visibleAdjustments;
-    final unitsIn = widget.adjustments
+    final unitsIn = rows
         .where((a) => a.deltaBase > 0)
         .fold<double>(0, (sum, a) => sum + a.deltaBase);
-    final unitsOut = widget.adjustments
+    final unitsOut = rows
         .where((a) => a.deltaBase < 0)
         .fold<double>(0, (sum, a) => sum - a.deltaBase);
-    final net = widget.adjustments.fold<double>(
+    final net = rows.fold<double>(
       0,
       (sum, a) => sum + a.deltaBase,
     );
@@ -144,7 +152,7 @@ class _AdjustmentsScreenState extends State<AdjustmentsScreen> {
                   children: [
                     const Text('Stock Adjustments'),
                     Text(
-                      '${widget.adjustments.length} manual corrections',
+                      '${rows.length} manual corrections',
                       style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.normal,
@@ -176,7 +184,7 @@ class _AdjustmentsScreenState extends State<AdjustmentsScreen> {
                                     ?.copyWith(fontWeight: FontWeight.w800),
                               ),
                               Text(
-                                '${widget.adjustments.length} manual corrections',
+                                '${rows.length} manual corrections',
                                 style: theme.textTheme.bodySmall?.copyWith(
                                   color: theme.colorScheme.onSurfaceVariant,
                                 ),
@@ -202,7 +210,7 @@ class _AdjustmentsScreenState extends State<AdjustmentsScreen> {
                             width: width,
                             child: KpiCard(
                               title: 'Adjustments',
-                              value: '${widget.adjustments.length}',
+                              value: '${rows.length}',
                               icon: Icons.tune,
                               color: theme.colorScheme.primary,
                             ),
@@ -237,6 +245,12 @@ class _AdjustmentsScreenState extends State<AdjustmentsScreen> {
                         ],
                       );
                     },
+                  ),
+                  const SizedBox(height: 10),
+                  PeriodNavigator(
+                    selection: _selection,
+                    onChanged: (selection) =>
+                        setState(() => _selection = selection),
                   ),
                   const SizedBox(height: 10),
                   ResponsiveSearchField(

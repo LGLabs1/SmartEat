@@ -48,6 +48,8 @@ class ApiService {
     defaultValue: 'https://smarteat-backend-n5ta.onrender.com/api',
   );
 
+  static String get apiBaseUrl => _baseUrl;
+
   // A single keep-alive client reused across requests. Creating a new client
   // per call forced a fresh TCP connection every time, adding latency.
   static final http.Client _client = http.Client();
@@ -1645,10 +1647,23 @@ class ApiService {
     if (token != null) headers['Authorization'] = 'Bearer $token';
     if (eateryId != null) headers['x-eatery-id'] = eateryId;
 
-    final response = await http.get(
-      Uri.parse('$_baseUrl/chatbot/status'),
-      headers: headers,
-    );
+    late http.Response response;
+    try {
+      response = await http.get(
+        Uri.parse('$_baseUrl/chatbot/status'),
+        headers: headers,
+      );
+    } on http.ClientException catch (error) {
+      throw ChatApiException(
+        code: 'network_unavailable',
+        message: error.message,
+      );
+    } on SocketException catch (error) {
+      throw ChatApiException(
+        code: 'network_unavailable',
+        message: error.message,
+      );
+    }
 
     // Any JSON payload is useful: the backend reports online:false with a
     // Gemini reason code (gemini_invalid_key, gemini_quota, ...) on 503, which
@@ -1682,10 +1697,23 @@ class ApiService {
       headers['x-eatery-id'] = eateryId;
     }
 
-    final response = await http.get(
-      Uri.parse('$_baseUrl/chatbot/insights'),
-      headers: headers,
-    );
+    late http.Response response;
+    try {
+      response = await http.get(
+        Uri.parse('$_baseUrl/chatbot/insights'),
+        headers: headers,
+      );
+    } on http.ClientException catch (error) {
+      throw ChatApiException(
+        code: 'network_unavailable',
+        message: error.message,
+      );
+    } on SocketException catch (error) {
+      throw ChatApiException(
+        code: 'network_unavailable',
+        message: error.message,
+      );
+    }
 
     if (response.statusCode == 200) {
       return jsonDecode(response.body);

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:smarteat/features/finance/data/finance_format.dart';
+import 'package:smarteat/features/finance/data/report_period.dart';
 import 'package:smarteat/features/finance/presentation/widgets/reports_tab.dart';
 import 'package:smarteat/features/finance/presentation/widgets/staff_payment_history_dialog.dart';
 import 'package:smarteat/features/inventory/presentation/screens/reports_screen.dart';
@@ -14,12 +15,16 @@ void main() {
           expenses: const [],
           payables: const [],
           fmt: FinanceFormat('₱'),
+          selection: ReportPeriodSelection(
+            month: ReportPeriod.month(DateTime.now()),
+          ),
+          onSelectionChanged: (_) {},
           onEditBudgets: () {},
         ),
       ),
     ));
 
-    expect(find.byKey(const Key('month-selector-chip')), findsOneWidget);
+    expect(find.byKey(const Key('period-navigator')), findsOneWidget);
 
     await tester.scrollUntilVisible(
       find.byKey(const Key('finance-bluetooth-print-button')),
@@ -48,6 +53,10 @@ void main() {
             },
           ],
           fmt: FinanceFormat('₱'),
+          selection: ReportPeriodSelection(
+            month: ReportPeriod.month(DateTime.now()),
+          ),
+          onSelectionChanged: (_) {},
           onEditBudgets: () {},
         ),
       ),

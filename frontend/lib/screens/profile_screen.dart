@@ -975,8 +975,7 @@ class _ProfileScreenState extends State<ProfileScreen>
         today['timeIn'] == null &&
         today['timeOut'] == null &&
         (today['workUnit'] is num || today['present'] == true);
-    final needsReview = today?['needsReview'] == true ||
-        attendanceRecordStatus(today ?? const {}) == attendanceIncomplete;
+    final needsReview = today != null && attendanceNeedsReview(today);
 
     final shiftStart =
         active != null ? attendanceAsDateTime(active['timeIn']) : null;
@@ -1371,9 +1370,8 @@ class _ProfileScreenState extends State<ProfileScreen>
                         status =
                             'On shift since ${formatAttendanceClock(open['timeIn'])}';
                         color = AppTheme.primary;
-                      } else if (record?['needsReview'] == true ||
-                          attendanceRecordStatus(record ?? const {}) ==
-                              attendanceIncomplete) {
+                      } else if (record != null &&
+                          attendanceNeedsReview(record)) {
                         status = 'Needs review';
                         color = AppTheme.warning;
                       } else if (record?['timeOut'] != null) {

@@ -4,7 +4,8 @@ import '../../../../models/inventory_item.dart';
 import '../../../../theme.dart';
 import '../../../../widgets/dashboard/empty_state.dart';
 import '../../../../widgets/dashboard/kpi_card.dart';
-import '../../../../widgets/period/date_range_selector.dart';
+import '../../../../features/finance/data/report_period.dart';
+import '../../../../widgets/period/period_navigator.dart';
 import '../../../../widgets/responsive_search_field.dart';
 import '../../data/models/purchase_receipt.dart';
 
@@ -33,7 +34,9 @@ class PurchasesScreen extends StatefulWidget {
 class _PurchasesScreenState extends State<PurchasesScreen> {
   final TextEditingController _search = TextEditingController();
   String? _supplierFilter;
-  DateTimeRange? _dateRange;
+  ReportPeriodSelection _selection = ReportPeriodSelection(
+    month: ReportPeriod.month(DateTime.now()),
+  );
 
   @override
   void dispose() {
@@ -64,14 +67,8 @@ class _PurchasesScreenState extends State<PurchasesScreen> {
           (p.supplierName ?? '').trim() != _supplierFilter) {
         return false;
       }
-      if (_dateRange != null) {
-        final d =
-            DateTime(p.receivedAt.year, p.receivedAt.month, p.receivedAt.day);
-        final start = DateTime(_dateRange!.start.year, _dateRange!.start.month,
-            _dateRange!.start.day);
-        final end = DateTime(
-            _dateRange!.end.year, _dateRange!.end.month, _dateRange!.end.day);
-        if (d.isBefore(start) || d.isAfter(end)) return false;
+      if (!ReportPeriod.contains(_selection.range(), p.receivedAt)) {
+        return false;
       }
       if (q.isNotEmpty) {
         if (!p.receiptNumber.toLowerCase().contains(q) &&
@@ -96,16 +93,9 @@ class _PurchasesScreenState extends State<PurchasesScreen> {
 
     final totalSpend = filtered.fold<double>(0, (s, p) => s + _total(p));
     final totalLines = filtered.fold<int>(0, (s, p) => s + p.items.length);
-    final now = DateTime.now();
-    final monthSpend = filtered
-        .where((p) =>
-            p.receivedAt.year == now.year && p.receivedAt.month == now.month)
-        .fold<double>(0, (s, p) => s + _total(p));
-    final periodLabel = _dateRange == null ? 'This Month' : 'Range Spend';
-    final periodSpend = _dateRange == null ? monthSpend : totalSpend;
-    final periodDescription = _dateRange == null
-        ? 'Purchase spend for the current month (based on receipt dates).'
-        : 'Purchase spend within the selected date range.';
+    final periodLabel = _selection.label();
+    final periodDescription =
+        'Purchase spend for the selected period (based on receipt dates).';
 
     final suppliers = <String>{
       for (final p in widget.purchases)
@@ -161,7 +151,7 @@ class _PurchasesScreenState extends State<PurchasesScreen> {
                     Expanded(
                       child: KpiCard(
                         title: periodLabel,
-                        value: _money(periodSpend),
+                        value: _money(totalSpend),
                         icon: Icons.calendar_month_outlined,
                         color: AppTheme.sageSuccess,
                         description: periodDescription,
@@ -201,7 +191,11 @@ class _PurchasesScreenState extends State<PurchasesScreen> {
                   runSpacing: 8,
                   crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
-                    _dateRangeChip(context),
+                    PeriodNavigator(
+                      selection: _selection,
+                      onChanged: (selection) =>
+                          setState(() => _selection = selection),
+                    ),
                     if (suppliers.isNotEmpty) _supplierDropdown(suppliers),
                     if (widget.onOpenPurchaseList != null)
                       FilledButton.icon(
@@ -268,13 +262,6 @@ class _PurchasesScreenState extends State<PurchasesScreen> {
           ),
         ],
       ),
-    );
-  }
-
-  Widget _dateRangeChip(BuildContext context) {
-    return DateRangeSelector(
-      range: _dateRange,
-      onChanged: (range) => setState(() => _dateRange = range),
     );
   }
 

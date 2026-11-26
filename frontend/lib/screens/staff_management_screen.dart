@@ -647,6 +647,9 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
         : (normalizedUnit > 0
             ? attendanceStatusForUnit(normalizedUnit)
             : attendanceAbsent);
+    final hasCompleteTimes = timeIn != null && timeOut != null;
+    final needsReviewFlag =
+        hasCompleteTimes ? false : (needsReview || timeIn != null);
     final data = <String, dynamic>{
       'eateryId': eateryId,
       'uid': uid,
@@ -654,7 +657,8 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
       'present': present,
       'workUnit': normalizedUnit,
       'status': status,
-      'needsReview': needsReview || (timeIn != null && timeOut == null),
+      'needsReview': needsReviewFlag,
+      'lateTimeout': hasCompleteTimes ? false : null,
       'source': 'admin',
       'editedByUid': _getAdminUid(),
       'editedAt': FieldValue.serverTimestamp(),

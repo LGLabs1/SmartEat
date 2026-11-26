@@ -72,10 +72,11 @@ class _FinanceScreenState extends State<FinanceScreen> {
   // Filters
   String _expenseSourceFilter = 'all';
   String? _expenseCategoryFilter;
-  DateTimeRange? _expenseDateRange;
   String _searchQuery = '';
   String _payablesSegment = 'upcoming';
-  DateTime _selectedReportMonth = ReportPeriod.month(DateTime.now());
+  ReportPeriodSelection _selection = ReportPeriodSelection(
+    month: ReportPeriod.month(DateTime.now()),
+  );
 
   String? _eateryId;
   String _currencySymbol = '₱';
@@ -348,23 +349,21 @@ class _FinanceScreenState extends State<FinanceScreen> {
     return r;
   }
 
-  Future<void> _reloadItemPerformance(DateTime month) async {
-    final target = ReportPeriod.month(month);
+  Future<void> _reloadItemPerformance(ReportPeriodSelection selection) async {
     try {
       final result = await ApiService.getItemPerformance(
-        startDate: ReportPeriod.month(target),
-        endDate: ReportPeriod.exclusiveEnd(target),
+        startDate: selection.range().start,
+        endDate: selection.exclusiveEnd(),
       );
-      if (!mounted || target != _selectedReportMonth) return;
+      if (!mounted || selection != _selection) return;
       setState(() => _itemPerformance = _itemPerformanceFrom(result));
     } catch (_) {}
   }
 
-  void _onReportMonthChanged(DateTime month) {
-    final target = ReportPeriod.month(month);
-    if (target == _selectedReportMonth) return;
-    setState(() => _selectedReportMonth = target);
-    _reloadItemPerformance(target);
+  void _onSelectionChanged(ReportPeriodSelection selection) {
+    if (selection == _selection) return;
+    setState(() => _selection = selection);
+    _reloadItemPerformance(selection);
   }
 
   Future<void> _load() async {
@@ -391,8 +390,8 @@ class _FinanceScreenState extends State<FinanceScreen> {
         safe(_getEateryId(), 'getEateryId', null),
         safe(
             ApiService.getItemPerformance(
-              startDate: ReportPeriod.month(_selectedReportMonth),
-              endDate: ReportPeriod.exclusiveEnd(_selectedReportMonth),
+              startDate: _selection.range().start,
+              endDate: _selection.exclusiveEnd(),
             ),
             'getItemPerformance',
             const <String, dynamic>{'data': <String, dynamic>{}}),
@@ -1129,13 +1128,13 @@ class _FinanceScreenState extends State<FinanceScreen> {
           fmt: _fmt,
           sourceFilter: _expenseSourceFilter,
           categoryFilter: _expenseCategoryFilter,
-          dateRange: _expenseDateRange,
+          selection: _selection,
           searchQuery: _searchQuery,
           onSourceFilterChanged: (v) =>
               setState(() => _expenseSourceFilter = v),
           onCategoryFilterChanged: (v) =>
               setState(() => _expenseCategoryFilter = v),
-          onDateRangeChanged: (v) => setState(() => _expenseDateRange = v),
+          onSelectionChanged: _onSelectionChanged,
           onSearchChanged: (v) => setState(() => _searchQuery = v),
           onAdd: _addExpense,
           onOpen: _openExpense,
@@ -1173,8 +1172,8 @@ class _FinanceScreenState extends State<FinanceScreen> {
           damagedItems: _damagedItems,
           salesForecast: _salesForecast,
           fmt: _fmt,
-          selectedMonth: _selectedReportMonth,
-          onMonthChanged: _onReportMonthChanged,
+          selection: _selection,
+          onSelectionChanged: _onSelectionChanged,
           onEditBudgets: _editBudgets,
         );
       default:

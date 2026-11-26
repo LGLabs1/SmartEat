@@ -1,58 +1,133 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:smarteat/widgets/period/date_range_selector.dart';
-import 'package:smarteat/widgets/period/month_selector.dart';
+import 'package:smarteat/features/finance/data/report_period.dart';
+import 'package:smarteat/widgets/period/period_navigator.dart';
 
 void main() {
-  testWidgets('MonthSelector reports the picked month', (tester) async {
-    DateTime? picked;
+  final now = DateTime(2026, 11, 26, 15, 30);
+  final currentMonth = ReportPeriod.month(now);
+
+  Future<void> pumpNavigator(
+    WidgetTester tester, {
+    required ReportPeriodSelection selection,
+    required List<ReportPeriodSelection> changes,
+  }) async {
     await tester.pumpWidget(MaterialApp(
       home: Scaffold(
-        body: MonthSelector(
-          month: DateTime(2026, 5, 15),
-          onMonthChanged: (month) => picked = month,
+        body: PeriodNavigator(
+          selection: selection,
+          now: now,
+          onChanged: changes.add,
         ),
       ),
     ));
+  }
 
-    expect(find.text('May 2026'), findsOneWidget);
+  testWidgets(
+      'shows the month label with both arrows enabled on the current month',
+      (tester) async {
+    final changes = <ReportPeriodSelection>[];
+    await pumpNavigator(
+      tester,
+      selection: ReportPeriodSelection(month: currentMonth),
+      changes: changes,
+    );
 
-    await tester.tap(find.byKey(const Key('month-selector-chip')));
-    await tester.pumpAndSettle();
-    expect(find.text('Select Month'), findsOneWidget);
-
-    await tester.tap(find.byKey(const Key('month-choice-6')));
-    await tester.tap(find.text('Select'));
-    await tester.pumpAndSettle();
-
-    expect(picked, DateTime(2026, 6, 1));
+    expect(find.byKey(const Key('period-navigator')), findsOneWidget);
+    expect(find.text('November 2026'), findsOneWidget);
+    expect(
+        tester
+            .widget<IconButton>(
+                find.byKey(const Key('period-navigator-previous')))
+            .onPressed,
+        isNotNull);
+    expect(
+        tester
+            .widget<IconButton>(find.byKey(const Key('period-navigator-next')))
+            .onPressed,
+        isNotNull);
+    expect(find.text('Today'), findsNothing);
   });
 
-  testWidgets('DateRangeSelector exposes shared quick ranges', (tester) async {
-    DateTimeRange? picked;
-    await tester.pumpWidget(MaterialApp(
-      home: Scaffold(
-        body: DateRangeSelector(
-          range: null,
-          onChanged: (range) => picked = range,
-        ),
-      ),
-    ));
+  testWidgets('right arrow moves from the current month to year-to-date',
+      (tester) async {
+    final changes = <ReportPeriodSelection>[];
+    await pumpNavigator(
+      tester,
+      selection: ReportPeriodSelection(month: currentMonth),
+      changes: changes,
+    );
 
-    await tester.tap(find.byKey(const Key('date-range-selector-chip')));
-    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('period-navigator-next')));
+    await tester.pump();
 
-    expect(find.text('This month'), findsOneWidget);
-    expect(find.text('Last 7 days'), findsOneWidget);
-    expect(find.text('Last 30 days'), findsOneWidget);
-    expect(find.text('Pick month'), findsOneWidget);
-    expect(find.text('Custom range'), findsOneWidget);
+    expect(changes, [
+      ReportPeriodSelection(month: currentMonth, yearToDate: true),
+    ]);
+  });
 
-    await tester.tap(find.text('This month'));
-    await tester.pumpAndSettle();
+  testWidgets('right arrow advances a past month one at a time',
+      (tester) async {
+    final changes = <ReportPeriodSelection>[];
+    await pumpNavigator(
+      tester,
+      selection: ReportPeriodSelection(month: DateTime(2026, 9, 1)),
+      changes: changes,
+    );
 
-    expect(picked, isNotNull);
-    expect(picked!.start.day, 1);
-    expect(picked!.end.isAfter(picked!.start), isTrue);
+    await tester.tap(find.byKey(const Key('period-navigator-next')));
+    await tester.pump();
+
+    expect(changes, [ReportPeriodSelection(month: DateTime(2026, 10, 1))]);
+  });
+
+  testWidgets('year-to-date disables the right arrow and shows its label',
+      (tester) async {
+    final changes = <ReportPeriodSelection>[];
+    await pumpNavigator(
+      tester,
+      selection: ReportPeriodSelection(month: currentMonth, yearToDate: true),
+      changes: changes,
+    );
+
+    expect(find.text('All months this year'), findsOneWidget);
+    expect(
+        tester
+            .widget<IconButton>(find.byKey(const Key('period-navigator-next')))
+            .onPressed,
+        isNull);
+
+    await tester.tap(find.byKey(const Key('period-navigator-next')));
+    await tester.pump();
+    expect(changes, isEmpty);
+  });
+
+  testWidgets('left arrow leaves year-to-date for the current month',
+      (tester) async {
+    final changes = <ReportPeriodSelection>[];
+    await pumpNavigator(
+      tester,
+      selection: ReportPeriodSelection(month: currentMonth, yearToDate: true),
+      changes: changes,
+    );
+
+    await tester.tap(find.byKey(const Key('period-navigator-previous')));
+    await tester.pump();
+
+    expect(changes, [ReportPeriodSelection(month: currentMonth)]);
+  });
+
+  testWidgets('left arrow walks back through past months', (tester) async {
+    final changes = <ReportPeriodSelection>[];
+    await pumpNavigator(
+      tester,
+      selection: ReportPeriodSelection(month: DateTime(2026, 1, 1)),
+      changes: changes,
+    );
+
+    await tester.tap(find.byKey(const Key('period-navigator-previous')));
+    await tester.pump();
+
+    expect(changes, [ReportPeriodSelection(month: DateTime(2025, 12, 1))]);
   });
 }

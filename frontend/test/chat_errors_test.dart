@@ -8,8 +8,8 @@ import 'package:smarteat/services/chat_errors.dart';
 void main() {
   test('different causes produce different messages', () {
     final messages = <String>[
-      describeChatError(TimeoutException('AI response took too long',
-          const Duration(seconds: 65))),
+      describeChatError(TimeoutException(
+          'AI response took too long', const Duration(seconds: 65))),
       describeChatError(const ChatApiException(
           code: 'gemini_unreachable', message: 'down', statusCode: 503)),
       describeChatError(const ChatApiException(
@@ -64,5 +64,25 @@ void main() {
 
     expect(message, contains('StateError'));
     expect(message, contains('cache miss while building'));
+  });
+
+  test('web fetch failures explain the likely browser-side causes', () {
+    for (final transportMessage in <String>[
+      'Failed to fetch',
+      'XMLHttpRequest error',
+      'Load failed',
+    ]) {
+      final message = describeChatError(ChatApiException(
+        code: 'network_unavailable',
+        message: transportMessage,
+      ));
+
+      expect(message, contains('CORS'));
+      expect(message, contains('origin'));
+      expect(message, contains('API URL'));
+      expect(message, contains('HTTPS'));
+      expect(message, contains('service-worker'));
+      expect(message, contains('backend'));
+    }
   });
 }

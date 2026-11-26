@@ -175,6 +175,9 @@ class _StaffAttendanceCalendarState extends State<StaffAttendanceCalendar> {
   String _monthLabel(DateTime date) =>
       '${_monthNames[date.month - 1]} ${date.year}';
 
+  String _monthButtonLabel(DateTime date) =>
+      _monthNames[date.month - 1].substring(0, 3);
+
   String _longDate(DateTime date) => '${_weekdayNames[date.weekday - 1]}, '
       '${_monthNames[date.month - 1]} ${date.day}, ${date.year}';
 
@@ -209,12 +212,7 @@ class _StaffAttendanceCalendarState extends State<StaffAttendanceCalendar> {
     final scheme = Theme.of(context).colorScheme;
     final byDate = _recordsByDate();
     final summary = attendanceMonthSummary(widget.records);
-    final reviewCount = widget.records.where((record) {
-      final status = attendanceRecordStatus(record);
-      return record['needsReview'] == true ||
-          status == attendanceIncomplete ||
-          status == attendanceShort;
-    }).length;
+    final reviewCount = widget.records.where(attendanceNeedsReview).length;
 
     final selectedDate = _selectedDate ??
         DateTime(widget.selectedMonth.year, widget.selectedMonth.month, 1);
@@ -357,6 +355,7 @@ class _StaffAttendanceCalendarState extends State<StaffAttendanceCalendar> {
                 onPressed: () => _goToMonth(-1),
               ),
               TextButton(
+                key: const Key('staff-attendance-month-label'),
                 onPressed: _goToToday,
                 style: TextButton.styleFrom(
                   minimumSize: const Size(48, 36),
@@ -365,9 +364,10 @@ class _StaffAttendanceCalendarState extends State<StaffAttendanceCalendar> {
                   foregroundColor:
                       isCurrentMonth ? scheme.primary : scheme.onSurface,
                 ),
-                child: const Text(
-                  'Today',
-                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+                child: Text(
+                  _monthButtonLabel(widget.selectedMonth),
+                  style: const TextStyle(
+                      fontSize: 12, fontWeight: FontWeight.w700),
                 ),
               ),
               _NavButton(
@@ -795,10 +795,7 @@ class _StaffAttendanceCalendarState extends State<StaffAttendanceCalendar> {
     final open = record != null && attendanceIsOpen(record);
     final status = record == null ? '' : attendanceRecordStatus(record);
     final style = _styleForRecord(record, scheme);
-    final needsReview = record != null &&
-        (record['needsReview'] == true ||
-            status == attendanceIncomplete ||
-            status == attendanceShort);
+    final needsReview = record != null && attendanceNeedsReview(record);
 
     return AnimatedSwitcher(
       duration: const Duration(milliseconds: 180),
@@ -1220,7 +1217,7 @@ class _StaffAttendanceCalendarState extends State<StaffAttendanceCalendar> {
       label: 'On shift',
     );
   }
-  if (record['needsReview'] == true || status == attendanceIncomplete) {
+  if (attendanceNeedsReview(record)) {
     return (
       color: AppTheme.warning,
       icon: Icons.priority_high,
@@ -1281,11 +1278,11 @@ class _DayCell extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final style = _styleForRecord(record, scheme);
-    final hasRecord = record != null;
-    final open = record != null && attendanceIsOpen(record!);
-    final status = record == null ? '' : attendanceRecordStatus(record!);
-    final needsReview = record != null &&
-        (record!['needsReview'] == true || status == attendanceIncomplete);
+    final data = record;
+    final hasRecord = data != null;
+    final open = data != null && attendanceIsOpen(data);
+    final status = data == null ? '' : attendanceRecordStatus(data);
+    final needsReview = data != null && attendanceNeedsReview(data);
 
     final baseColor =
         hasRecord ? style.color : Colors.white.withValues(alpha: 0.5);
@@ -1314,7 +1311,7 @@ class _DayCell extends StatelessWidget {
       } else if (needsReview) {
         caption = 'Review';
       } else {
-        final hours = _recordHours(record!);
+        final hours = _recordHours(data);
         caption = hours > 0
             ? formatAttendanceHours(hours)
             : attendanceStatusLabel(status);

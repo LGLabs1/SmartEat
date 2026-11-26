@@ -53,6 +53,30 @@ Duration? attendanceShiftDuration(dynamic timeIn, dynamic timeOut) {
   return diff.isNegative ? Duration.zero : diff;
 }
 
+bool attendanceHasCompleteTimes(Map<String, dynamic> record) {
+  return attendanceAsDateTime(record['timeIn']) != null &&
+      attendanceAsDateTime(record['timeOut']) != null;
+}
+
+bool attendanceNeedsReview(Map<String, dynamic> record) {
+  if (attendanceHasCompleteTimes(record)) return false;
+
+  final hasTimeIn = attendanceAsDateTime(record['timeIn']) != null;
+  final hasTimeOut = attendanceAsDateTime(record['timeOut']) != null;
+  if (hasTimeIn && !hasTimeOut) return true;
+
+  if (record['needsReview'] == true && (!hasTimeIn || !hasTimeOut)) {
+    return true;
+  }
+
+  final status = (record['status'] ?? '').toString().trim();
+  if (status == attendanceIncomplete && (!hasTimeIn || !hasTimeOut)) {
+    return true;
+  }
+
+  return false;
+}
+
 /// Duration worked so far for an open shift.
 Duration attendanceOpenShiftDuration(dynamic timeIn, {DateTime? now}) {
   final start = attendanceAsDateTime(timeIn);
@@ -161,6 +185,23 @@ int computeAttendanceLateMinutes({
 
 /// Best-effort status for both new shift records and legacy check-ins.
 String attendanceRecordStatus(Map<String, dynamic> record) {
+  final timeIn = attendanceAsDateTime(record['timeIn']);
+  final timeOut = attendanceAsDateTime(record['timeOut']);
+  if (timeIn != null && timeOut != null) {
+    final rawUnit = record['workUnit'];
+    if (rawUnit is num) {
+      if (rawUnit >= 1) return attendancePresent;
+      if (rawUnit > 0) return attendanceHalfDay;
+      return attendanceShort;
+    }
+    final status = (record['status'] ?? '').toString().trim();
+    if (status == attendancePresent ||
+        status == attendanceHalfDay ||
+        status == attendanceShort) {
+      return status;
+    }
+  }
+
   final status = (record['status'] ?? '').toString().trim();
   if (status.isNotEmpty) return status;
 
@@ -280,11 +321,8 @@ String formatAttendanceHours(double hours) {
   var completed = 0;
   var needsReview = 0;
   for (final record in todayByUid.values) {
-    if (record['timeOut'] != null) completed++;
-    if (record['needsReview'] == true ||
-        attendanceRecordStatus(record) == attendanceIncomplete) {
-      needsReview++;
-    }
+    if (attendanceAsDateTime(record['timeOut']) != null) completed++;
+    if (attendanceNeedsReview(record)) needsReview++;
   }
 
   var missing = 0;

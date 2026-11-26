@@ -10,7 +10,7 @@ import '../theme.dart';
 import '../widgets/admin/admin_bottom_tabs.dart';
 import '../widgets/dashboard/dashboard_back_handler.dart';
 import '../widgets/feature_tab_header.dart';
-import '../widgets/period/month_selector.dart';
+import '../widgets/period/period_navigator.dart';
 
 Widget analyticsCompactTabIcon(
   IconData icon,
@@ -275,7 +275,9 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
   bool _isLoading = false;
 
   int _selectedRangeDays = 14;
-  DateTime _selectedMonth = ReportPeriod.month(DateTime.now());
+  ReportPeriodSelection _selection = ReportPeriodSelection(
+    month: ReportPeriod.month(DateTime.now()),
+  );
 
   final NumberFormat _currency = NumberFormat.currency(
       locale: 'en_PH', symbol: '\u20B1', decimalDigits: 2);
@@ -429,14 +431,14 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
     setState(() => _isLoading = true);
 
     try {
-      final range = ReportPeriod.monthRange(_selectedMonth);
+      final range = _selection.range();
       final startDate = range.start;
-      final endDate = range.end;
-      final days = endDate.difference(startDate).inDays + 1;
+      final exclusiveEnd = _selection.exclusiveEnd();
+      final days = exclusiveEnd.difference(startDate).inDays;
 
       final ordersForRangeFuture = ApiService.getOrdersByDateRange(
         startDate: startDate,
-        endDate: endDate,
+        endDate: exclusiveEnd,
       );
 
       final results = await Future.wait([
@@ -452,7 +454,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
         }),
         ApiService.getItemPerformance(
           startDate: startDate,
-          endDate: ReportPeriod.exclusiveEnd(_selectedMonth),
+          endDate: exclusiveEnd,
         ),
         ApiService.getOrdersForecast(days: _selectedRangeDays),
         ApiService.getSalesForecast(days: _selectedRangeDays),
@@ -682,14 +684,14 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
     final month = _summaryStats!['month'] ?? {};
     final menuItems = _summaryStats!['menuItems'] ?? 0;
 
-    final monthRange = ReportPeriod.monthRange(_selectedMonth);
+    final periodRange = _selection.range();
 
-    final currentMonthExpenses = _expenses.where((e) {
+    final currentPeriodExpenses = _expenses.where((e) {
       final date = FinanceMetrics.expenseDate(e);
-      return date != null && ReportPeriod.contains(monthRange, date);
+      return date != null && ReportPeriod.contains(periodRange, date);
     }).toList();
 
-    final totalExpenses = currentMonthExpenses.fold<double>(
+    final totalExpenses = currentPeriodExpenses.fold<double>(
       0,
       (sum, e) =>
           sum + ((e['amount'] is num) ? (e['amount'] as num).toDouble() : 0),
@@ -749,7 +751,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
           _CompactKpiItem(
             title: 'Expenses',
             value: _currency.format(totalExpenses),
-            subtitle: '${currentMonthExpenses.length} trans.',
+            subtitle: '${currentPeriodExpenses.length} trans.',
             icon: Icons.account_balance_wallet,
             color: Theme.of(context).colorScheme.error,
             isNarrow: isNarrow,
@@ -831,10 +833,10 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
             ),
           ),
           const SizedBox(width: 6),
-          MonthSelector(
-            month: _selectedMonth,
-            onMonthChanged: (month) {
-              setState(() => _selectedMonth = ReportPeriod.month(month));
+          PeriodNavigator(
+            selection: _selection,
+            onChanged: (selection) {
+              setState(() => _selection = selection);
               _loadAnalyticsData();
             },
           ),
@@ -908,7 +910,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
   }
 
   Widget _buildSalesTab() {
-    final rangeTitle = ReportPeriod.label(_selectedMonth);
+    final rangeTitle = _selection.label();
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
@@ -2658,8 +2660,8 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
   }
 
   Widget _buildFinanceTab() {
-    final range = ReportPeriod.monthRange(_selectedMonth);
-    final previousRange = ReportPeriod.previousMonthRange(_selectedMonth);
+    final range = _selection.range();
+    final previousRange = ReportPeriod.previousMonthRange(_selection.month);
     final monthEnd = range.end;
     final mtdSales = BusinessKpis.summarizeOrders(_ordersForRange,
         start: range.start, end: monthEnd);
@@ -2688,7 +2690,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
         ? ((mtdSales.netSales - prevSales.netSales) / prevSales.netSales) * 100
         : 0.0;
 
-    final currentMonthExpenses = _expenses.where((e) {
+    final currentPeriodExpenses = _expenses.where((e) {
       final date = FinanceMetrics.expenseDate(e);
       if (date == null) return false;
       return !date.isBefore(range.start) &&
@@ -2706,7 +2708,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
         .toList();
     final totalPayables = payablesKpi.outstanding;
     final sortedCategories =
-        FinanceMetrics.expensesByCategory(currentMonthExpenses);
+        FinanceMetrics.expensesByCategory(currentPeriodExpenses);
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
@@ -2715,7 +2717,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
         children: [
           // Month header
           Text(
-            'Financial Overview - ${ReportPeriod.label(_selectedMonth)}',
+            'Financial Overview - ${_selection.label()}',
             style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 16),
@@ -2863,12 +2865,8 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
             }
 
             return Wrap(spacing: 12, runSpacing: 12, children: [
-              period(
-                  'Selected Month (${ReportPeriod.label(_selectedMonth)})',
-                  range.start,
-                  monthEnd,
-                  previousRange.start,
-                  previousRange.end),
+              period('Selected Period (${_selection.label()})', range.start,
+                  monthEnd, previousRange.start, previousRange.end),
             ]);
           }),
 
@@ -2922,14 +2920,14 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                 children: [
                   _StatItem(
                     label: 'Transactions',
-                    value: '${currentMonthExpenses.length}',
+                    value: '${currentPeriodExpenses.length}',
                     icon: Icons.receipt,
                   ),
                   _StatItem(
                     label: 'Avg/Transaction',
-                    value: currentMonthExpenses.isNotEmpty
+                    value: currentPeriodExpenses.isNotEmpty
                         ? _currency
-                            .format(currentTotal / currentMonthExpenses.length)
+                            .format(currentTotal / currentPeriodExpenses.length)
                         : _currency.format(0),
                     icon: Icons.calculate,
                   ),

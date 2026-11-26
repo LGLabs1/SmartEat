@@ -2,10 +2,11 @@ import 'package:flutter/material.dart';
 
 import '../../../../theme.dart';
 import '../../../../widgets/dashboard/empty_state.dart';
-import '../../../../widgets/period/date_range_selector.dart';
+import '../../../../widgets/period/period_navigator.dart';
 import '../../../../widgets/responsive_search_field.dart';
 import '../../data/finance_format.dart';
 import '../../data/finance_metrics.dart';
+import '../../data/report_period.dart';
 import 'finance_category_bar.dart';
 import 'finance_status.dart';
 
@@ -18,11 +19,11 @@ class FinanceExpensesTab extends StatelessWidget {
     required this.fmt,
     required this.sourceFilter,
     required this.categoryFilter,
-    required this.dateRange,
+    required this.selection,
     required this.searchQuery,
     required this.onSourceFilterChanged,
     required this.onCategoryFilterChanged,
-    required this.onDateRangeChanged,
+    required this.onSelectionChanged,
     required this.onSearchChanged,
     required this.onAdd,
     required this.onOpen,
@@ -36,11 +37,11 @@ class FinanceExpensesTab extends StatelessWidget {
   final FinanceFormat fmt;
   final String sourceFilter;
   final String? categoryFilter;
-  final DateTimeRange? dateRange;
+  final ReportPeriodSelection selection;
   final String searchQuery;
   final ValueChanged<String> onSourceFilterChanged;
   final ValueChanged<String?> onCategoryFilterChanged;
-  final ValueChanged<DateTimeRange?> onDateRangeChanged;
+  final ValueChanged<ReportPeriodSelection> onSelectionChanged;
   final ValueChanged<String> onSearchChanged;
   final VoidCallback onAdd;
   final ValueChanged<Map<String, dynamic>> onOpen;
@@ -53,6 +54,7 @@ class FinanceExpensesTab extends StatelessWidget {
     final categories = <String>{
       for (final e in expenses) (e['category'] ?? '').toString()
     }..removeWhere((c) => c.trim().isEmpty);
+    final range = selection.range();
 
     var filtered = expenses.where((e) {
       // Source filter
@@ -79,17 +81,8 @@ class FinanceExpensesTab extends StatelessWidget {
         return false;
       }
 
-      // Date range
-      if (dateRange != null) {
-        final d = FinanceMetrics.expenseDate(e);
-        if (d == null) return false;
-        if (d.isBefore(dateRange!.start)) return false;
-        if (d.isAfter(
-          dateRange!.end.add(const Duration(days: 1)),
-        )) {
-          return false;
-        }
-      }
+      final d = FinanceMetrics.expenseDate(e);
+      if (d == null || !ReportPeriod.contains(range, d)) return false;
 
       // Search
       final q = searchQuery.trim().toLowerCase();
@@ -155,7 +148,7 @@ class FinanceExpensesTab extends StatelessWidget {
                           ),
                         ),
                         Text(
-                          '${filtered.length} expenses',
+                          '${filtered.length} expenses • ${selection.label()}',
                           style: TextStyle(
                             fontSize: 12,
                             color:
@@ -240,7 +233,10 @@ class FinanceExpensesTab extends StatelessWidget {
                 runSpacing: 8,
                 crossAxisAlignment: WrapCrossAlignment.center,
                 children: [
-                  _dateRangeChip(context),
+                  PeriodNavigator(
+                    selection: selection,
+                    onChanged: onSelectionChanged,
+                  ),
                   _categoryDropdown(context, categories.toList()..sort()),
                 ],
               ),
@@ -294,13 +290,6 @@ class FinanceExpensesTab extends StatelessWidget {
         selected: selected,
         onSelected: (_) => onTap(),
       ),
-    );
-  }
-
-  Widget _dateRangeChip(BuildContext context) {
-    return DateRangeSelector(
-      range: dateRange,
-      onChanged: onDateRangeChanged,
     );
   }
 

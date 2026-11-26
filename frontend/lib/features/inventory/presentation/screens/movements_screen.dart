@@ -4,7 +4,8 @@ import '../../../../models/inventory_item.dart';
 import '../../../../theme.dart';
 import '../../../../widgets/dashboard/empty_state.dart';
 import '../../../../widgets/dashboard/kpi_card.dart';
-import '../../../../widgets/period/date_range_selector.dart';
+import '../../../../features/finance/data/report_period.dart';
+import '../../../../widgets/period/period_navigator.dart';
 import '../../../../widgets/responsive_search_field.dart';
 import '../../data/models/stock_movement.dart';
 
@@ -50,7 +51,9 @@ class _MovementsScreenState extends State<MovementsScreen> {
   final TextEditingController _search = TextEditingController();
   String _typeFilter = 'all';
   String? _itemFilter;
-  DateTimeRange? _dateRange;
+  ReportPeriodSelection _selection = ReportPeriodSelection(
+    month: ReportPeriod.month(DateTime.now()),
+  );
 
   @override
   void dispose() {
@@ -125,14 +128,8 @@ class _MovementsScreenState extends State<MovementsScreen> {
         return false;
       }
       if (_itemFilter != null && m.itemId != _itemFilter) return false;
-      if (_dateRange != null) {
-        final d =
-            DateTime(m.timestamp.year, m.timestamp.month, m.timestamp.day);
-        final start = DateTime(_dateRange!.start.year, _dateRange!.start.month,
-            _dateRange!.start.day);
-        final end = DateTime(
-            _dateRange!.end.year, _dateRange!.end.month, _dateRange!.end.day);
-        if (d.isBefore(start) || d.isAfter(end)) return false;
+      if (!ReportPeriod.contains(_selection.range(), m.timestamp)) {
+        return false;
       }
       if (q.isNotEmpty) {
         final name = _itemName(m.itemId).toLowerCase();
@@ -323,7 +320,11 @@ class _MovementsScreenState extends State<MovementsScreen> {
             runSpacing: 8,
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
-              _dateRangeChip(context),
+              PeriodNavigator(
+                selection: _selection,
+                onChanged: (selection) =>
+                    setState(() => _selection = selection),
+              ),
               _itemDropdown(context),
             ],
           ),
@@ -340,13 +341,6 @@ class _MovementsScreenState extends State<MovementsScreen> {
         selected: _typeFilter == value,
         onSelected: (_) => setState(() => _typeFilter = value),
       ),
-    );
-  }
-
-  Widget _dateRangeChip(BuildContext context) {
-    return DateRangeSelector(
-      range: _dateRange,
-      onChanged: (range) => setState(() => _dateRange = range),
     );
   }
 

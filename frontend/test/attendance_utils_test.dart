@@ -96,6 +96,54 @@ void main() {
     });
   });
 
+  group('review policy', () {
+    test('attendanceNeedsReview is false for complete short or stale records',
+        () {
+      expect(
+        attendanceNeedsReview({
+          'status': 'incomplete',
+          'needsReview': true,
+          'workUnit': 0,
+          'timeIn': '2026-01-05T08:00:00',
+          'timeOut': '2026-01-05T10:00:00',
+        }),
+        isFalse,
+      );
+      expect(
+        attendanceNeedsReview({
+          'status': 'incomplete',
+          'needsReview': true,
+          'timeIn': '2026-01-05T08:00:00',
+          'timeOut': '2026-01-05T17:00:00',
+        }),
+        isFalse,
+      );
+    });
+
+    test(
+        'attendanceNeedsReview is true for open or flagged missing-time records',
+        () {
+      expect(
+        attendanceNeedsReview({
+          'timeIn': '2026-01-05T08:00:00',
+        }),
+        isTrue,
+      );
+      expect(
+        attendanceNeedsReview({
+          'needsReview': true,
+        }),
+        isTrue,
+      );
+      expect(
+        attendanceNeedsReview({
+          'status': attendanceIncomplete,
+        }),
+        isTrue,
+      );
+    });
+  });
+
   group('status resolution', () {
     test('explicit status wins, then work units, then legacy check-ins', () {
       expect(attendanceRecordStatus({'status': 'incomplete'}), 'incomplete');
@@ -117,6 +165,28 @@ void main() {
         'halfday',
       );
       expect(attendanceRecordStatus({}), 'absent');
+    });
+
+    test('complete times override stale review flags', () {
+      expect(
+        attendanceRecordStatus({
+          'status': 'incomplete',
+          'needsReview': true,
+          'workUnit': 0.5,
+          'timeIn': '2026-01-05T08:00:00',
+          'timeOut': '2026-01-05T12:00:00',
+        }),
+        attendanceHalfDay,
+      );
+      expect(
+        attendanceRecordStatus({
+          'status': 'short',
+          'workUnit': 0,
+          'timeIn': '2026-01-05T08:00:00',
+          'timeOut': '2026-01-05T10:00:00',
+        }),
+        attendanceShort,
+      );
     });
 
     test('labels cover every status', () {
@@ -175,7 +245,7 @@ void main() {
 
     test('team summary tracks on-shift, completed, review and missing', () {
       final summary = attendanceTeamSummary(
-        staffUids: ['a', 'b', 'c', 'd'],
+        staffUids: ['a', 'b', 'c', 'd', 'e'],
         todayKey: '2026-01-05',
         todayRecords: [
           {
@@ -186,6 +256,14 @@ void main() {
           },
           {'uid': 'b', 'needsReview': true, 'status': 'incomplete'},
           {'uid': 'c', 'timeIn': '2026-01-05T08:00:00'},
+          {
+            'uid': 'e',
+            'status': 'incomplete',
+            'needsReview': true,
+            'workUnit': 0.5,
+            'timeIn': '2026-01-05T08:00:00',
+            'timeOut': '2026-01-05T12:00:00',
+          },
         ],
         openRecords: [
           {'uid': 'c', 'timeIn': '2026-01-05T08:00:00'},
@@ -194,8 +272,8 @@ void main() {
       );
 
       expect(summary.onShift, 2);
-      expect(summary.completed, 1);
-      expect(summary.needsReview, 1);
+      expect(summary.completed, 2);
+      expect(summary.needsReview, 2);
       expect(summary.missing, 0);
     });
   });

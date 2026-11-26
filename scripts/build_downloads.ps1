@@ -18,6 +18,7 @@ $apkPath = Join-Path $downloads 'smarteat-android.apk'
 $zipPath = Join-Path $downloads 'smarteat-windows.zip'
 $script:AppVersion = $null
 $script:DownloadUrls = $null
+$apiBaseUrlDefine = '--dart-define=SMARTEAT_API_BASE_URL=https://smarteat-backend-n5ta.onrender.com/api'
 
 # Native tools (flutter, firebase) write progress and warnings to stderr.
 # Windows PowerShell 5.1 turns that into a terminating error while
@@ -349,7 +350,7 @@ try {
     if (-not $SkipWeb) {
         Write-Host 'Building web...'
         Invoke-Native 'flutter build web' 'flutter' @(
-            'build', 'web', '--release', '--base-href', '/', '--no-wasm-dry-run', '-O2'
+            'build', 'web', '--release', '--base-href', '/', '--no-wasm-dry-run', '-O2', $apiBaseUrlDefine
         )
     }
 
@@ -357,7 +358,7 @@ try {
 
     if (-not $SkipAndroid) {
         Write-Host 'Building Android APK...'
-        Invoke-Native 'flutter build apk' 'flutter' @('build', 'apk', '--release')
+        Invoke-Native 'flutter build apk' 'flutter' @('build', 'apk', '--release', $apiBaseUrlDefine)
         Copy-Item `
             -LiteralPath 'build\app\outputs\flutter-apk\app-release.apk' `
             -Destination $apkPath `
@@ -366,7 +367,7 @@ try {
 
     if (-not $SkipWindows) {
         Write-Host 'Building Windows app...'
-        Invoke-Native 'flutter build windows' 'flutter' @('build', 'windows', '--release')
+        Invoke-Native 'flutter build windows' 'flutter' @('build', 'windows', '--release', $apiBaseUrlDefine)
         $winRelease = 'build\windows\x64\runner\Release'
         if (-not (Test-Path -LiteralPath $winRelease)) {
             throw "Windows release folder not found: $winRelease"

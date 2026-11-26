@@ -165,6 +165,15 @@ String _describeApiException(ChatApiException error) {
 
 String _describeSocket(String message) {
   final m = message.toLowerCase();
+  if (m.contains('failed to fetch') ||
+      m.contains('xmlhttprequest error') ||
+      m.contains('load failed')) {
+    return '📡 I couldn\'t reach the backend from this browser.\n\n'
+        'Check that this site\'s origin is allowed by CORS, the API URL is '
+        'correct and uses HTTPS, any stale service-worker cache is cleared, '
+        'and the backend is running.\n\n'
+        'Give it another try in a moment 💚';
+  }
   if (m.contains('refused')) {
     return '📡 I can\'t reach the SmartEat backend — it looks like nothing is '
         'listening on the backend address.\n\n'

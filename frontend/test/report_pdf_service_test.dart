@@ -47,4 +47,26 @@ void main() {
     expect(bytes, isNotEmpty);
     expect(String.fromCharCodes(bytes.take(4)), '%PDF');
   });
+
+  test('builds a year-to-date PDF subtitle from the selection', () async {
+    final selection = ReportPeriodSelection(
+      month: DateTime(2026, 11, 1),
+      yearToDate: true,
+    );
+    final bytes = await ReportPdfService.buildPdf(
+      title: 'Financial Report',
+      subtitle: selection.label(),
+      sections: [
+        ReportPdfSection(
+          title: '${selection.label()} summary',
+          lines: const ['Revenue: ₱1,000.00'],
+        ),
+      ],
+      footer: 'SmartEat Financial Reports',
+    );
+
+    expect(selection.label(), 'All months this year');
+    expect(bytes, isNotEmpty);
+    expect(String.fromCharCodes(bytes.take(4)), '%PDF');
+  });
 }

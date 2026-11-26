@@ -256,6 +256,7 @@ async function main() {
                 status,
                 hoursWorked: Number(hours.toFixed(2)),
                 needsReview: false,
+                lateTimeout: false,
                 updatedAt: admin.firestore.FieldValue.serverTimestamp(),
                 autoMarked: true,
               };
@@ -283,8 +284,8 @@ async function main() {
                       workUnit,
                       status: statusForUnit(workUnit),
                       hoursWorked: settings.fullDayHours,
-                      needsReview: true,
-                      lateTimeout: true,
+                      needsReview: !timeOut,
+                      lateTimeout: !timeOut,
                       notes: data.notes || 'Missing Time Out - past expected end time',
                       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
                       autoMarked: true,
