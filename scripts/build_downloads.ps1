@@ -199,8 +199,8 @@ function Test-DownloadUrls {
     }
 
     $urls = @()
-    if (-not $SkipAndroid) { $urls += $script:DownloadUrls.AndroidApk }
-    if (-not $SkipWindows) { $urls += $script:DownloadUrls.WindowsZip }
+    if (Test-Path -LiteralPath $apkPath) { $urls += $script:DownloadUrls.AndroidApk }
+    if (Test-Path -LiteralPath $zipPath) { $urls += $script:DownloadUrls.WindowsZip }
     if ($urls.Count -eq 0) { return }
 
     foreach ($url in $urls) {
@@ -267,7 +267,7 @@ function Publish-GitHubRelease {
     }
 
     $assets = @()
-    if (-not $SkipAndroid -and (Test-Path -LiteralPath $apkPath)) {
+    if (Test-Path -LiteralPath $apkPath) {
         $assets += @{
             Name   = "smarteat-android-$assetVersion.apk"
             Source = 'smarteat-android.apk'
@@ -279,7 +279,7 @@ function Publish-GitHubRelease {
             Type   = 'application/vnd.android.package-archive'
         }
     }
-    if (-not $SkipWindows -and (Test-Path -LiteralPath $zipPath)) {
+    if (Test-Path -LiteralPath $zipPath) {
         $assets += @{
             Name   = "smarteat-windows-$assetVersion.zip"
             Source = 'smarteat-windows.zip'
