@@ -1484,7 +1484,9 @@ class FirebaseService {
         // If the wrapper error is the generic converted-future message,
         // try unwrapping the nested error directly.
         final wrapperStr = current.toString();
-        if (wrapperStr.contains('Dart exception thrown from Future')) {
+        if (wrapperStr.contains('Dart exception thrown from Future') ||
+            wrapperStr
+                .contains('Dart exception thrown from converted Future')) {
           try {
             final nested = _extractErrorDetails(errorObj);
             if (nested.isNotEmpty &&
@@ -2001,6 +2003,20 @@ class FirebaseService {
       }
     }
 
+    final movementIds = plan.requiredByInventoryId.keys.toList();
+    final movementSnaps = await Future.wait(
+      movementIds.map(
+        (id) => tx.get(
+          _eaterySubcollection(eateryId, stockMovementsCollection)
+              .doc(orderConsumptionMovementId(orderId, id)),
+        ),
+      ),
+    );
+    final movementExistsById = <String, bool>{
+      for (var index = 0; index < movementIds.length; index++)
+        movementIds[index]: movementSnaps[index].exists,
+    };
+
     final nextStockById = <String, double>{};
     for (final entry in plan.requiredByInventoryId.entries) {
       final inventoryItemId = entry.key;
@@ -2051,12 +2067,10 @@ class FirebaseService {
         },
       );
 
-      final movementId = orderConsumptionMovementId(orderId, inventoryItemId);
       final movementRef =
           _eaterySubcollection(eateryId, stockMovementsCollection)
-              .doc(movementId);
-      final movementSnap = await tx.get(movementRef);
-      if (!movementSnap.exists) {
+              .doc(orderConsumptionMovementId(orderId, inventoryItemId));
+      if (movementExistsById[inventoryItemId] != true) {
         final unitCostAtEvent = _inventoryUnitCost(inventoryItem);
         final serverTime = FieldValue.serverTimestamp();
         final movement = buildOrderConsumptionMovement(
@@ -2175,62 +2189,64 @@ class FirebaseService {
           ? await _loadInventoryForDeduction(eateryId)
           : const <Map<String, dynamic>>[];
 
-      final transactionResult = await _firestore.runTransaction((tx) async {
-        final existingSnap = await tx.get(docRef);
-        final incomingDeductions = orderData['inventoryDeductions'];
-        final decision = planCreateOrderIdempotency(
-          documentExists: existingSnap.exists,
-          documentId: docRef.id,
-          existingData: existingSnap.data(),
-          requestedCompleted: isCompleted,
-          inventoryDeducted: orderData['inventoryDeducted'] == true,
-          hasDeductionSnapshot:
-              incomingDeductions is List && incomingDeductions.isNotEmpty,
-        );
-        if (decision.isDuplicate) {
-          return {
-            'duplicate': true,
-            'existingOrder': decision.existingOrder,
-          };
-        }
-
-        var lowStockItems = <Map<String, dynamic>>[];
-        RecipeConsumptionPlan? plan;
-
-        if (decision.deductStock) {
-          final deduction = await _applyOrderDeduction(
-            tx: tx,
-            eateryId: eateryId,
-            orderId: docRef.id,
-            orderItems: items,
-            inventory: inventory,
-            performedBy: createdByUid,
+      final transactionResult = await _withRetry(
+        () => _firestore.runTransaction((tx) async {
+          final existingSnap = await tx.get(docRef);
+          final incomingDeductions = orderData['inventoryDeductions'];
+          final decision = planCreateOrderIdempotency(
+            documentExists: existingSnap.exists,
+            documentId: docRef.id,
+            existingData: existingSnap.data(),
+            requestedCompleted: isCompleted,
+            inventoryDeducted: orderData['inventoryDeducted'] == true,
+            hasDeductionSnapshot:
+                incomingDeductions is List && incomingDeductions.isNotEmpty,
           );
-          lowStockItems = deduction.lowStockItems;
-          plan = deduction.plan;
-        }
+          if (decision.isDuplicate) {
+            return {
+              'duplicate': true,
+              'existingOrder': decision.existingOrder,
+            };
+          }
 
-        final orderFields = <String, dynamic>{
-          ...orderData,
-          'items': items,
-          'eateryId': eateryId,
-          'createdAt': FieldValue.serverTimestamp(),
-          'status': orderStatus,
-          'createdBy': createdByUid,
-          'createdByName': createdByName,
-          'inventoryDeducted': isCompleted,
-          if (decision.deductStock)
-            'inventoryDeductions': plan?.toJsonLines() ?? [],
-          if (decision.deductStock)
-            'inventoryPerServing': plan?.perServingByMenuId ?? {},
-          if (isCompleted) 'completedAt': FieldValue.serverTimestamp(),
-          'updatedAt': FieldValue.serverTimestamp(),
-        };
+          var lowStockItems = <Map<String, dynamic>>[];
+          RecipeConsumptionPlan? plan;
 
-        tx.set(docRef, orderFields);
+          if (decision.deductStock) {
+            final deduction = await _applyOrderDeduction(
+              tx: tx,
+              eateryId: eateryId,
+              orderId: docRef.id,
+              orderItems: items,
+              inventory: inventory,
+              performedBy: createdByUid,
+            );
+            lowStockItems = deduction.lowStockItems;
+            plan = deduction.plan;
+          }
 
-        return {'docRef': docRef, 'lowStockItems': lowStockItems};
-      });
+          final orderFields = <String, dynamic>{
+            ...orderData,
+            'items': items,
+            'eateryId': eateryId,
+            'createdAt': FieldValue.serverTimestamp(),
+            'status': orderStatus,
+            'createdBy': createdByUid,
+            'createdByName': createdByName,
+            'inventoryDeducted': isCompleted,
+            if (decision.deductStock)
+              'inventoryDeductions': plan?.toJsonLines() ?? [],
+            if (decision.deductStock)
+              'inventoryPerServing': plan?.perServingByMenuId ?? {},
+            if (isCompleted) 'completedAt': FieldValue.serverTimestamp(),
+            'updatedAt': FieldValue.serverTimestamp(),
+          };
+
+          tx.set(docRef, orderFields);
+
+          return {'docRef': docRef, 'lowStockItems': lowStockItems};
+        }),
+      );
 
       if (transactionResult['duplicate'] == true) {
         return Map<String, dynamic>.from(
