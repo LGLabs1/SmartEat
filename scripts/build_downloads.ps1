@@ -350,7 +350,7 @@ try {
     if (-not $SkipWeb) {
         Write-Host 'Building web...'
         Invoke-Native 'flutter build web' 'flutter' @(
-            'build', 'web', '--release', '--base-href', '/', '--no-wasm-dry-run', '-O2', $apiBaseUrlDefine
+            'build', 'web', '--release', '--base-href', '/', '--no-wasm-dry-run', '--pwa-strategy=none', '-O2', $apiBaseUrlDefine
         )
     }
 
