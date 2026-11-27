@@ -9,6 +9,7 @@ import '../../../../../theme.dart';
 import '../../../../../widgets/dashboard/empty_state.dart';
 import '../../../../../widgets/dashboard/kpi_card.dart';
 import '../../../../../widgets/sage_header_button.dart';
+import '../../../../../widgets/skeleton_loaders.dart';
 import '../../../../../widgets/smart_eat_header.dart';
 import '../widgets/add_item_dialog.dart';
 import '../widgets/adjustment_dialog.dart';
@@ -35,6 +36,8 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
   late InventoryItem _item;
   bool _loadingUsage = true;
   bool _loadingDetails = true;
+  bool _hasLoadedUsage = false;
+  bool _hasLoadedDetails = false;
   Map<String, dynamic>? _ingredientUsage;
   List<StockMovement> _movements = const [];
 
@@ -79,10 +82,16 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
         if (freshItem != null) _item = freshItem;
         _movements = movements;
         _loadingDetails = false;
+        _hasLoadedDetails = true;
       });
       if (freshItem != null) widget.onItemUpdated?.call(freshItem);
     } catch (_) {
-      if (mounted) setState(() => _loadingDetails = false);
+      if (mounted) {
+        setState(() {
+          _loadingDetails = false;
+          _hasLoadedDetails = true;
+        });
+      }
     }
   }
 
@@ -137,9 +146,15 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
       setState(() {
         _ingredientUsage = match;
         _loadingUsage = false;
+        _hasLoadedUsage = true;
       });
     } catch (_) {
-      if (mounted) setState(() => _loadingUsage = false);
+      if (mounted) {
+        setState(() {
+          _loadingUsage = false;
+          _hasLoadedUsage = true;
+        });
+      }
     }
   }
 
@@ -245,528 +260,571 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
             ),
           ],
         ),
-        body: LayoutBuilder(
-          builder: (context, constraints) {
-            final isWide = constraints.maxWidth >= 760;
-            return SingleChildScrollView(
-              padding: const EdgeInsets.all(12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Card(
-                    elevation: 3,
-                    child: Container(
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(12),
-                        gradient: LinearGradient(
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                          colors: [
-                            theme.colorScheme.primary.withValues(alpha: 0.06),
-                            isOutOfStock
-                                ? theme.colorScheme.error
-                                    .withValues(alpha: 0.08)
-                                : isLowStock
-                                    ? AppTheme.warning.withValues(alpha: 0.08)
-                                    : AppTheme.sageSuccess
-                                        .withValues(alpha: 0.06),
-                          ],
-                        ),
-                      ),
-                      child: Padding(
-                        padding: const EdgeInsets.all(12),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                CircleAvatar(
-                                  radius: 20,
-                                  backgroundColor: isOutOfStock
+        body: !_hasLoadedDetails || !_hasLoadedUsage
+            ? const SkeletonItemDetail()
+            : LayoutBuilder(
+                builder: (context, constraints) {
+                  final isWide = constraints.maxWidth >= 760;
+                  return SingleChildScrollView(
+                    padding: const EdgeInsets.all(12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Card(
+                          elevation: 3,
+                          child: Container(
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(12),
+                              gradient: LinearGradient(
+                                begin: Alignment.topLeft,
+                                end: Alignment.bottomRight,
+                                colors: [
+                                  theme.colorScheme.primary
+                                      .withValues(alpha: 0.06),
+                                  isOutOfStock
                                       ? theme.colorScheme.error
-                                          .withValues(alpha: 0.15)
+                                          .withValues(alpha: 0.08)
                                       : isLowStock
                                           ? AppTheme.warning
-                                              .withValues(alpha: 0.15)
-                                          : theme.colorScheme.primary
-                                              .withValues(alpha: 0.15),
-                                  child: Icon(Icons.inventory_2_outlined,
-                                      color: isOutOfStock
-                                          ? theme.colorScheme.error
-                                          : isLowStock
-                                              ? AppTheme.warning
-                                              : theme.colorScheme.primary,
-                                      size: 20),
-                                ),
-                                const SizedBox(width: 10),
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Wrap(
-                                        spacing: 6,
-                                        runSpacing: 4,
-                                        crossAxisAlignment:
-                                            WrapCrossAlignment.center,
-                                        children: [
-                                          Text(
-                                            item.name,
-                                            style: theme.textTheme.titleMedium
-                                                ?.copyWith(
-                                                    fontWeight:
-                                                        FontWeight.bold),
-                                          ),
-                                          statusChip,
-                                          if (item.sku != null &&
-                                              item.sku!.isNotEmpty)
-                                            Chip(
-                                              label: Text('SKU: ${item.sku}'),
-                                              visualDensity:
-                                                  VisualDensity.compact,
-                                            ),
-                                          if (item.brand != null &&
-                                              item.brand!.isNotEmpty)
-                                            Chip(
-                                              label:
-                                                  Text('Brand: ${item.brand}'),
-                                              visualDensity:
-                                                  VisualDensity.compact,
-                                            ),
-                                        ],
-                                      ),
-                                      const SizedBox(height: 4),
-                                      Text(
-                                        item.category,
-                                        style:
-                                            theme.textTheme.bodySmall?.copyWith(
-                                          color: theme
-                                              .colorScheme.onSurfaceVariant,
-                                        ),
-                                      ),
-                                      if (item.description != null &&
-                                          item.description!.isNotEmpty) ...[
-                                        const SizedBox(height: 4),
-                                        Text(
-                                          item.description!,
-                                          style: theme.textTheme.bodySmall,
-                                          maxLines: 2,
-                                          overflow: TextOverflow.ellipsis,
-                                        ),
-                                      ],
-                                    ],
-                                  ),
-                                ),
-                              ],
-                            ),
-                            if (item.maxStock > 0) ...[
-                              const SizedBox(height: 10),
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: ClipRRect(
-                                      borderRadius: BorderRadius.circular(6),
-                                      child: LinearProgressIndicator(
-                                        value:
-                                            (item.currentStock / item.maxStock)
-                                                .clamp(0.0, 1.0),
-                                        minHeight: 8,
-                                        backgroundColor: theme.colorScheme
-                                            .surfaceContainerHighest,
-                                        color: isOutOfStock
-                                            ? theme.colorScheme.error
-                                            : isLowStock
-                                                ? AppTheme.warning
-                                                : AppTheme.sageSuccess,
-                                      ),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  Text(
-                                    '${(item.currentStock / item.maxStock * 100).clamp(0.0, 999).toStringAsFixed(0)}%',
-                                    style:
-                                        theme.textTheme.labelMedium?.copyWith(
-                                      fontWeight: FontWeight.bold,
-                                      color: isOutOfStock
-                                          ? theme.colorScheme.error
-                                          : isLowStock
-                                              ? AppTheme.warning
-                                              : AppTheme.sageSuccess,
-                                    ),
-                                  ),
+                                              .withValues(alpha: 0.08)
+                                          : AppTheme.sageSuccess
+                                              .withValues(alpha: 0.06),
                                 ],
                               ),
-                            ],
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                  _sectionLabel(context, 'STOCK LEVELS'),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      SizedBox(
-                        width: isWide ? 180 : (constraints.maxWidth - 16) / 2,
-                        child: KpiCard(
-                          title: 'Current Stock',
-                          value:
-                              '${item.currentStock.toStringAsFixed(2)} ${item.effectiveBaseUnit}',
-                          color: isOutOfStock
-                              ? theme.colorScheme.error
-                              : isLowStock
-                                  ? AppTheme.warning
-                                  : AppTheme.sageSuccess,
-                          icon: Icons.layers_outlined,
-                        ),
-                      ),
-                      SizedBox(
-                        width: isWide ? 240 : (constraints.maxWidth - 16) / 2,
-                        child: KpiCard(
-                          title: 'Min / Reorder / Max',
-                          value:
-                              '${item.minStock.toStringAsFixed(2)} / ${item.reorderPoint.toStringAsFixed(2)} / ${item.maxStock.toStringAsFixed(2)}',
-                          icon: Icons.trending_down_outlined,
-                          color: AppTheme.sageAccent,
-                        ),
-                      ),
-                      SizedBox(
-                        width: isWide ? 180 : (constraints.maxWidth - 16) / 2,
-                        child: KpiCard(
-                          title: 'Safety / Lead Time',
-                          value:
-                              '${item.safetyStock.toStringAsFixed(2)} / ${item.leadTimeDays}d',
-                          icon: Icons.security_outlined,
-                          color: Colors.deepPurpleAccent,
-                        ),
-                      ),
-                      SizedBox(
-                        width: isWide ? 160 : (constraints.maxWidth - 16) / 2,
-                        child: KpiCard(
-                          title: 'Consumption',
-                          value: item.consumptionMode ==
-                                  ConsumptionMode.recipePending
-                              ? 'Recipe-pending'
-                              : 'Direct',
-                          icon: Icons.sync_alt_outlined,
-                          color: item.consumptionMode ==
-                                  ConsumptionMode.recipePending
-                              ? AppTheme.warning
-                              : AppTheme.sageCyan,
-                        ),
-                      ),
-                    ],
-                  ),
-                  _sectionLabel(context, 'COST & PRICING'),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      SizedBox(
-                        width: isWide ? 160 : (constraints.maxWidth - 16) / 2,
-                        child: KpiCard(
-                          title: 'Unit Cost',
-                          value: _formatCurrency(item.unitCost),
-                          icon: Icons.payments_outlined,
-                          color: AppTheme.sageSuccess,
-                        ),
-                      ),
-                      SizedBox(
-                        width: isWide ? 160 : (constraints.maxWidth - 16) / 2,
-                        child: KpiCard(
-                          title: 'Selling Price',
-                          value: _formatCurrency(item.sellingPrice),
-                          icon: Icons.sell_outlined,
-                          color: AppTheme.warning,
-                        ),
-                      ),
-                      SizedBox(
-                        width: isWide ? 240 : constraints.maxWidth,
-                        child: KpiCard(
-                          title: 'Last / Avg Cost',
-                          value:
-                              '${_formatCurrency(item.lastPurchaseCost)} / ${_formatCurrency(item.avgCost)}',
-                          icon: Icons.calculate_outlined,
-                          color: AppTheme.sageAccent,
-                        ),
-                      ),
-                    ],
-                  ),
-                  _sectionLabel(context, 'SUPPLIER & UNITS'),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      if (item.purchaseUnit != null &&
-                          item.purchaseUnit!.isNotEmpty)
-                        SizedBox(
-                          width: isWide ? 150 : (constraints.maxWidth - 16) / 2,
-                          child: KpiCard(
-                            title: 'Purchase Unit',
-                            value: item.purchaseUnit!,
-                            icon: Icons.shopping_cart_outlined,
-                            color: AppTheme.sageCyan,
-                          ),
-                        ),
-                      if (item.saleUnit != null && item.saleUnit!.isNotEmpty)
-                        SizedBox(
-                          width: isWide ? 140 : (constraints.maxWidth - 16) / 2,
-                          child: KpiCard(
-                            title: 'Sale Unit',
-                            value: item.saleUnit!,
-                            icon: Icons.local_offer_outlined,
-                            color: AppTheme.sageAccent,
-                          ),
-                        ),
-                      SizedBox(
-                        width: isWide ? 140 : (constraints.maxWidth - 16) / 2,
-                        child: KpiCard(
-                          title: 'Conv. Factor',
-                          value: item.conversionFactor.toString(),
-                          icon: Icons.compare_arrows_outlined,
-                          color: AppTheme.sageSuccess,
-                        ),
-                      ),
-                      SizedBox(
-                        width: isWide ? 220 : constraints.maxWidth,
-                        child: KpiCard(
-                          title: 'Supplier',
-                          value:
-                              item.supplier.isNotEmpty ? item.supplier : 'N/A',
-                          icon: Icons.local_shipping_outlined,
-                          color: Colors.deepPurpleAccent,
-                        ),
-                      ),
-                    ],
-                  ),
-                  if (item.notes != null && item.notes!.isNotEmpty) ...[
-                    const SizedBox(height: 8),
-                    Card(
-                      child: Padding(
-                        padding: const EdgeInsets.all(10),
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Icon(Icons.note_outlined,
-                                size: 18,
-                                color: theme.colorScheme.onSurfaceVariant),
-                            const SizedBox(width: 8),
-                            Expanded(
+                            ),
+                            child: Padding(
+                              padding: const EdgeInsets.all(12),
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  Text('Notes',
-                                      style: theme.textTheme.labelMedium
-                                          ?.copyWith(
-                                              fontWeight: FontWeight.bold)),
-                                  const SizedBox(height: 2),
-                                  Text(
-                                    item.notes!,
-                                    style: theme.textTheme.bodySmall,
-                                    maxLines: 3,
-                                    overflow: TextOverflow.ellipsis,
+                                  Row(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      CircleAvatar(
+                                        radius: 20,
+                                        backgroundColor: isOutOfStock
+                                            ? theme.colorScheme.error
+                                                .withValues(alpha: 0.15)
+                                            : isLowStock
+                                                ? AppTheme.warning
+                                                    .withValues(alpha: 0.15)
+                                                : theme.colorScheme.primary
+                                                    .withValues(alpha: 0.15),
+                                        child: Icon(Icons.inventory_2_outlined,
+                                            color: isOutOfStock
+                                                ? theme.colorScheme.error
+                                                : isLowStock
+                                                    ? AppTheme.warning
+                                                    : theme.colorScheme.primary,
+                                            size: 20),
+                                      ),
+                                      const SizedBox(width: 10),
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Wrap(
+                                              spacing: 6,
+                                              runSpacing: 4,
+                                              crossAxisAlignment:
+                                                  WrapCrossAlignment.center,
+                                              children: [
+                                                Text(
+                                                  item.name,
+                                                  style: theme
+                                                      .textTheme.titleMedium
+                                                      ?.copyWith(
+                                                          fontWeight:
+                                                              FontWeight.bold),
+                                                ),
+                                                statusChip,
+                                                if (item.sku != null &&
+                                                    item.sku!.isNotEmpty)
+                                                  Chip(
+                                                    label: Text(
+                                                        'SKU: ${item.sku}'),
+                                                    visualDensity:
+                                                        VisualDensity.compact,
+                                                  ),
+                                                if (item.brand != null &&
+                                                    item.brand!.isNotEmpty)
+                                                  Chip(
+                                                    label: Text(
+                                                        'Brand: ${item.brand}'),
+                                                    visualDensity:
+                                                        VisualDensity.compact,
+                                                  ),
+                                              ],
+                                            ),
+                                            const SizedBox(height: 4),
+                                            Text(
+                                              item.category,
+                                              style: theme.textTheme.bodySmall
+                                                  ?.copyWith(
+                                                color: theme.colorScheme
+                                                    .onSurfaceVariant,
+                                              ),
+                                            ),
+                                            if (item.description != null &&
+                                                item.description!
+                                                    .isNotEmpty) ...[
+                                              const SizedBox(height: 4),
+                                              Text(
+                                                item.description!,
+                                                style:
+                                                    theme.textTheme.bodySmall,
+                                                maxLines: 2,
+                                                overflow: TextOverflow.ellipsis,
+                                              ),
+                                            ],
+                                          ],
+                                        ),
+                                      ),
+                                    ],
                                   ),
+                                  if (item.maxStock > 0) ...[
+                                    const SizedBox(height: 10),
+                                    Row(
+                                      children: [
+                                        Expanded(
+                                          child: ClipRRect(
+                                            borderRadius:
+                                                BorderRadius.circular(6),
+                                            child: LinearProgressIndicator(
+                                              value: (item.currentStock /
+                                                      item.maxStock)
+                                                  .clamp(0.0, 1.0),
+                                              minHeight: 8,
+                                              backgroundColor: theme.colorScheme
+                                                  .surfaceContainerHighest,
+                                              color: isOutOfStock
+                                                  ? theme.colorScheme.error
+                                                  : isLowStock
+                                                      ? AppTheme.warning
+                                                      : AppTheme.sageSuccess,
+                                            ),
+                                          ),
+                                        ),
+                                        const SizedBox(width: 8),
+                                        Text(
+                                          '${(item.currentStock / item.maxStock * 100).clamp(0.0, 999).toStringAsFixed(0)}%',
+                                          style: theme.textTheme.labelMedium
+                                              ?.copyWith(
+                                            fontWeight: FontWeight.bold,
+                                            color: isOutOfStock
+                                                ? theme.colorScheme.error
+                                                : isLowStock
+                                                    ? AppTheme.warning
+                                                    : AppTheme.sageSuccess,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ],
                                 ],
+                              ),
+                            ),
+                          ),
+                        ),
+                        _sectionLabel(context, 'STOCK LEVELS'),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            SizedBox(
+                              width: isWide
+                                  ? 180
+                                  : (constraints.maxWidth - 16) / 2,
+                              child: KpiCard(
+                                title: 'Current Stock',
+                                value:
+                                    '${item.currentStock.toStringAsFixed(2)} ${item.effectiveBaseUnit}',
+                                color: isOutOfStock
+                                    ? theme.colorScheme.error
+                                    : isLowStock
+                                        ? AppTheme.warning
+                                        : AppTheme.sageSuccess,
+                                icon: Icons.layers_outlined,
+                              ),
+                            ),
+                            SizedBox(
+                              width: isWide
+                                  ? 240
+                                  : (constraints.maxWidth - 16) / 2,
+                              child: KpiCard(
+                                title: 'Min / Reorder / Max',
+                                value:
+                                    '${item.minStock.toStringAsFixed(2)} / ${item.reorderPoint.toStringAsFixed(2)} / ${item.maxStock.toStringAsFixed(2)}',
+                                icon: Icons.trending_down_outlined,
+                                color: AppTheme.sageAccent,
+                              ),
+                            ),
+                            SizedBox(
+                              width: isWide
+                                  ? 180
+                                  : (constraints.maxWidth - 16) / 2,
+                              child: KpiCard(
+                                title: 'Safety / Lead Time',
+                                value:
+                                    '${item.safetyStock.toStringAsFixed(2)} / ${item.leadTimeDays}d',
+                                icon: Icons.security_outlined,
+                                color: Colors.deepPurpleAccent,
+                              ),
+                            ),
+                            SizedBox(
+                              width: isWide
+                                  ? 160
+                                  : (constraints.maxWidth - 16) / 2,
+                              child: KpiCard(
+                                title: 'Consumption',
+                                value: item.consumptionMode ==
+                                        ConsumptionMode.recipePending
+                                    ? 'Recipe-pending'
+                                    : 'Direct',
+                                icon: Icons.sync_alt_outlined,
+                                color: item.consumptionMode ==
+                                        ConsumptionMode.recipePending
+                                    ? AppTheme.warning
+                                    : AppTheme.sageCyan,
                               ),
                             ),
                           ],
                         ),
-                      ),
-                    ),
-                  ],
-                  _sectionLabel(context, 'STOCK MOVEMENTS'),
-                  Card(
-                    child: Padding(
-                      padding: const EdgeInsets.all(12),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              Icon(Icons.history_outlined,
-                                  size: 18, color: theme.colorScheme.primary),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: Text(
-                                  'Recent Stock Movements',
-                                  style: theme.textTheme.titleSmall
-                                      ?.copyWith(fontWeight: FontWeight.w700),
+                        _sectionLabel(context, 'COST & PRICING'),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            SizedBox(
+                              width: isWide
+                                  ? 160
+                                  : (constraints.maxWidth - 16) / 2,
+                              child: KpiCard(
+                                title: 'Unit Cost',
+                                value: _formatCurrency(item.unitCost),
+                                icon: Icons.payments_outlined,
+                                color: AppTheme.sageSuccess,
+                              ),
+                            ),
+                            SizedBox(
+                              width: isWide
+                                  ? 160
+                                  : (constraints.maxWidth - 16) / 2,
+                              child: KpiCard(
+                                title: 'Selling Price',
+                                value: _formatCurrency(item.sellingPrice),
+                                icon: Icons.sell_outlined,
+                                color: AppTheme.warning,
+                              ),
+                            ),
+                            SizedBox(
+                              width: isWide ? 240 : constraints.maxWidth,
+                              child: KpiCard(
+                                title: 'Last / Avg Cost',
+                                value:
+                                    '${_formatCurrency(item.lastPurchaseCost)} / ${_formatCurrency(item.avgCost)}',
+                                icon: Icons.calculate_outlined,
+                                color: AppTheme.sageAccent,
+                              ),
+                            ),
+                          ],
+                        ),
+                        _sectionLabel(context, 'SUPPLIER & UNITS'),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            if (item.purchaseUnit != null &&
+                                item.purchaseUnit!.isNotEmpty)
+                              SizedBox(
+                                width: isWide
+                                    ? 150
+                                    : (constraints.maxWidth - 16) / 2,
+                                child: KpiCard(
+                                  title: 'Purchase Unit',
+                                  value: item.purchaseUnit!,
+                                  icon: Icons.shopping_cart_outlined,
+                                  color: AppTheme.sageCyan,
                                 ),
                               ),
-                              if (_loadingDetails)
-                                const SizedBox(
-                                  width: 14,
-                                  height: 14,
-                                  child:
-                                      CircularProgressIndicator(strokeWidth: 2),
+                            if (item.saleUnit != null &&
+                                item.saleUnit!.isNotEmpty)
+                              SizedBox(
+                                width: isWide
+                                    ? 140
+                                    : (constraints.maxWidth - 16) / 2,
+                                child: KpiCard(
+                                  title: 'Sale Unit',
+                                  value: item.saleUnit!,
+                                  icon: Icons.local_offer_outlined,
+                                  color: AppTheme.sageAccent,
                                 ),
-                            ],
-                          ),
+                              ),
+                            SizedBox(
+                              width: isWide
+                                  ? 140
+                                  : (constraints.maxWidth - 16) / 2,
+                              child: KpiCard(
+                                title: 'Conv. Factor',
+                                value: item.conversionFactor.toString(),
+                                icon: Icons.compare_arrows_outlined,
+                                color: AppTheme.sageSuccess,
+                              ),
+                            ),
+                            SizedBox(
+                              width: isWide ? 220 : constraints.maxWidth,
+                              child: KpiCard(
+                                title: 'Supplier',
+                                value: item.supplier.isNotEmpty
+                                    ? item.supplier
+                                    : 'N/A',
+                                icon: Icons.local_shipping_outlined,
+                                color: Colors.deepPurpleAccent,
+                              ),
+                            ),
+                          ],
+                        ),
+                        if (item.notes != null && item.notes!.isNotEmpty) ...[
                           const SizedBox(height: 8),
-                          if (_movements.isEmpty && !_loadingDetails)
-                            const EmptyState(
-                              icon: Icons.history_toggle_off_outlined,
-                              title: 'No movements recorded',
-                              subtitle:
-                                  'Purchases, adjustments, and order usage will appear here.',
-                            )
-                          else
-                            ..._movements.take(8).map((movement) {
-                              final isIncrease = movement.changeBase > 0;
-                              final accent = isIncrease
-                                  ? AppTheme.sageSuccess
-                                  : theme.colorScheme.error;
-                              return Padding(
-                                padding:
-                                    const EdgeInsets.symmetric(vertical: 5),
-                                child: Row(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Icon(
-                                      isIncrease
-                                          ? Icons.arrow_upward
-                                          : Icons.arrow_downward,
-                                      size: 15,
-                                      color: accent,
+                          Card(
+                            child: Padding(
+                              padding: const EdgeInsets.all(10),
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Icon(Icons.note_outlined,
+                                      size: 18,
+                                      color:
+                                          theme.colorScheme.onSurfaceVariant),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text('Notes',
+                                            style: theme.textTheme.labelMedium
+                                                ?.copyWith(
+                                                    fontWeight:
+                                                        FontWeight.bold)),
+                                        const SizedBox(height: 2),
+                                        Text(
+                                          item.notes!,
+                                          style: theme.textTheme.bodySmall,
+                                          maxLines: 3,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ],
                                     ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ],
+                        _sectionLabel(context, 'STOCK MOVEMENTS'),
+                        Card(
+                          child: Padding(
+                            padding: const EdgeInsets.all(12),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    Icon(Icons.history_outlined,
+                                        size: 18,
+                                        color: theme.colorScheme.primary),
                                     const SizedBox(width: 8),
                                     Expanded(
-                                      child: Column(
+                                      child: Text(
+                                        'Recent Stock Movements',
+                                        style: theme.textTheme.titleSmall
+                                            ?.copyWith(
+                                                fontWeight: FontWeight.w700),
+                                      ),
+                                    ),
+                                    if (_loadingDetails)
+                                      const SizedBox(
+                                        width: 14,
+                                        height: 14,
+                                        child: CircularProgressIndicator(
+                                            strokeWidth: 2),
+                                      ),
+                                  ],
+                                ),
+                                const SizedBox(height: 8),
+                                if (_movements.isEmpty && !_loadingDetails)
+                                  const EmptyState(
+                                    icon: Icons.history_toggle_off_outlined,
+                                    title: 'No movements recorded',
+                                    subtitle:
+                                        'Purchases, adjustments, and order usage will appear here.',
+                                  )
+                                else
+                                  ..._movements.take(8).map((movement) {
+                                    final isIncrease = movement.changeBase > 0;
+                                    final accent = isIncrease
+                                        ? AppTheme.sageSuccess
+                                        : theme.colorScheme.error;
+                                    return Padding(
+                                      padding: const EdgeInsets.symmetric(
+                                          vertical: 5),
+                                      child: Row(
                                         crossAxisAlignment:
                                             CrossAxisAlignment.start,
                                         children: [
-                                          Text(
-                                            _movementLabel(movement.type),
-                                            style: const TextStyle(
-                                              fontWeight: FontWeight.w700,
+                                          Icon(
+                                            isIncrease
+                                                ? Icons.arrow_upward
+                                                : Icons.arrow_downward,
+                                            size: 15,
+                                            color: accent,
+                                          ),
+                                          const SizedBox(width: 8),
+                                          Expanded(
+                                            child: Column(
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.start,
+                                              children: [
+                                                Text(
+                                                  _movementLabel(movement.type),
+                                                  style: const TextStyle(
+                                                    fontWeight: FontWeight.w700,
+                                                  ),
+                                                ),
+                                                Text(
+                                                  '${DateFormat('MMM d, yyyy · h:mm a').format(movement.timestamp)}'
+                                                  '${movement.referenceId != null && movement.referenceId!.isNotEmpty ? ' · Ref ${movement.referenceId}' : ''}',
+                                                  style: theme
+                                                      .textTheme.bodySmall
+                                                      ?.copyWith(
+                                                    color: theme.colorScheme
+                                                        .onSurfaceVariant,
+                                                  ),
+                                                ),
+                                              ],
                                             ),
                                           ),
                                           Text(
-                                            '${DateFormat('MMM d, yyyy · h:mm a').format(movement.timestamp)}'
-                                            '${movement.referenceId != null && movement.referenceId!.isNotEmpty ? ' · Ref ${movement.referenceId}' : ''}',
+                                            '${isIncrease ? '+' : ''}${movement.changeBase.toStringAsFixed(2)} ${item.effectiveBaseUnit}',
                                             style: theme.textTheme.bodySmall
                                                 ?.copyWith(
-                                              color: theme
-                                                  .colorScheme.onSurfaceVariant,
+                                              fontWeight: FontWeight.w800,
+                                              color: accent,
                                             ),
                                           ),
                                         ],
                                       ),
-                                    ),
-                                    Text(
-                                      '${isIncrease ? '+' : ''}${movement.changeBase.toStringAsFixed(2)} ${item.effectiveBaseUnit}',
-                                      style:
-                                          theme.textTheme.bodySmall?.copyWith(
-                                        fontWeight: FontWeight.w800,
-                                        color: accent,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              );
-                            }),
-                        ],
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Card(
-                    child: Padding(
-                      padding: const EdgeInsets.all(12),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              Icon(Icons.restaurant_menu_outlined,
-                                  size: 18, color: theme.colorScheme.primary),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: Text(
-                                    'Recipe / Menu Usage (last 30 days)',
-                                    style: theme.textTheme.titleSmall?.copyWith(
-                                        fontWeight: FontWeight.w700)),
-                              ),
-                              if (_loadingUsage)
-                                const SizedBox(
-                                    width: 14,
-                                    height: 14,
-                                    child: CircularProgressIndicator(
-                                        strokeWidth: 2)),
-                            ],
-                          ),
-                          const SizedBox(height: 6),
-                          Text(
-                            'Estimated from completed orders + linked recipes. Separate from Actual COGS (stock movements).',
-                            style: theme.textTheme.bodySmall?.copyWith(
-                                color: theme.colorScheme.onSurfaceVariant),
-                          ),
-                          const SizedBox(height: 10),
-                          if (_ingredientUsage == null && !_loadingUsage)
-                            Text(
-                              item.consumptionMode ==
-                                      ConsumptionMode.recipePending
-                                  ? 'No usage found yet. Link this item in a recipe and complete menu sales to see usage.'
-                                  : 'No recipe/menu usage linked to this inventory item in the last 30 days.',
-                              style: theme.textTheme.bodySmall,
-                            )
-                          else if (_ingredientUsage != null) ...[
-                            Wrap(
-                              spacing: 8,
-                              runSpacing: 8,
-                              children: [
-                                _UsageChip(
-                                  label: 'Used qty',
-                                  value:
-                                      '${((_ingredientUsage!['usedQty'] as num?)?.toDouble() ?? 0).toStringAsFixed(2)} ${_ingredientUsage!['unit'] ?? item.effectiveBaseUnit}',
-                                ),
-                                _UsageChip(
-                                  label: 'Est. cost',
-                                  value: _formatCurrency(
-                                      (_ingredientUsage!['estimatedCost']
-                                                  as num?)
-                                              ?.toDouble() ??
-                                          0),
-                                ),
+                                    );
+                                  }),
                               ],
                             ),
-                            const SizedBox(height: 10),
-                            Text('Used by menu items',
-                                style: theme.textTheme.labelLarge
-                                    ?.copyWith(fontWeight: FontWeight.w700)),
-                            const SizedBox(height: 6),
-                            ...(((_ingredientUsage!['menuItems'] as List?) ??
-                                        const [])
-                                    .take(8))
-                                .map((m) {
-                              final name = (m['name'] ?? '').toString();
-                              final q = (m['usedQty'] as num?)?.toDouble() ?? 0;
-                              return Padding(
-                                padding:
-                                    const EdgeInsets.symmetric(vertical: 2),
-                                child: Row(
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Card(
+                          child: Padding(
+                            padding: const EdgeInsets.all(12),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
                                   children: [
-                                    Expanded(child: Text(name)),
-                                    Text(
-                                        '${q.toStringAsFixed(2)} ${_ingredientUsage!['unit'] ?? ''}',
-                                        style: const TextStyle(
-                                            fontWeight: FontWeight.w600)),
+                                    Icon(Icons.restaurant_menu_outlined,
+                                        size: 18,
+                                        color: theme.colorScheme.primary),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: Text(
+                                          'Recipe / Menu Usage (last 30 days)',
+                                          style: theme.textTheme.titleSmall
+                                              ?.copyWith(
+                                                  fontWeight: FontWeight.w700)),
+                                    ),
+                                    if (_loadingUsage)
+                                      const SizedBox(
+                                          width: 14,
+                                          height: 14,
+                                          child: CircularProgressIndicator(
+                                              strokeWidth: 2)),
                                   ],
                                 ),
-                              );
-                            }),
-                          ],
-                        ],
-                      ),
+                                const SizedBox(height: 6),
+                                Text(
+                                  'Estimated from completed orders + linked recipes. Separate from Actual COGS (stock movements).',
+                                  style: theme.textTheme.bodySmall?.copyWith(
+                                      color:
+                                          theme.colorScheme.onSurfaceVariant),
+                                ),
+                                const SizedBox(height: 10),
+                                if (_ingredientUsage == null && !_loadingUsage)
+                                  Text(
+                                    item.consumptionMode ==
+                                            ConsumptionMode.recipePending
+                                        ? 'No usage found yet. Link this item in a recipe and complete menu sales to see usage.'
+                                        : 'No recipe/menu usage linked to this inventory item in the last 30 days.',
+                                    style: theme.textTheme.bodySmall,
+                                  )
+                                else if (_ingredientUsage != null) ...[
+                                  Wrap(
+                                    spacing: 8,
+                                    runSpacing: 8,
+                                    children: [
+                                      _UsageChip(
+                                        label: 'Used qty',
+                                        value:
+                                            '${((_ingredientUsage!['usedQty'] as num?)?.toDouble() ?? 0).toStringAsFixed(2)} ${_ingredientUsage!['unit'] ?? item.effectiveBaseUnit}',
+                                      ),
+                                      _UsageChip(
+                                        label: 'Est. cost',
+                                        value: _formatCurrency(
+                                            (_ingredientUsage!['estimatedCost']
+                                                        as num?)
+                                                    ?.toDouble() ??
+                                                0),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 10),
+                                  Text('Used by menu items',
+                                      style: theme.textTheme.labelLarge
+                                          ?.copyWith(
+                                              fontWeight: FontWeight.w700)),
+                                  const SizedBox(height: 6),
+                                  ...(((_ingredientUsage!['menuItems']
+                                                  as List?) ??
+                                              const [])
+                                          .take(8))
+                                      .map((m) {
+                                    final name = (m['name'] ?? '').toString();
+                                    final q =
+                                        (m['usedQty'] as num?)?.toDouble() ?? 0;
+                                    return Padding(
+                                      padding: const EdgeInsets.symmetric(
+                                          vertical: 2),
+                                      child: Row(
+                                        children: [
+                                          Expanded(child: Text(name)),
+                                          Text(
+                                              '${q.toStringAsFixed(2)} ${_ingredientUsage!['unit'] ?? ''}',
+                                              style: const TextStyle(
+                                                  fontWeight: FontWeight.w600)),
+                                        ],
+                                      ),
+                                    );
+                                  }),
+                                ],
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
-                  ),
-                ],
+                  );
+                },
               ),
-            );
-          },
-        ),
       ),
     );
   }

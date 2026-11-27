@@ -14,6 +14,7 @@ import '../services/notification_trigger_manager.dart';
 import '../theme.dart';
 import '../utils/notification_visibility.dart';
 import '../widgets/sage_header_button.dart';
+import '../widgets/skeleton_loaders.dart';
 import '../widgets/smart_eat_header.dart';
 import 'admin_tab_index.dart';
 import 'dashboard_screen.dart';
@@ -427,18 +428,16 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                 color: AppTheme.sageAccent,
               ),
             Expanded(
-              child: _isProfileLoading
-                  ? const Center(child: CircularProgressIndicator())
+              child: _isProfileLoading || (_isLoading && !_hasLoaded)
+                  ? const SkeletonNotifications()
                   : _error != null
                       ? _buildErrorState(_error)
-                      : (_isLoading && !_hasLoaded)
-                          ? const Center(child: CircularProgressIndicator())
-                          : filtered.isEmpty
-                              ? _buildEmptyState(
-                                  filteredBy: _filter,
-                                  hasAny: visible.isNotEmpty,
-                                )
-                              : _buildNotificationList(filtered),
+                      : filtered.isEmpty
+                          ? _buildEmptyState(
+                              filteredBy: _filter,
+                              hasAny: visible.isNotEmpty,
+                            )
+                          : _buildNotificationList(filtered),
             ),
           ],
         ),
@@ -624,12 +623,10 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                 _updatePreference(notification, removed: true);
                 break;
               case 'pin':
-                _updatePreference(notification,
-                    pinned: !notification.pinned);
+                _updatePreference(notification, pinned: !notification.pinned);
                 break;
               case 'ignore':
-                _updatePreference(notification,
-                    ignored: !notification.ignored);
+                _updatePreference(notification, ignored: !notification.ignored);
                 break;
             }
           },
@@ -790,8 +787,8 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       case 'inventory':
       case 'low_stock':
       case 'out_of_stock':
-        destination = const DashboardScreen(
-            initialTabIndex: AdminTabIndex.inventory);
+        destination =
+            const DashboardScreen(initialTabIndex: AdminTabIndex.inventory);
         break;
       case 'finance':
       case 'payables':

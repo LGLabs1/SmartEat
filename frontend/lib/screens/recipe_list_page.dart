@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../services/firebase_service.dart';
 import '../theme.dart';
 import '../widgets/responsive_search_field.dart';
+import '../widgets/skeleton_loaders.dart';
 import 'recipe_editor_page.dart';
 
 class RecipeListPage extends StatefulWidget {
@@ -18,6 +19,7 @@ class _RecipeListPageState extends State<RecipeListPage> {
   List<Map<String, dynamic>> _recipes = const [];
   List<Map<String, dynamic>> _menuItems = const [];
   bool _isLoading = true;
+  bool _hasLoaded = false;
   String _query = '';
 
   @override
@@ -38,6 +40,7 @@ class _RecipeListPageState extends State<RecipeListPage> {
         _recipes = List<Map<String, dynamic>>.from(results[0]);
         _menuItems = List<Map<String, dynamic>>.from(results[1]);
         _isLoading = false;
+        _hasLoaded = true;
       });
     } catch (e) {
       if (!mounted) return;
@@ -110,8 +113,8 @@ class _RecipeListPageState extends State<RecipeListPage> {
 
   @override
   Widget build(BuildContext context) {
-    final body = _isLoading
-        ? const Center(child: CircularProgressIndicator())
+    final body = _isLoading && !_hasLoaded
+        ? const SkeletonRecipeList()
         : RefreshIndicator(
             onRefresh: _load,
             child: ListView(
@@ -122,6 +125,7 @@ class _RecipeListPageState extends State<RecipeListPage> {
                 widget.embedded ? 96 : 24,
               ),
               children: [
+                if (_isLoading) const LinearProgressIndicator(minHeight: 2),
                 _buildHero(context),
                 const SizedBox(height: 14),
                 _buildSearch(context),

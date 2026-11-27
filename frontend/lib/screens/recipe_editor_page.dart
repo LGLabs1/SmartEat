@@ -6,6 +6,7 @@ import '../features/inventory/domain/services/unit_conversion.dart';
 import '../services/firebase_service.dart';
 import '../theme.dart';
 import '../widgets/dashboard/section_card.dart';
+import '../widgets/skeleton_loaders.dart';
 
 class RecipeEditorPage extends StatefulWidget {
   final Map<String, dynamic>? recipe;
@@ -25,6 +26,7 @@ class _RecipeEditorPageState extends State<RecipeEditorPage> {
   List<Map<String, dynamic>> _menuItems = [];
   List<String> _selectedMenuItemIds = [];
   bool _isLoading = false;
+  bool _hasLoaded = false;
   bool _isSaving = false;
   String _menuSearch = '';
 
@@ -68,6 +70,7 @@ class _RecipeEditorPageState extends State<RecipeEditorPage> {
         _inventoryItems = List<Map<String, dynamic>>.from(inventory);
         _menuItems = List<Map<String, dynamic>>.from(menu);
         _isLoading = false;
+        _hasLoaded = true;
       });
     } catch (_) {
       if (mounted) setState(() => _isLoading = false);
@@ -353,173 +356,187 @@ class _RecipeEditorPageState extends State<RecipeEditorPage> {
               colors: [AppTheme.sageNavy, AppTheme.sagePanel],
             ),
           ),
-          child: _isLoading
-              ? const Center(child: CircularProgressIndicator())
-              : Form(
-                  key: _formKey,
-                  child: LayoutBuilder(
-                    builder: (context, constraints) {
-                      final wide = constraints.maxWidth >= 980;
-                      final content = [
-                        _sectionCard(
-                          title: 'Recipe details',
-                          icon: Icons.edit_note_rounded,
-                          child: Column(
-                            children: [
-                              TextFormField(
-                                controller: _nameController,
-                                decoration: const InputDecoration(
-                                  labelText: 'Recipe name *',
-                                  prefixIcon: Icon(Icons.restaurant_outlined),
-                                ),
-                                validator: (v) => v == null || v.trim().isEmpty
-                                    ? 'Required'
-                                    : null,
-                              ),
-                              const SizedBox(height: 12),
-                              TextFormField(
-                                controller: _descController,
-                                decoration: const InputDecoration(
-                                  labelText: 'Description',
-                                  prefixIcon: Icon(Icons.notes_outlined),
-                                ),
-                                maxLines: 2,
-                              ),
-                              const SizedBox(height: 12),
-                              Container(
-                                width: double.infinity,
-                                padding: const EdgeInsets.all(12),
-                                decoration: BoxDecoration(
-                                  color:
-                                      AppTheme.sageBlue.withValues(alpha: .1),
-                                  borderRadius: BorderRadius.circular(12),
-                                  border: Border.all(
-                                    color: AppTheme.sageBlue
-                                        .withValues(alpha: .22),
-                                  ),
-                                ),
-                                child: Row(
+          child: Column(
+            children: [
+              if (_isLoading && _hasLoaded)
+                const LinearProgressIndicator(minHeight: 2),
+              Expanded(
+                child: _isLoading && !_hasLoaded
+                    ? const SkeletonRecipeList()
+                    : Form(
+                        key: _formKey,
+                        child: LayoutBuilder(
+                          builder: (context, constraints) {
+                            final wide = constraints.maxWidth >= 980;
+                            final content = [
+                              _sectionCard(
+                                title: 'Recipe details',
+                                icon: Icons.edit_note_rounded,
+                                child: Column(
                                   children: [
-                                    const Icon(Icons.percent_rounded,
-                                        size: 18, color: AppTheme.sageCyan),
-                                    const SizedBox(width: 10),
-                                    Expanded(
-                                      child: Text(
-                                        'Quantities and costs are for one serving. SmartEat multiplies by ordered quantity when the order is completed.',
-                                        style: TextStyle(
-                                          fontSize: 12,
-                                          color: scheme.onSurfaceVariant,
+                                    TextFormField(
+                                      controller: _nameController,
+                                      decoration: const InputDecoration(
+                                        labelText: 'Recipe name *',
+                                        prefixIcon:
+                                            Icon(Icons.restaurant_outlined),
+                                      ),
+                                      validator: (v) =>
+                                          v == null || v.trim().isEmpty
+                                              ? 'Required'
+                                              : null,
+                                    ),
+                                    const SizedBox(height: 12),
+                                    TextFormField(
+                                      controller: _descController,
+                                      decoration: const InputDecoration(
+                                        labelText: 'Description',
+                                        prefixIcon: Icon(Icons.notes_outlined),
+                                      ),
+                                      maxLines: 2,
+                                    ),
+                                    const SizedBox(height: 12),
+                                    Container(
+                                      width: double.infinity,
+                                      padding: const EdgeInsets.all(12),
+                                      decoration: BoxDecoration(
+                                        color: AppTheme.sageBlue
+                                            .withValues(alpha: .1),
+                                        borderRadius: BorderRadius.circular(12),
+                                        border: Border.all(
+                                          color: AppTheme.sageBlue
+                                              .withValues(alpha: .22),
                                         ),
+                                      ),
+                                      child: Row(
+                                        children: [
+                                          const Icon(Icons.percent_rounded,
+                                              size: 18,
+                                              color: AppTheme.sageCyan),
+                                          const SizedBox(width: 10),
+                                          Expanded(
+                                            child: Text(
+                                              'Quantities and costs are for one serving. SmartEat multiplies by ordered quantity when the order is completed.',
+                                              style: TextStyle(
+                                                fontSize: 12,
+                                                color: scheme.onSurfaceVariant,
+                                              ),
+                                            ),
+                                          ),
+                                        ],
                                       ),
                                     ),
                                   ],
                                 ),
                               ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(height: 14),
-                        _sectionCard(
-                          title: 'Ingredients',
-                          icon: Icons.inventory_2_outlined,
-                          trailing: Wrap(
-                            spacing: 6,
-                            runSpacing: 6,
-                            children: [
-                              OutlinedButton.icon(
-                                onPressed: _addFromInventory,
-                                icon: const Icon(Icons.search, size: 16),
-                                label: const Text('From inventory'),
-                              ),
-                              FilledButton.tonalIcon(
-                                onPressed: _createNewItem,
-                                icon: const Icon(Icons.add, size: 16),
-                                label: const Text('New item'),
-                              ),
-                            ],
-                          ),
-                          child: _ingredients.isEmpty
-                              ? _emptyIngredients(scheme)
-                              : Column(
+                              const SizedBox(height: 14),
+                              _sectionCard(
+                                title: 'Ingredients',
+                                icon: Icons.inventory_2_outlined,
+                                trailing: Wrap(
+                                  spacing: 6,
+                                  runSpacing: 6,
                                   children: [
-                                    for (int i = 0;
-                                        i < _ingredients.length;
-                                        i++)
-                                      _IngredientRow(
-                                        key: ValueKey(
-                                            '${_ingredients[i]['inventoryItemId'] ?? _ingredients[i]['name']}_$i'),
-                                        ingredient: _ingredients[i],
-                                        onChanged: _recomputeCost,
-                                        onUnitChanged: (unit) =>
-                                            _changeIngredientUnit(
-                                                _ingredients[i], unit),
-                                        onRemove: () {
-                                          setState(
-                                              () => _ingredients.removeAt(i));
-                                          _recomputeCost();
-                                        },
-                                      ),
+                                    OutlinedButton.icon(
+                                      onPressed: _addFromInventory,
+                                      icon: const Icon(Icons.search, size: 16),
+                                      label: const Text('From inventory'),
+                                    ),
+                                    FilledButton.tonalIcon(
+                                      onPressed: _createNewItem,
+                                      icon: const Icon(Icons.add, size: 16),
+                                      label: const Text('New item'),
+                                    ),
                                   ],
                                 ),
+                                child: _ingredients.isEmpty
+                                    ? _emptyIngredients(scheme)
+                                    : Column(
+                                        children: [
+                                          for (int i = 0;
+                                              i < _ingredients.length;
+                                              i++)
+                                            _IngredientRow(
+                                              key: ValueKey(
+                                                  '${_ingredients[i]['inventoryItemId'] ?? _ingredients[i]['name']}_$i'),
+                                              ingredient: _ingredients[i],
+                                              onChanged: _recomputeCost,
+                                              onUnitChanged: (unit) =>
+                                                  _changeIngredientUnit(
+                                                      _ingredients[i], unit),
+                                              onRemove: () {
+                                                setState(() =>
+                                                    _ingredients.removeAt(i));
+                                                _recomputeCost();
+                                              },
+                                            ),
+                                        ],
+                                      ),
+                              ),
+                              const SizedBox(height: 14),
+                              _buildLinkCard(scheme),
+                            ];
+                            final side = [
+                              _buildCostCard(scheme),
+                              const SizedBox(height: 14),
+                              _sectionCard(
+                                title: 'Inventory & menu',
+                                icon: Icons.link_outlined,
+                                child: const Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    _HintRow(
+                                      icon: Icons.inventory_2_outlined,
+                                      text:
+                                          'Unit cost comes from inventory and converts between compatible mass or volume units.',
+                                    ),
+                                    SizedBox(height: 8),
+                                    _HintRow(
+                                      icon: Icons.pending_actions_outlined,
+                                      text:
+                                          'Stock is deducted only when an order is completed, never when it is created.',
+                                    ),
+                                    SizedBox(height: 8),
+                                    _HintRow(
+                                      icon: Icons.restaurant_menu_outlined,
+                                      text:
+                                          'A menu item uses either this recipe or a direct inventory link, never both.',
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ];
+                            return SingleChildScrollView(
+                              padding:
+                                  const EdgeInsets.fromLTRB(16, 12, 16, 24),
+                              child: wide
+                                  ? Row(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Expanded(
+                                            flex: 7,
+                                            child: Column(children: content)),
+                                        const SizedBox(width: 14),
+                                        Expanded(
+                                            flex: 4,
+                                            child: Column(children: side)),
+                                      ],
+                                    )
+                                  : Column(
+                                      children: [
+                                        ...content,
+                                        const SizedBox(height: 14),
+                                        ...side,
+                                      ],
+                                    ),
+                            );
+                          },
                         ),
-                        const SizedBox(height: 14),
-                        _buildLinkCard(scheme),
-                      ];
-                      final side = [
-                        _buildCostCard(scheme),
-                        const SizedBox(height: 14),
-                        _sectionCard(
-                          title: 'Inventory & menu',
-                          icon: Icons.link_outlined,
-                          child: const Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              _HintRow(
-                                icon: Icons.inventory_2_outlined,
-                                text:
-                                    'Unit cost comes from inventory and converts between compatible mass or volume units.',
-                              ),
-                              SizedBox(height: 8),
-                              _HintRow(
-                                icon: Icons.pending_actions_outlined,
-                                text:
-                                    'Stock is deducted only when an order is completed, never when it is created.',
-                              ),
-                              SizedBox(height: 8),
-                              _HintRow(
-                                icon: Icons.restaurant_menu_outlined,
-                                text:
-                                    'A menu item uses either this recipe or a direct inventory link, never both.',
-                              ),
-                            ],
-                          ),
-                        ),
-                      ];
-                      return SingleChildScrollView(
-                        padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
-                        child: wide
-                            ? Row(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Expanded(
-                                      flex: 7,
-                                      child: Column(children: content)),
-                                  const SizedBox(width: 14),
-                                  Expanded(
-                                      flex: 4, child: Column(children: side)),
-                                ],
-                              )
-                            : Column(
-                                children: [
-                                  ...content,
-                                  const SizedBox(height: 14),
-                                  ...side,
-                                ],
-                              ),
-                      );
-                    },
-                  ),
-                ),
+                      ),
+              ),
+            ],
+          ),
         ),
       ),
     );

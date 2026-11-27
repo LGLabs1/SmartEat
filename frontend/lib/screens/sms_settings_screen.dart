@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../services/auth_provider.dart';
 import '../services/sms_settings_service.dart';
 import '../widgets/sage_header_button.dart';
+import '../widgets/skeleton_loaders.dart';
 import '../widgets/smart_eat_header.dart';
 
 class SmsSettingsScreen extends StatefulWidget {
@@ -187,7 +188,7 @@ class _SmsSettingsScreenState extends State<SmsSettingsScreen> {
         actions: const [SageHeaderButton(), SizedBox(width: 8)],
       ),
       body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
+          ? const SkeletonSettings()
           : _error != null
               ? _buildError()
               : ListView(
@@ -338,8 +339,8 @@ class _SmsSettingsScreenState extends State<SmsSettingsScreen> {
           const Divider(height: 1),
           SwitchListTile(
             title: const Text('Daily Sales Summary'),
-            subtitle: const Text(
-                'Sent once at 12:00 AM Manila for the previous day'),
+            subtitle:
+                const Text('Sent once at 12:00 AM Manila for the previous day'),
             value: _settings.dailySummaryEnabled,
             onChanged: enabled
                 ? (value) =>

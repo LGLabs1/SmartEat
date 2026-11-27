@@ -41,6 +41,9 @@ class _POSScreenState extends State<POSScreen> {
   List<Map<String, dynamic>> _menuItems = [];
   List<Map<String, dynamic>> _recipes = const [];
   bool _isLoading = false;
+  List<Map<String, dynamic>>? _lastMenuSnapshotData;
+  Map<String, dynamic>? _lastInventorySnapshotData;
+  bool _hasLoadedMenu = false;
   double _totalAmount = 0.0;
   bool _isAdmin = false;
   String? _lastRoleUid;
@@ -1309,15 +1312,33 @@ class _POSScreenState extends State<POSScreen> {
         return FutureBuilder<Map<String, dynamic>>(
           future: _inventoryFuture,
           builder: (context, inventorySnapshot) {
-            final isLoading =
-                !menuSnapshot.hasData || !inventorySnapshot.hasData;
-            final menuItems = menuSnapshot.data ?? [];
-            final inventoryItems = inventorySnapshot.hasData
+            final menuData = menuSnapshot.data;
+            final inventoryData = inventorySnapshot.hasData
+                ? inventorySnapshot.data
+                : _lastInventorySnapshotData;
+            final menuChanged =
+                menuData != null && !identical(menuData, _lastMenuSnapshotData);
+            final inventoryChanged = inventorySnapshot.hasData &&
+                !identical(inventorySnapshot.data, _lastInventorySnapshotData);
+            if (menuChanged) _lastMenuSnapshotData = menuData;
+            if (inventoryChanged) {
+              _lastInventorySnapshotData = inventorySnapshot.data;
+            }
+            final inventoryItems = inventoryData != null
                 ? List<Map<String, dynamic>>.from(
-                    inventorySnapshot.data!['data'] ?? const [])
+                    inventoryData['data'] ?? const [])
                 : <Map<String, dynamic>>[];
-
-            _menuItems = _processMenuItems(menuItems, inventoryItems);
+            if (menuChanged || inventoryChanged) {
+              _menuItems = _processMenuItems(
+                menuData ?? _lastMenuSnapshotData ?? const [],
+                inventoryItems,
+              );
+            }
+            if (_lastMenuSnapshotData != null &&
+                _lastInventorySnapshotData != null) {
+              _hasLoadedMenu = true;
+            }
+            final showInitialSkeleton = !_hasLoadedMenu;
 
             return LayoutBuilder(
               builder: (context, constraints) {
@@ -1543,154 +1564,179 @@ class _POSScreenState extends State<POSScreen> {
                           ),
                         )
                       : null,
-                  body: isCompact
-                      ? Column(
-                          children: [
-                            _buildInlineErrorBanner(),
-                            _buildCategoryChips(),
-                            Expanded(
-                              child: isLoading
-                                  ? SkeletonPOS(
-                                      crossAxisCount: crossAxisCount,
-                                      childAspectRatio: childAspectRatio,
-                                      isCompact: isCompact,
-                                    )
-                                  : (_selectedCategory == 'All'
-                                      ? _buildMenuByCategory(
-                                          items: filteredMenuItems,
+                  body: Stack(
+                    children: [
+                      isCompact
+                          ? Column(
+                              children: [
+                                _buildInlineErrorBanner(),
+                                _buildCategoryChips(),
+                                Expanded(
+                                  child: showInitialSkeleton
+                                      ? SkeletonPOS(
                                           crossAxisCount: crossAxisCount,
                                           childAspectRatio: childAspectRatio,
+                                          isCompact: isCompact,
                                         )
-                                      : GridView.builder(
-                                          padding: const EdgeInsets.all(12),
-                                          gridDelegate:
-                                              SliverGridDelegateWithFixedCrossAxisCount(
-                                            crossAxisCount: crossAxisCount,
-                                            childAspectRatio: childAspectRatio,
-                                            crossAxisSpacing: 12,
-                                            mainAxisSpacing: 12,
-                                          ),
-                                          itemCount: filteredMenuItems.length,
-                                          itemBuilder: (context, index) {
-                                            final item =
-                                                filteredMenuItems[index];
-                                            final id = (item['id'] ?? '')
-                                                .toString()
-                                                .trim();
-                                            final qty =
-                                                id.isEmpty ? 0 : _qtyInCart(id);
-                                            return _MenuItemCard(
-                                              item: item,
-                                              quantityInCart: qty,
-                                              onIncrement: () =>
-                                                  _setQtyForItem(item, qty + 1),
-                                              onDecrement: () =>
-                                                  _setQtyForItem(item, qty - 1),
-                                            );
-                                          },
-                                        )),
-                            ),
-                          ],
-                        )
-                      : Row(
-                          children: [
-                            Expanded(
-                              flex: 3,
-                              child: Column(
-                                children: [
-                                  _buildInlineErrorBanner(),
-                                  _buildCategoryChips(),
-                                  Expanded(
-                                    child: isLoading
-                                        ? SkeletonPOS(
-                                            crossAxisCount: crossAxisCount,
-                                            childAspectRatio: childAspectRatio,
-                                            isCompact: isCompact,
-                                          )
-                                        : (_selectedCategory == 'All'
-                                            ? _buildMenuByCategory(
-                                                items: filteredMenuItems,
+                                      : (_selectedCategory == 'All'
+                                          ? _buildMenuByCategory(
+                                              items: filteredMenuItems,
+                                              crossAxisCount: crossAxisCount,
+                                              childAspectRatio:
+                                                  childAspectRatio,
+                                            )
+                                          : GridView.builder(
+                                              padding: const EdgeInsets.all(12),
+                                              gridDelegate:
+                                                  SliverGridDelegateWithFixedCrossAxisCount(
                                                 crossAxisCount: crossAxisCount,
                                                 childAspectRatio:
                                                     childAspectRatio,
-                                              )
-                                            : GridView.builder(
-                                                padding:
-                                                    const EdgeInsets.all(12),
-                                                gridDelegate:
-                                                    SliverGridDelegateWithFixedCrossAxisCount(
-                                                  crossAxisCount:
-                                                      crossAxisCount,
-                                                  childAspectRatio:
-                                                      childAspectRatio,
-                                                  crossAxisSpacing: 12,
-                                                  mainAxisSpacing: 12,
-                                                ),
-                                                itemCount:
-                                                    filteredMenuItems.length,
-                                                itemBuilder: (context, index) {
-                                                  final item =
-                                                      filteredMenuItems[index];
-                                                  final id = (item['id'] ?? '')
-                                                      .toString()
-                                                      .trim();
-                                                  final qty = id.isEmpty
-                                                      ? 0
-                                                      : _qtyInCart(id);
-                                                  return _MenuItemCard(
-                                                    item: item,
-                                                    quantityInCart: qty,
-                                                    onIncrement: () =>
-                                                        _setQtyForItem(
-                                                            item, qty + 1),
-                                                    onDecrement: () =>
-                                                        _setQtyForItem(
-                                                            item, qty - 1),
-                                                  );
-                                                },
-                                              )),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            SizedBox(
-                              width: width >= 1200 ? 420 : 360,
-                              child: Padding(
-                                padding:
-                                    const EdgeInsets.fromLTRB(0, 16, 16, 16),
-                                child: _CartPanel(
-                                  cartItems: _cartItems,
-                                  totalAmount: _totalAmount,
-                                  isLoading: isLoading,
-                                  successMessage: _cartSuccessMessage,
-                                  errorMessage: _inlineErrorMessage,
-                                  onDismissError: _clearInlineError,
-                                  isAddToExistingOrder: _addToExistingOrder,
-                                  orderId: _addToExistingOrder
-                                      ? _targetPendingOrderId
-                                      : _newOrderTempId,
-                                  isNewOrder: !_addToExistingOrder,
-                                  baselineQtyByMenuId: _baselineQtyByMenuId,
-                                  showReceiptToggle: _showReceiptToggle,
-                                  printerAvailable:
-                                      _printerAvailability.available,
-                                  printerMessage: _printerAvailability.message,
-                                  printReceipt: _printReceipt,
-                                  onPrintReceiptChanged: _setPrintReceipt,
-                                  onQuantityChanged: (index, qty) =>
-                                      _updateQuantity(index, qty),
-                                  onRemove: (index) => _removeFromCart(index),
-                                  onCreateOrder: () => _createOrder(),
-                                  onCompleteOrder: _completeWithPayment,
-                                  onClearCart: _clearCart,
-                                  actionLabel: _addToExistingOrder
-                                      ? 'Add Items'
-                                      : 'Create Order',
+                                                crossAxisSpacing: 12,
+                                                mainAxisSpacing: 12,
+                                              ),
+                                              itemCount:
+                                                  filteredMenuItems.length,
+                                              itemBuilder: (context, index) {
+                                                final item =
+                                                    filteredMenuItems[index];
+                                                final id = (item['id'] ?? '')
+                                                    .toString()
+                                                    .trim();
+                                                final qty = id.isEmpty
+                                                    ? 0
+                                                    : _qtyInCart(id);
+                                                return _MenuItemCard(
+                                                  item: item,
+                                                  quantityInCart: qty,
+                                                  onIncrement: () =>
+                                                      _setQtyForItem(
+                                                          item, qty + 1),
+                                                  onDecrement: () =>
+                                                      _setQtyForItem(
+                                                          item, qty - 1),
+                                                );
+                                              },
+                                            )),
                                 ),
-                              ),
+                              ],
+                            )
+                          : Row(
+                              children: [
+                                Expanded(
+                                  flex: 3,
+                                  child: Column(
+                                    children: [
+                                      _buildInlineErrorBanner(),
+                                      _buildCategoryChips(),
+                                      Expanded(
+                                        child: showInitialSkeleton
+                                            ? SkeletonPOS(
+                                                crossAxisCount: crossAxisCount,
+                                                childAspectRatio:
+                                                    childAspectRatio,
+                                                isCompact: isCompact,
+                                              )
+                                            : (_selectedCategory == 'All'
+                                                ? _buildMenuByCategory(
+                                                    items: filteredMenuItems,
+                                                    crossAxisCount:
+                                                        crossAxisCount,
+                                                    childAspectRatio:
+                                                        childAspectRatio,
+                                                  )
+                                                : GridView.builder(
+                                                    padding:
+                                                        const EdgeInsets.all(
+                                                            12),
+                                                    gridDelegate:
+                                                        SliverGridDelegateWithFixedCrossAxisCount(
+                                                      crossAxisCount:
+                                                          crossAxisCount,
+                                                      childAspectRatio:
+                                                          childAspectRatio,
+                                                      crossAxisSpacing: 12,
+                                                      mainAxisSpacing: 12,
+                                                    ),
+                                                    itemCount: filteredMenuItems
+                                                        .length,
+                                                    itemBuilder:
+                                                        (context, index) {
+                                                      final item =
+                                                          filteredMenuItems[
+                                                              index];
+                                                      final id =
+                                                          (item['id'] ?? '')
+                                                              .toString()
+                                                              .trim();
+                                                      final qty = id.isEmpty
+                                                          ? 0
+                                                          : _qtyInCart(id);
+                                                      return _MenuItemCard(
+                                                        item: item,
+                                                        quantityInCart: qty,
+                                                        onIncrement: () =>
+                                                            _setQtyForItem(
+                                                                item, qty + 1),
+                                                        onDecrement: () =>
+                                                            _setQtyForItem(
+                                                                item, qty - 1),
+                                                      );
+                                                    },
+                                                  )),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                SizedBox(
+                                  width: width >= 1200 ? 420 : 360,
+                                  child: Padding(
+                                    padding: const EdgeInsets.fromLTRB(
+                                        0, 16, 16, 16),
+                                    child: _CartPanel(
+                                      cartItems: _cartItems,
+                                      totalAmount: _totalAmount,
+                                      isLoading: showInitialSkeleton,
+                                      successMessage: _cartSuccessMessage,
+                                      errorMessage: _inlineErrorMessage,
+                                      onDismissError: _clearInlineError,
+                                      isAddToExistingOrder: _addToExistingOrder,
+                                      orderId: _addToExistingOrder
+                                          ? _targetPendingOrderId
+                                          : _newOrderTempId,
+                                      isNewOrder: !_addToExistingOrder,
+                                      baselineQtyByMenuId: _baselineQtyByMenuId,
+                                      showReceiptToggle: _showReceiptToggle,
+                                      printerAvailable:
+                                          _printerAvailability.available,
+                                      printerMessage:
+                                          _printerAvailability.message,
+                                      printReceipt: _printReceipt,
+                                      onPrintReceiptChanged: _setPrintReceipt,
+                                      onQuantityChanged: (index, qty) =>
+                                          _updateQuantity(index, qty),
+                                      onRemove: (index) =>
+                                          _removeFromCart(index),
+                                      onCreateOrder: () => _createOrder(),
+                                      onCompleteOrder: _completeWithPayment,
+                                      onClearCart: _clearCart,
+                                      actionLabel: _addToExistingOrder
+                                          ? 'Add Items'
+                                          : 'Create Order',
+                                    ),
+                                  ),
+                                ),
+                              ],
                             ),
-                          ],
+                      if (_isLoading && !showInitialSkeleton)
+                        const Positioned(
+                          top: 0,
+                          left: 0,
+                          right: 0,
+                          child: LinearProgressIndicator(minHeight: 2),
                         ),
+                    ],
+                  ),
                 );
               },
             );

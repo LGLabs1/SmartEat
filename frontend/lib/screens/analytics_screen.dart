@@ -11,6 +11,7 @@ import '../widgets/admin/admin_bottom_tabs.dart';
 import '../widgets/dashboard/dashboard_back_handler.dart';
 import '../widgets/feature_tab_header.dart';
 import '../widgets/period/period_navigator.dart';
+import '../widgets/skeleton_loaders.dart';
 
 Widget analyticsCompactTabIcon(
   IconData icon,
@@ -562,71 +563,80 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
           : null,
       body: RefreshIndicator(
         onRefresh: _loadAnalyticsData,
-        child: _isLoading
-            ? const Center(child: CircularProgressIndicator())
-            : Column(
-                children: [
-                  FeatureTabHeader(
-                    title: 'Analytics',
-                    tabs: const [
-                      FeatureTabItem(
-                          label: 'Sales', icon: Icons.show_chart_outlined),
-                      FeatureTabItem(
-                          label: 'Insights', icon: Icons.insights_outlined),
-                      FeatureTabItem(
-                          label: 'Forecast', icon: Icons.auto_graph_outlined),
-                      FeatureTabItem(
-                          label: 'Finance', icon: Icons.payments_outlined),
-                    ],
-                    selectedIndex: _tabController.index,
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 6),
-                    child: LayoutBuilder(
-                      builder: (context, constraints) {
-                        final isWide = constraints.maxWidth >= 800;
+        child: Column(
+          children: [
+            FeatureTabHeader(
+              title: 'Analytics',
+              tabs: const [
+                FeatureTabItem(label: 'Sales', icon: Icons.show_chart_outlined),
+                FeatureTabItem(
+                    label: 'Insights', icon: Icons.insights_outlined),
+                FeatureTabItem(
+                    label: 'Forecast', icon: Icons.auto_graph_outlined),
+                FeatureTabItem(label: 'Finance', icon: Icons.payments_outlined),
+              ],
+              selectedIndex: _tabController.index,
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 6),
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final isWide = constraints.maxWidth >= 800;
 
-                        if (isWide) {
-                          return Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              _buildMonthSlicer(),
-                              const SizedBox(width: 10),
-                              Expanded(child: _buildCompactKpiRow()),
-                            ],
-                          );
-                        } else {
-                          return Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                children: [
-                                  _buildMonthSlicer(),
-                                  const SizedBox(width: 10),
-                                ],
-                              ),
-                              const SizedBox(height: 8),
-                              _buildCompactKpiRow(),
-                            ],
-                          );
-                        }
-                      },
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Expanded(
-                    child: TabBarView(
-                      controller: _tabController,
+                  if (isWide) {
+                    return Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        _buildSalesTab(),
-                        _buildItemsInsightsTab(),
-                        _buildForecastTab(),
-                        _buildFinanceTab(),
+                        _buildMonthSlicer(),
+                        const SizedBox(width: 10),
+                        Expanded(child: _buildCompactKpiRow()),
+                      ],
+                    );
+                  } else {
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            _buildMonthSlicer(),
+                            const SizedBox(width: 10),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        _buildCompactKpiRow(),
+                      ],
+                    );
+                  }
+                },
+              ),
+            ),
+            const SizedBox(height: 6),
+            Expanded(
+              child: _isLoading && _summaryStats == null
+                  ? const SkeletonAnalytics()
+                  : Stack(
+                      children: [
+                        TabBarView(
+                          controller: _tabController,
+                          children: [
+                            _buildSalesTab(),
+                            _buildItemsInsightsTab(),
+                            _buildForecastTab(),
+                            _buildFinanceTab(),
+                          ],
+                        ),
+                        if (_isLoading)
+                          const Positioned(
+                            top: 0,
+                            left: 0,
+                            right: 0,
+                            child: LinearProgressIndicator(minHeight: 2),
+                          ),
                       ],
                     ),
-                  ),
-                ],
-              ),
+            ),
+          ],
+        ),
       ),
       bottomNavigationBar: AdminBottomTabs(
         tabs: const [

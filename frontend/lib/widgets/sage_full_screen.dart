@@ -117,15 +117,16 @@ class _SageFullScreenState extends State<SageFullScreen> {
                     fontWeight: FontWeight.w500,
                   ),
                 ),
-                Text(
-                  _displayName.isNotEmpty ? '$_displayName!' : 'Boss!',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 22,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 0.5,
+                if (_displayName.isNotEmpty)
+                  Text(
+                    '$_displayName!',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 22,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0.5,
+                    ),
                   ),
-                ),
               ],
             ),
           ),

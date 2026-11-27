@@ -87,6 +87,13 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
     _profileFuture = context.read<AuthProvider>().getCurrentUserProfile();
   }
 
+  void _retryProfile() {
+    if (!mounted) return;
+    setState(() {
+      _profileFuture = context.read<AuthProvider>().getCurrentUserProfile();
+    });
+  }
+
   static DateTime _dateOnly(DateTime d) => DateTime(d.year, d.month, d.day);
 
   static DateTime _startOfWeek(DateTime d) {
@@ -854,40 +861,141 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
     return null;
   }
 
-  Widget _buildStaffSkeleton({bool includeHeader = false, int rows = 5}) {
-    return ShimmerLoading(
-      child: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          if (includeHeader) ...[
-            const SkeletonBlock(height: 80, borderRadius: 16),
-            const SizedBox(height: 16),
-          ],
-          ...List.generate(rows, (index) {
-            return Padding(
-              padding: const EdgeInsets.only(bottom: 12),
-              child: Row(
-                children: [
-                  const SkeletonCircle(diameter: 48),
-                  const SizedBox(width: 12),
-                  const Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        SkeletonLine(width: double.infinity, height: 16),
-                        SizedBox(height: 8),
-                        SkeletonLine(width: 120, height: 12),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  SkeletonLine(width: 60, height: 24),
-                ],
+  Widget _buildStaffBody(
+    BuildContext context,
+    AsyncSnapshot<Map<String, dynamic>?> profileSnapshot,
+  ) {
+    if (profileSnapshot.connectionState == ConnectionState.waiting) {
+      return const SkeletonStaff();
+    }
+    if (profileSnapshot.hasError) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'Failed to load profile: ${profileSnapshot.error}',
+                textAlign: TextAlign.center,
               ),
-            );
-          }),
-        ],
-      ),
+              const SizedBox(height: 12),
+              ElevatedButton(
+                onPressed: _retryProfile,
+                child: const Text('Retry'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    final profile = profileSnapshot.data;
+    final eateryId = (profile?['eateryId'] ?? '').toString().trim();
+    if (eateryId.isEmpty) {
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.all(16),
+          child: Text('Eatery is not set for this account.'),
+        ),
+      );
+    }
+    if (!_isAdminFromProfile(profile)) {
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.all(16),
+          child: Text('Admin access required.'),
+        ),
+      );
+    }
+
+    final eateryName = (profile?['eateryName'] ?? '').toString().trim();
+    final adminUid = context.read<AuthProvider>().user?.uid ?? '';
+    final adminName = _adminDisplayNameFromProfile(profile);
+
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: _usersStreamFor(eateryId),
+      builder: (context, usersSnap) {
+        if (usersSnap.hasError) {
+          return Center(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Text('Failed to load users: ${usersSnap.error}'),
+            ),
+          );
+        }
+        if (!usersSnap.hasData) {
+          return const SkeletonStaff();
+        }
+
+        final usersByUid = <String, Map<String, dynamic>>{
+          for (final d in usersSnap.data!.docs) d.id: d.data(),
+        };
+
+        return TabBarView(
+          children: [
+            _StaffTab(
+              eateryId: eateryId,
+              eateryName: eateryName,
+              adminUid: adminUid,
+              adminName: adminName,
+              usersByUid: usersByUid,
+              globalSearchQuery: widget.globalSearchQuery,
+              onEditProfile: (uid, data) => _editStaffProfile(
+                context,
+                eateryId: eateryId,
+                uid: uid,
+                userData: data,
+              ),
+              onApproveStaff: _approveStaff,
+              onRemoveStaff: _removeStaff,
+            ),
+            _AttendanceTab(
+              eateryId: eateryId,
+              usersByUid: usersByUid,
+              onEncodeAttendance: (uid, label, day) => _encodeAttendance(
+                context,
+                eateryId: eateryId,
+                uid: uid,
+                userLabel: label,
+                day: day,
+              ),
+              onMarkMissingAbsent: (monthStart, existing) => _autoMarkAbsent(
+                eateryId: eateryId,
+                usersByUid: usersByUid,
+                monthStart: monthStart,
+                existingAttendance: existing,
+              ),
+            ),
+            _PayrollTab(
+              eateryId: eateryId,
+              usersByUid: usersByUid,
+              weekStart: _weekStart,
+              onRecordPayout: (uid, label, amount, type) => _recordPayout(
+                context,
+                eateryId: eateryId,
+                uid: uid,
+                weekStart: _weekStart,
+                amount: amount,
+                userLabel: label,
+                type: type,
+                adminUid: adminUid,
+                adminName: adminName,
+              ),
+              onSaveRates: (uid, label, dailyRate, halfDayRate) =>
+                  _saveStaffPayRates(
+                context,
+                eateryId: eateryId,
+                uid: uid,
+                userData: usersByUid[uid] ?? const <String, dynamic>{},
+                dailyRate: dailyRate,
+                halfDayRate: halfDayRate,
+              ),
+            ),
+            _MealsTab(eateryId: eateryId),
+          ],
+        );
+      },
     );
   }
 
@@ -896,93 +1004,6 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
     return FutureBuilder<Map<String, dynamic>?>(
       future: _profileFuture,
       builder: (context, profileSnapshot) {
-        if (profileSnapshot.connectionState == ConnectionState.waiting) {
-          return Scaffold(
-            appBar: widget.showAppBar
-                ? AppBar(
-                    leading: _buildShellLeading(context),
-                    title: const Text('Staff Management'),
-                  )
-                : null,
-            body: _buildStaffSkeleton(includeHeader: true, rows: 3),
-          );
-        }
-
-        if (profileSnapshot.hasError) {
-          return Scaffold(
-            appBar: widget.showAppBar
-                ? AppBar(
-                    leading: widget.onOpenDrawer != null
-                        ? IconButton(
-                            icon: const Icon(Icons.menu),
-                            tooltip: 'Menu',
-                            onPressed: widget.onOpenDrawer,
-                          )
-                        : (Navigator.of(context).canPop()
-                            ? IconButton(
-                                icon: const Icon(Icons.arrow_back),
-                                onPressed: () =>
-                                    Navigator.of(context).maybePop(),
-                              )
-                            : null),
-                    title: const Text('Staff Management'),
-                  )
-                : null,
-            body: Center(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Text('Failed to load profile: ${profileSnapshot.error}'),
-              ),
-            ),
-          );
-        }
-
-        final profile = profileSnapshot.data;
-        final eateryId = (profile?['eateryId'] ?? '').toString().trim();
-        final eateryName = (profile?['eateryName'] ?? '').toString().trim();
-        final adminUid = context.read<AuthProvider>().user?.uid ?? '';
-        final adminName = _adminDisplayNameFromProfile(profile);
-        if (eateryId.isEmpty) {
-          return const Scaffold(
-            body: Center(
-              child: Padding(
-                padding: EdgeInsets.all(16),
-                child: Text('Eatery is not set for this account.'),
-              ),
-            ),
-          );
-        }
-
-        final isAdmin = _isAdminFromProfile(profile);
-        if (!isAdmin) {
-          return Scaffold(
-            appBar: widget.showAppBar
-                ? AppBar(
-                    leading: widget.onOpenDrawer != null
-                        ? IconButton(
-                            icon: const Icon(Icons.menu),
-                            tooltip: 'Menu',
-                            onPressed: widget.onOpenDrawer,
-                          )
-                        : (Navigator.of(context).canPop()
-                            ? IconButton(
-                                icon: const Icon(Icons.arrow_back),
-                                onPressed: () =>
-                                    Navigator.of(context).maybePop(),
-                              )
-                            : null),
-                    title: const Text('Staff Management'),
-                  )
-                : null,
-            body: const Center(
-              child: Padding(
-                padding: EdgeInsets.all(16),
-                child: Text('Admin access required.'),
-              ),
-            ),
-          );
-        }
-
         final weekEnd = _weekStart.add(const Duration(days: 6));
         final weekLabel = '${_fmtDate(_weekStart)} to ${_fmtDate(weekEnd)}';
 
@@ -992,19 +1013,7 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
           child: Scaffold(
             appBar: widget.showAppBar
                 ? AppBar(
-                    leading: widget.onOpenDrawer != null
-                        ? IconButton(
-                            icon: const Icon(Icons.menu),
-                            tooltip: 'Menu',
-                            onPressed: widget.onOpenDrawer,
-                          )
-                        : (Navigator.of(context).canPop()
-                            ? IconButton(
-                                icon: const Icon(Icons.arrow_back),
-                                onPressed: () =>
-                                    Navigator.of(context).maybePop(),
-                              )
-                            : null),
+                    leading: _buildShellLeading(context),
                     title: const Text('Staff Management'),
                     actions: [
                       _StaffWeekNav(
@@ -1097,96 +1106,7 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
                     ),
                   ),
                 Expanded(
-                  child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-                    stream: _usersStreamFor(eateryId),
-                    builder: (context, usersSnap) {
-                      if (usersSnap.hasError) {
-                        return Center(
-                          child: Padding(
-                            padding: const EdgeInsets.all(16),
-                            child: Text(
-                                'Failed to load users: ${usersSnap.error}'),
-                          ),
-                        );
-                      }
-                      if (!usersSnap.hasData) {
-                        return _buildStaffSkeleton(rows: 5);
-                      }
-
-                      final userDocs = usersSnap.data!.docs;
-                      final usersByUid = <String, Map<String, dynamic>>{
-                        for (final d in userDocs) d.id: d.data(),
-                      };
-
-                      return TabBarView(
-                        children: [
-                          _StaffTab(
-                            eateryId: eateryId,
-                            eateryName: eateryName,
-                            adminUid: adminUid,
-                            adminName: adminName,
-                            usersByUid: usersByUid,
-                            globalSearchQuery: widget.globalSearchQuery,
-                            onEditProfile: (uid, data) => _editStaffProfile(
-                              context,
-                              eateryId: eateryId,
-                              uid: uid,
-                              userData: data,
-                            ),
-                            onApproveStaff: _approveStaff,
-                            onRemoveStaff: _removeStaff,
-                          ),
-                          _AttendanceTab(
-                            eateryId: eateryId,
-                            usersByUid: usersByUid,
-                            onEncodeAttendance: (uid, label, day) =>
-                                _encodeAttendance(
-                              context,
-                              eateryId: eateryId,
-                              uid: uid,
-                              userLabel: label,
-                              day: day,
-                            ),
-                            onMarkMissingAbsent: (monthStart, existing) =>
-                                _autoMarkAbsent(
-                              eateryId: eateryId,
-                              usersByUid: usersByUid,
-                              monthStart: monthStart,
-                              existingAttendance: existing,
-                            ),
-                          ),
-                          _PayrollTab(
-                            eateryId: eateryId,
-                            usersByUid: usersByUid,
-                            weekStart: _weekStart,
-                            onRecordPayout: (uid, label, amount, type) =>
-                                _recordPayout(
-                              context,
-                              eateryId: eateryId,
-                              uid: uid,
-                              weekStart: _weekStart,
-                              amount: amount,
-                              userLabel: label,
-                              type: type,
-                              adminUid: adminUid,
-                              adminName: adminName,
-                            ),
-                            onSaveRates: (uid, label, dailyRate, halfDayRate) =>
-                                _saveStaffPayRates(
-                              context,
-                              eateryId: eateryId,
-                              uid: uid,
-                              userData:
-                                  usersByUid[uid] ?? const <String, dynamic>{},
-                              dailyRate: dailyRate,
-                              halfDayRate: halfDayRate,
-                            ),
-                          ),
-                          _MealsTab(eateryId: eateryId),
-                        ],
-                      );
-                    },
-                  ),
+                  child: _buildStaffBody(context, profileSnapshot),
                 ),
               ],
             ),

@@ -347,13 +347,34 @@ class _MealsTabState extends State<_MealsTab> {
           // Meal orders list
           Expanded(
             child: _isLoading
-                ? ListView(
-                    padding: const EdgeInsets.all(16),
-                    children: const [
-                      SkeletonListTile(hasLeading: true, hasSubtitle: true),
-                      SkeletonListTile(hasLeading: true, hasSubtitle: true),
-                      SkeletonListTile(hasLeading: true, hasSubtitle: true),
-                    ],
+                ? ShimmerLoading(
+                    child: ListView(
+                      padding: const EdgeInsets.all(16),
+                      children: List.generate(3, (index) {
+                        return const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 12),
+                          child: Row(
+                            children: [
+                              SkeletonCircle(diameter: 48),
+                              SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    SkeletonLine(
+                                        width: double.infinity, height: 16),
+                                    SizedBox(height: 8),
+                                    SkeletonLine(width: 120, height: 12),
+                                  ],
+                                ),
+                              ),
+                              SizedBox(width: 12),
+                              SkeletonLine(width: 60, height: 24),
+                            ],
+                          ),
+                        );
+                      }),
+                    ),
                   )
                 : visibleOrders.isEmpty
                     ? Center(

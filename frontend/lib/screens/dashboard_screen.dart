@@ -717,105 +717,78 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return null;
   }
 
+  Widget _buildRoleErrorBody() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'Failed to load profile: $_roleError',
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 12),
+            ElevatedButton(
+              onPressed: _loadRole,
+              child: const Text('Retry'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPendingApprovalBody() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.hourglass_top, size: 44),
+            const SizedBox(height: 12),
+            const Text(
+              'Your account is pending admin approval.',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Ask your admin to approve your account. Once approved, tap Refresh.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Colors.white.withValues(alpha: 0.62)),
+            ),
+            const SizedBox(height: 16),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                ElevatedButton(
+                  onPressed:
+                      _isApprovalRefreshing ? null : _refreshApprovalStatus,
+                  child: _isApprovalRefreshing
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Text('Refresh'),
+                ),
+                const SizedBox(width: 12),
+                OutlinedButton(
+                  onPressed: () => context.read<AuthProvider>().logout(),
+                  child: const Text('Logout'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    if (_isRoleLoading) {
-      return Theme(
-        data: AppTheme.dashboardTheme,
-        child: const Scaffold(
-          backgroundColor: AppTheme.sageNavy,
-          body: SafeArea(child: SkeletonDashboard()),
-        ),
-      );
-    }
-
-    if (_roleError != null) {
-      return Theme(
-        data: AppTheme.dashboardTheme,
-        child: Scaffold(
-          backgroundColor: AppTheme.sageNavy,
-          appBar: AppBar(title: const Text('Smart Eat')),
-          body: Center(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    'Failed to load profile: $_roleError',
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 12),
-                  ElevatedButton(
-                    onPressed: _loadRole,
-                    child: const Text('Retry'),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      );
-    }
-
-    if (!_isAdmin && !_isApprovedStaff) {
-      return Theme(
-        data: AppTheme.dashboardTheme,
-        child: Scaffold(
-          backgroundColor: AppTheme.sageNavy,
-          appBar: AppBar(title: const Text('Smart Eat')),
-          body: Center(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Icon(Icons.hourglass_top, size: 44),
-                  const SizedBox(height: 12),
-                  const Text(
-                    'Your account is pending admin approval.',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(fontWeight: FontWeight.w600),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Ask your admin to approve your account. Once approved, tap Refresh.',
-                    textAlign: TextAlign.center,
-                    style:
-                        TextStyle(color: Colors.white.withValues(alpha: 0.62)),
-                  ),
-                  const SizedBox(height: 16),
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      ElevatedButton(
-                        onPressed: _isApprovalRefreshing
-                            ? null
-                            : _refreshApprovalStatus,
-                        child: _isApprovalRefreshing
-                            ? const SizedBox(
-                                width: 18,
-                                height: 18,
-                                child:
-                                    CircularProgressIndicator(strokeWidth: 2),
-                              )
-                            : const Text('Refresh'),
-                      ),
-                      const SizedBox(width: 12),
-                      OutlinedButton(
-                        onPressed: () => context.read<AuthProvider>().logout(),
-                        child: const Text('Logout'),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      );
-    }
-
     final adminTabs = <Widget>[
       _lazyTab(
           _adminHomeTab, (k) => DashboardHomeTab(key: k, onNavigate: _goToTab)),
@@ -909,9 +882,23 @@ class _DashboardScreenState extends State<DashboardScreen> {
       _selectedIndex = 0;
     }
 
+    final showStateMessage =
+        _roleError != null || (!_isAdmin && !_isApprovedStaff);
+    final Widget bodyContent;
+    if (_roleError != null) {
+      bodyContent = _buildRoleErrorBody();
+    } else if (!_isAdmin && !_isApprovedStaff) {
+      bodyContent = _buildPendingApprovalBody();
+    } else {
+      bodyContent =
+          AnimatedDashboardStack(index: _selectedIndex, children: tabs);
+    }
+
     final isNarrowSearch = MediaQuery.of(context).size.width < 520;
     const searchHint = 'Search';
-    final pageTitle = _pageTitleForIndex(_selectedIndex);
+    final pageTitle = showStateMessage || _isRoleLoading
+        ? 'Smart Eat'
+        : _pageTitleForIndex(_selectedIndex);
 
     return Theme(
       data: AppTheme.dashboardTheme,
@@ -1141,15 +1128,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     Expanded(
                       child: Stack(
                         children: [
-                          AnimatedDashboardStack(
-                            index: _selectedIndex,
-                            children: tabs,
-                          ),
+                          bodyContent,
                           if (_isRoleLoading)
-                            Container(
-                              color: AppTheme.sageNavy.withValues(alpha: 0.84),
-                              child: const Center(
-                                child: CircularProgressIndicator(),
+                            Positioned.fill(
+                              child: Container(
+                                color: AppTheme.sageNavy,
+                                child: const SkeletonDashboard(),
                               ),
                             ),
                         ],
@@ -1162,10 +1146,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
               // Narrow screen: overlay sidebar
               return Stack(
                 children: [
-                  AnimatedDashboardStack(
-                    index: _selectedIndex,
-                    children: tabs,
-                  ),
+                  bodyContent,
+                  if (_isRoleLoading)
+                    Positioned.fill(
+                      child: Container(
+                        color: AppTheme.sageNavy,
+                        child: const SkeletonDashboard(),
+                      ),
+                    ),
                   if (_sidebarVisible)
                     GestureDetector(
                       onTap: () => setState(() => _sidebarVisible = false),
@@ -1174,13 +1162,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       ),
                     ),
                   if (_sidebarVisible) _buildSidebar(),
-                  if (_isRoleLoading)
-                    Container(
-                      color: AppTheme.sageNavy.withValues(alpha: 0.84),
-                      child: const Center(
-                        child: CircularProgressIndicator(),
-                      ),
-                    ),
                 ],
               );
             },
@@ -2937,7 +2918,7 @@ class _DashboardHomeTabState extends State<DashboardHomeTab> {
     return RefreshIndicator(
       onRefresh: _loadDashboard,
       child: _isLoading
-          ? const Center(child: CircularProgressIndicator())
+          ? const SkeletonDashboard()
           : _error != null
               ? ListView(
                   padding: const EdgeInsets.all(16),

@@ -25,7 +25,6 @@ class FinanceOverviewTab extends StatelessWidget {
     this.damagedItems = const [],
     this.salesForecast = const [],
     required this.isAdmin,
-    required this.isLoading,
     required this.fmt,
     required this.onOpenExpenses,
     required this.onOpenPayables,
@@ -45,7 +44,6 @@ class FinanceOverviewTab extends StatelessWidget {
   final List<Map<String, dynamic>> damagedItems;
   final List<Map<String, dynamic>> salesForecast;
   final bool isAdmin;
-  final bool isLoading;
   final FinanceFormat fmt;
   final VoidCallback onOpenExpenses;
   final VoidCallback onOpenPayables;

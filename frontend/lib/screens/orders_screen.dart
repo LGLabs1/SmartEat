@@ -18,6 +18,7 @@ import '../widgets/dashboard/dashboard_back_handler.dart';
 import '../widgets/responsive_search_field.dart';
 import '../widgets/inline_error_banner.dart';
 import '../widgets/payment_method_dialog.dart';
+import '../widgets/skeleton_loaders.dart';
 // Shares the incomplete-order row with the admin dashboard. It lives in
 // dashboard_screen.dart rather than a widget file because it is already
 // public there, and a widget-to-widget import would be the larger change.
@@ -46,6 +47,7 @@ class OrdersScreen extends StatefulWidget {
 
 class _OrdersScreenState extends State<OrdersScreen> {
   Stream<List<Map<String, dynamic>>>? _ordersStream;
+  bool _isRefreshingToday = false;
   _StatusFilter _statusFilter = _StatusFilter.all;
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
@@ -53,6 +55,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
   // History view — admins only.
   bool _showingHistory = false;
   bool _loadingHistory = false;
+  bool _hasLoadedHistory = false;
   String? _historyError;
   List<Map<String, dynamic>> _history = const [];
   String? _historyDateFilter;
@@ -249,11 +252,18 @@ class _OrdersScreenState extends State<OrdersScreen> {
   /// listen to that same exhausted stream and throw "Stream has already been
   /// listened to". Clearing the field first and always creating a new stream
   /// sidesteps that entirely.
-  Future<void> _initOrdersStream() async {
-    if (mounted) setState(() => _ordersStream = null);
+  Future<void> _initOrdersStream({bool preserveExisting = false}) async {
+    if (preserveExisting) {
+      if (mounted) setState(() => _isRefreshingToday = true);
+    } else if (mounted) {
+      setState(() => _ordersStream = null);
+    }
     final stream = await FirebaseService.getTodayOrdersStream();
     if (!mounted) return;
-    setState(() => _ordersStream = stream);
+    setState(() {
+      _ordersStream = stream;
+      _isRefreshingToday = false;
+    });
   }
 
   Future<void> _loadHistory() async {
@@ -272,6 +282,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
         if (_historyDateFilter != null && !keys.contains(_historyDateFilter)) {
           _historyDateFilter = null;
         }
+        _hasLoadedHistory = true;
         _loadingHistory = false;
       });
     } catch (e) {
@@ -309,28 +320,39 @@ class _OrdersScreenState extends State<OrdersScreen> {
     if (_showingHistory) {
       return RefreshIndicator(
         onRefresh: _loadHistory,
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+        child: Stack(
           children: [
-            _buildInlineErrorBanner(),
-            _buildViewSwitch(),
-            const SizedBox(height: 16),
-            _buildIncompleteSection(),
-            const SizedBox(height: 16),
-            if (_loadingHistory)
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 48),
-                child: Center(child: CircularProgressIndicator()),
-              )
-            else if (_historyError != null)
-              _buildHistoryError()
-            else ...[
-              _buildHistoryRangeBar(),
-              const SizedBox(height: 16),
-              _buildHistoryKpiRow(),
-              const SizedBox(height: 16),
-              _buildHistoryList(),
-            ],
+            ListView(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+              children: [
+                _buildInlineErrorBanner(),
+                _buildViewSwitch(),
+                const SizedBox(height: 16),
+                _buildIncompleteSection(),
+                const SizedBox(height: 16),
+                if (_loadingHistory && !_hasLoadedHistory)
+                  const Padding(
+                    padding: EdgeInsets.only(bottom: 8),
+                    child: SizedBox(height: 620, child: SkeletonOrders()),
+                  )
+                else if (_historyError != null)
+                  _buildHistoryError()
+                else ...[
+                  _buildHistoryRangeBar(),
+                  const SizedBox(height: 16),
+                  _buildHistoryKpiRow(),
+                  const SizedBox(height: 16),
+                  _buildHistoryList(),
+                ],
+              ],
+            ),
+            if (_loadingHistory && _hasLoadedHistory)
+              const Positioned(
+                top: 0,
+                left: 0,
+                right: 0,
+                child: LinearProgressIndicator(minHeight: 2),
+              ),
           ],
         ),
       );
@@ -342,24 +364,39 @@ class _OrdersScreenState extends State<OrdersScreen> {
         final orders = snapshot.data ?? const <Map<String, dynamic>>[];
 
         return RefreshIndicator(
-          onRefresh: _initOrdersStream,
-          child: ListView(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+          onRefresh: () => _initOrdersStream(preserveExisting: true),
+          child: Stack(
             children: [
-              _buildInlineErrorBanner(),
-              if (widget.isAdmin) _buildViewSwitch(),
-              if (widget.isAdmin) const SizedBox(height: 16),
-              _buildKpiRow(orders),
-              const SizedBox(height: 16),
-              _buildFilterBar(orders),
-              const SizedBox(height: 16),
-              _buildOrdersList(orders),
-              // Incomplete orders live here rather than on the admin home
-              // dashboard, so all order work is on one page.
-              if (widget.isAdmin) ...[
-                const SizedBox(height: 16),
-                _buildIncompleteSection(),
-              ],
+              ListView(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+                children: [
+                  _buildInlineErrorBanner(),
+                  if (widget.isAdmin) _buildViewSwitch(),
+                  if (widget.isAdmin) const SizedBox(height: 16),
+                  if (_ordersStream == null)
+                    const SizedBox(height: 620, child: SkeletonOrders()),
+                  if (_ordersStream != null) ...[
+                    _buildKpiRow(orders),
+                    const SizedBox(height: 16),
+                    _buildFilterBar(orders),
+                    const SizedBox(height: 16),
+                    _buildOrdersList(orders),
+                  ],
+                  // Incomplete orders live here rather than on the admin home
+                  // dashboard, so all order work is on one page.
+                  if (widget.isAdmin) ...[
+                    const SizedBox(height: 16),
+                    _buildIncompleteSection(),
+                  ],
+                ],
+              ),
+              if (_isRefreshingToday)
+                const Positioned(
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  child: LinearProgressIndicator(minHeight: 2),
+                ),
             ],
           ),
         );
@@ -410,9 +447,11 @@ class _OrdersScreenState extends State<OrdersScreen> {
 
   Widget _buildIncompleteSection() {
     if (_loadingIncomplete && _incomplete.isEmpty) {
-      return const Padding(
-        padding: EdgeInsets.symmetric(vertical: 24),
-        child: Center(child: CircularProgressIndicator()),
+      return const SectionCard(
+        title: 'Incomplete Orders',
+        icon: Icons.pending_actions_outlined,
+        iconColor: Colors.red,
+        child: SizedBox(height: 220, child: SkeletonOrders()),
       );
     }
 

@@ -61,6 +61,7 @@ class _FinanceScreenState extends State<FinanceScreen> {
   final List<int> _tabHistory = [0];
 
   bool _isLoading = true;
+  bool _hasLoaded = false;
   String? _error;
 
   bool _isAdmin = false;
@@ -495,6 +496,7 @@ class _FinanceScreenState extends State<FinanceScreen> {
         _damagedItems = damagedItems;
         _salesForecast = salesForecast;
         _isLoading = false;
+        _hasLoaded = true;
       });
     } catch (e) {
       if (!mounted) return;
@@ -1064,7 +1066,40 @@ class _FinanceScreenState extends State<FinanceScreen> {
             ],
             selectedIndex: _index,
           ),
-          Expanded(child: _buildBody()),
+          Expanded(
+            child: Stack(
+              children: [
+                _buildBody(),
+                if (_isLoading && _hasLoaded)
+                  const Positioned(
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    child: LinearProgressIndicator(minHeight: 2),
+                  ),
+                if (_error != null && _hasLoaded)
+                  Positioned(
+                    top: _isLoading ? 4 : 0,
+                    left: 12,
+                    right: 12,
+                    child: Material(
+                      color: Theme.of(context).colorScheme.errorContainer,
+                      borderRadius: BorderRadius.circular(12),
+                      child: ListTile(
+                        leading: Icon(Icons.error_outline,
+                            color: Theme.of(context).colorScheme.error),
+                        title: Text('Refresh failed: $_error'),
+                        trailing: IconButton(
+                          tooltip: 'Dismiss',
+                          onPressed: () => setState(() => _error = null),
+                          icon: const Icon(Icons.close),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
         ],
       ),
       bottomNavigationBar: AdminBottomTabs(
@@ -1093,10 +1128,10 @@ class _FinanceScreenState extends State<FinanceScreen> {
   }
 
   Widget _buildBody() {
-    if (_isLoading) {
+    if (_isLoading && !_hasLoaded) {
       return const SkeletonFinance();
     }
-    if (_error != null) {
+    if (_error != null && !_hasLoaded) {
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(24),
@@ -1188,7 +1223,6 @@ class _FinanceScreenState extends State<FinanceScreen> {
           damagedItems: _damagedItems,
           salesForecast: _salesForecast,
           isAdmin: _isAdmin,
-          isLoading: _isLoading,
           fmt: _fmt,
           onOpenExpenses: () => _goToFinanceTab(1),
           onOpenPayables: () => _goToFinanceTab(2),

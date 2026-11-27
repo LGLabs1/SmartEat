@@ -18,6 +18,7 @@ import '../widgets/admin/admin_bottom_tabs.dart';
 import '../widgets/dashboard/dashboard_back_handler.dart';
 import '../widgets/feature_tab_header.dart';
 import '../widgets/menu_image_picker.dart';
+import '../widgets/skeleton_loaders.dart';
 
 import '../features/inventory/domain/services/menu_availability.dart';
 
@@ -848,17 +849,28 @@ class _MenuScreenState extends State<MenuScreen>
             selectedIndex: tc?.index ?? 0,
           ),
           Expanded(
-            child: tc == null
-                ? _buildMenuTab(theme, availableFilters, selectedCategoryFilter,
-                    filteredItems)
-                : TabBarView(
-                    controller: tc,
-                    children: [
-                      _buildMenuTab(theme, availableFilters,
-                          selectedCategoryFilter, filteredItems),
-                      const RecipeListPage(embedded: true),
-                    ],
+            child: Stack(
+              children: [
+                tc == null
+                    ? _buildMenuTab(theme, availableFilters,
+                        selectedCategoryFilter, filteredItems)
+                    : TabBarView(
+                        controller: tc,
+                        children: [
+                          _buildMenuTab(theme, availableFilters,
+                              selectedCategoryFilter, filteredItems),
+                          const RecipeListPage(embedded: true),
+                        ],
+                      ),
+                if (_isLoading && _menuItems.isNotEmpty)
+                  const Positioned(
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    child: LinearProgressIndicator(minHeight: 2),
                   ),
+              ],
+            ),
           ),
         ],
       ),
@@ -871,8 +883,8 @@ class _MenuScreenState extends State<MenuScreen>
     String selectedCategoryFilter,
     List<Map<String, dynamic>> filteredItems,
   ) {
-    return _isLoading
-        ? const Center(child: CircularProgressIndicator())
+    return _isLoading && _menuItems.isEmpty
+        ? const SkeletonMenu()
         : Column(
             children: [
               SizedBox(

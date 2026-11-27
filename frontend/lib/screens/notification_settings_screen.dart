@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import '../services/notification_service.dart';
 import '../theme.dart';
 import '../widgets/sage_header_button.dart';
+import '../widgets/skeleton_loaders.dart';
 import '../widgets/smart_eat_header.dart';
 
 class NotificationSettingsScreen extends StatefulWidget {
@@ -18,6 +19,7 @@ class _NotificationSettingsScreenState
     extends State<NotificationSettingsScreen> {
   final NotificationService _notificationService = NotificationService();
   bool _isLoading = true;
+  bool _hasLoaded = false;
   bool _isSaving = false;
   bool _masterEnabled = true;
   bool _lowStockEnabled = true;
@@ -48,6 +50,7 @@ class _NotificationSettingsScreenState
           _notificationService.attendanceRemindersEnabled;
       _billReminderDays = _notificationService.billReminderDays;
       _isLoading = false;
+      _hasLoaded = true;
     });
   }
 
@@ -173,8 +176,8 @@ class _NotificationSettingsScreenState
             ),
           ],
         ),
-        body: _isLoading
-            ? const Center(child: CircularProgressIndicator())
+        body: _isLoading && !_hasLoaded
+            ? const SkeletonSettings()
             : Stack(
                 children: [
                   ListView(
@@ -373,7 +376,7 @@ class _NotificationSettingsScreenState
                       ],
                     ],
                   ),
-                  if (_isSaving)
+                  if (_isLoading || _isSaving)
                     const Positioned(
                       top: 0,
                       left: 0,

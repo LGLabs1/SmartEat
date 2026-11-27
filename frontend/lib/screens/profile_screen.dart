@@ -16,6 +16,7 @@ import '../utils/attendance_utils.dart';
 import '../utils/phone_utils.dart';
 import '../utils/staff_utils.dart';
 import '../widgets/sage_header_button.dart';
+import '../widgets/skeleton_loaders.dart';
 import '../widgets/smart_eat_header.dart';
 import 'staff_management_screen.dart';
 
@@ -707,7 +708,7 @@ class _ProfileScreenState extends State<ProfileScreen>
           ],
         ),
         body: _isLoading
-            ? const Center(child: CircularProgressIndicator())
+            ? const SkeletonProfile()
             : _loadError != null
                 ? _buildErrorState()
                 : RefreshIndicator(
@@ -1270,8 +1271,8 @@ class _ProfileScreenState extends State<ProfileScreen>
               }
               if (!attSnap.hasData || !userSnap.hasData) {
                 return const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 24),
-                  child: Center(child: CircularProgressIndicator()),
+                  padding: EdgeInsets.symmetric(vertical: 12),
+                  child: LinearProgressIndicator(minHeight: 2),
                 );
               }
 

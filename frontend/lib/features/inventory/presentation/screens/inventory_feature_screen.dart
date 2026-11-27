@@ -286,7 +286,7 @@ class _InventoryFeatureScreenState extends State<InventoryFeatureScreen> {
                   Positioned.fill(
                     child: Container(
                       color: AppTheme.sageNavy,
-                      child: const SkeletonInventory(),
+                      child: SkeletonInventory(section: _index),
                     ),
                   ),
                 if (state.loading && items.isNotEmpty)

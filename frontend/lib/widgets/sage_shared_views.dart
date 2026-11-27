@@ -22,6 +22,11 @@ String sageGreeting() {
   return 'Good Evening';
 }
 
+String sageFirstName(String displayName) {
+  final parts = displayName.trim().split(RegExp(r'\s+'));
+  return parts.isEmpty ? '' : parts.first;
+}
+
 /// Resolves the user's first name: profile firstName → profile name →
 /// Firebase displayName → email local part. Returns '' when nothing is found.
 Future<String> loadSageDisplayName(BuildContext context) async {
@@ -29,13 +34,13 @@ Future<String> loadSageDisplayName(BuildContext context) async {
     final auth = context.read<AuthProvider>();
     final profile = await auth.getCurrentUserProfile();
     if (profile != null) {
-      final firstName =
-          (profile['firstName'] ?? profile['name'] ?? '').toString().trim();
+      final firstName = sageFirstName(
+          (profile['firstName'] ?? profile['name'] ?? '').toString());
       if (firstName.isNotEmpty) return firstName;
     }
     final user = FirebaseAuth.instance.currentUser;
     if (user != null) {
-      return user.displayName ?? user.email?.split('@')[0] ?? '';
+      return sageFirstName(user.displayName ?? user.email?.split('@')[0] ?? '');
     }
   } catch (_) {}
   return '';

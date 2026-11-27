@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 
 import '../../../../services/auth_provider.dart';
 import '../../../../theme.dart';
+import '../../../../widgets/skeleton_loaders.dart' show SkeletonPayroll;
 import '../../../../utils/staff_utils.dart';
 import '../../../../widgets/dashboard/section_card.dart';
 import '../../../../widgets/dashboard/sage_hover_card.dart';
@@ -49,7 +50,7 @@ class _MyPayrollScreenState extends State<MyPayrollScreen> {
             future: _profileFuture,
             builder: (context, snapshot) {
               if (snapshot.connectionState != ConnectionState.done) {
-                return const Center(child: CircularProgressIndicator());
+                return const SkeletonPayroll();
               }
               if (snapshot.hasError) {
                 return _Message(
@@ -103,7 +104,7 @@ class _PayoutHistory extends StatelessWidget {
           return _Message(text: 'Failed to load payroll: ${snapshot.error}');
         }
         if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator());
+          return const SkeletonPayroll();
         }
 
         final docs = snapshot.data?.docs ??

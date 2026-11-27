@@ -59,6 +59,10 @@ class InventoryNotifier extends ChangeNotifier {
   InventoryState get state => _state;
 
   Future<void> load() async {
+    final isInitialLoad = _state.items.isEmpty &&
+        _state.movements.isEmpty &&
+        _state.purchases.isEmpty &&
+        _state.adjustments.isEmpty;
     _state = _state.copyWith(loading: true, error: null);
     notifyListeners();
 
@@ -74,7 +78,7 @@ class InventoryNotifier extends ChangeNotifier {
       return;
     }
 
-    _state = _state.copyWith(items: items, loading: false);
+    _state = _state.copyWith(items: items, loading: isInitialLoad);
     notifyListeners();
 
     String? error;

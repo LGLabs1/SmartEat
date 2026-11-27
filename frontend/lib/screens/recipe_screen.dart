@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../services/api_service.dart';
 import '../services/auth_provider.dart';
+import '../widgets/skeleton_loaders.dart';
 
 class RecipeScreen extends StatefulWidget {
   const RecipeScreen({
@@ -19,6 +20,7 @@ class RecipeScreen extends StatefulWidget {
 
 class _RecipeScreenState extends State<RecipeScreen> {
   bool _isLoading = false;
+  bool _hasLoaded = false;
   String? _error;
   List<Map<String, dynamic>> _recipes = const [];
   List<Map<String, dynamic>> _inventory = const [];
@@ -317,6 +319,7 @@ class _RecipeScreenState extends State<RecipeScreen> {
         _recipes = data;
         _inventory = inventory;
         _isLoading = false;
+        _hasLoaded = true;
       });
     } catch (e) {
       if (!mounted) return;
@@ -425,9 +428,11 @@ class _RecipeScreenState extends State<RecipeScreen> {
             ),
       body: Column(
         children: [
+          if (_isLoading && _hasLoaded)
+            const LinearProgressIndicator(minHeight: 2),
           Expanded(
-            child: _isLoading
-                ? const Center(child: CircularProgressIndicator())
+            child: _isLoading && !_hasLoaded
+                ? const SkeletonRecipeList()
                 : _error != null
                     ? ListView(
                         padding: const EdgeInsets.all(16),

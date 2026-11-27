@@ -8,6 +8,7 @@ import '../services/pos_settings_service.dart';
 import '../theme.dart';
 import '../widgets/bluetooth_printer_sheet.dart';
 import '../widgets/sage_header_button.dart';
+import '../widgets/skeleton_loaders.dart';
 import '../widgets/smart_eat_header.dart';
 import 'package:provider/provider.dart';
 
@@ -19,6 +20,7 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
+  bool _isLoading = true;
   bool _isAdmin = false;
 
   // Business settings
@@ -59,11 +61,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final auth = context.read<AuthProvider>();
     _authProvider = auth;
     auth.addListener(_onAuthChanged);
-    _loadBusinessSettings();
-    _loadPosSettings();
-    _loadPrinter();
-    _loadAttendanceSettings();
-    _loadProfile();
+    _initialize();
+  }
+
+  Future<void> _initialize() async {
+    await Future.wait<void>([
+      _loadBusinessSettings(),
+      _loadPosSettings(),
+      _loadPrinter(),
+      _loadAttendanceSettings(),
+      _loadProfile(),
+    ]);
+    if (!mounted) return;
+    setState(() => _isLoading = false);
   }
 
   @override
@@ -325,63 +335,65 @@ class _SettingsScreenState extends State<SettingsScreen> {
           titleText: 'Settings',
           actions: const [SageHeaderButton(), SizedBox(width: 8)],
         ),
-        body: ListView(
-          padding: const EdgeInsets.fromLTRB(
-            AppTheme.pagePadding,
-            8,
-            AppTheme.pagePadding,
-            32,
-          ),
-          children: [
-            // User Info Card
-            _buildUserInfoCard(userEmail),
-            const SizedBox(height: 24),
+        body: _isLoading
+            ? const SkeletonSettings()
+            : ListView(
+                padding: const EdgeInsets.fromLTRB(
+                  AppTheme.pagePadding,
+                  8,
+                  AppTheme.pagePadding,
+                  32,
+                ),
+                children: [
+                  // User Info Card
+                  _buildUserInfoCard(userEmail),
+                  const SizedBox(height: 24),
 
-            // Notification Settings Section
-            _buildSectionHeader('Notifications'),
-            _buildNotificationSettingsCard(),
-            if (_isAdmin) ...[
-              const SizedBox(height: 24),
-              _buildSectionHeader('SMS Alerts'),
-              _buildSmsSettingsCard(),
-            ],
-            const SizedBox(height: 24),
+                  // Notification Settings Section
+                  _buildSectionHeader('Notifications'),
+                  _buildNotificationSettingsCard(),
+                  if (_isAdmin) ...[
+                    const SizedBox(height: 24),
+                    _buildSectionHeader('SMS Alerts'),
+                    _buildSmsSettingsCard(),
+                  ],
+                  const SizedBox(height: 24),
 
-            // Business Settings Section
-            _buildSectionHeader('Business Settings'),
-            _buildBusinessSettingsCard(),
-            if (_isAdmin) ...[
-              const SizedBox(height: 24),
-              _buildSectionHeader('Attendance'),
-              _buildAttendanceSettingsCard(),
-            ],
-            const SizedBox(height: 24),
+                  // Business Settings Section
+                  _buildSectionHeader('Business Settings'),
+                  _buildBusinessSettingsCard(),
+                  if (_isAdmin) ...[
+                    const SizedBox(height: 24),
+                    _buildSectionHeader('Attendance'),
+                    _buildAttendanceSettingsCard(),
+                  ],
+                  const SizedBox(height: 24),
 
-            // POS Settings Section
-            _buildSectionHeader('POS Settings'),
-            _buildPOSSettingsCard(),
-            const SizedBox(height: 24),
+                  // POS Settings Section
+                  _buildSectionHeader('POS Settings'),
+                  _buildPOSSettingsCard(),
+                  const SizedBox(height: 24),
 
-            // Receipt Printing Section
-            _buildSectionHeader('Receipt Printing'),
-            _buildReceiptPrintingCard(),
-            const SizedBox(height: 24),
+                  // Receipt Printing Section
+                  _buildSectionHeader('Receipt Printing'),
+                  _buildReceiptPrintingCard(),
+                  const SizedBox(height: 24),
 
-            // Inventory Settings Section
-            _buildSectionHeader('Inventory Settings'),
-            _buildInventorySettingsCard(),
-            const SizedBox(height: 24),
+                  // Inventory Settings Section
+                  _buildSectionHeader('Inventory Settings'),
+                  _buildInventorySettingsCard(),
+                  const SizedBox(height: 24),
 
-            // App Settings Section
-            _buildSectionHeader('App Settings'),
-            _buildAppSettingsCard(),
-            const SizedBox(height: 32),
+                  // App Settings Section
+                  _buildSectionHeader('App Settings'),
+                  _buildAppSettingsCard(),
+                  const SizedBox(height: 32),
 
-            // Danger Zone
-            _buildSectionHeader('Danger Zone'),
-            _buildDangerZoneCard(),
-          ],
-        ),
+                  // Danger Zone
+                  _buildSectionHeader('Danger Zone'),
+                  _buildDangerZoneCard(),
+                ],
+              ),
       ),
     );
   }

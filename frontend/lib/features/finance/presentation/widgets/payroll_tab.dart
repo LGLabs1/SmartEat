@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import '../../../../theme.dart';
 import '../../../../widgets/dashboard/empty_state.dart';
 import '../../../../widgets/dashboard/section_card.dart';
+import '../../../../widgets/skeleton_loaders.dart';
 import '../../data/finance_format.dart';
 
 /// Staff payroll overview. Uses memoized Firestore stream factories owned by
@@ -51,10 +52,7 @@ class FinancePayrollTab extends StatelessWidget {
             stream: staffUsersStream(id),
             builder: (context, usersSnap) {
               if (usersSnap.connectionState == ConnectionState.waiting) {
-                return const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 24),
-                  child: Center(child: CircularProgressIndicator()),
-                );
+                return const SizedBox(height: 600, child: SkeletonPayroll());
               }
               if (usersSnap.hasError) {
                 return EmptyState(
@@ -82,10 +80,8 @@ class FinancePayrollTab extends StatelessWidget {
                 stream: staffProfilesStream(id),
                 builder: (context, profilesSnap) {
                   if (profilesSnap.connectionState == ConnectionState.waiting) {
-                    return const Padding(
-                      padding: EdgeInsets.symmetric(vertical: 24),
-                      child: Center(child: CircularProgressIndicator()),
-                    );
+                    return const SizedBox(
+                        height: 600, child: SkeletonPayroll());
                   }
 
                   final profileByUid = <String, Map<String, dynamic>>{};
