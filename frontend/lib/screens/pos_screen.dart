@@ -486,7 +486,7 @@ class _POSScreenState extends State<POSScreen> {
     try {
       final results = await Future.wait([
         ApiService.getMenuItems(),
-        ApiService.getInventoryItems(),
+        _inventoryFuture,
         ApiService.getRecipes()
             .catchError((dynamic _) => <String, dynamic>{'data': const []}),
       ]);

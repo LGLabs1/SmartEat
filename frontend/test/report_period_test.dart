@@ -45,6 +45,7 @@ void main() {
       expect(selection.range(), ReportPeriod.monthRange(DateTime(2026, 10, 1)));
       expect(selection.exclusiveEnd(), DateTime(2026, 11, 1));
       expect(selection.label(), 'October 2026');
+      expect(selection.compactLabel(), 'October 2026');
     });
 
     test('year-to-date range starts on January 1 and ends today', () {
@@ -58,6 +59,7 @@ void main() {
       expect(range.end, DateTime(2026, 11, 26, 23, 59, 59, 999, 999));
       expect(selection.exclusiveEnd(now: now), DateTime(2026, 11, 27));
       expect(selection.label(), 'All months this year');
+      expect(selection.compactLabel(), 'YTD');
     });
 
     test('navigation follows the current month and year-to-date rules', () {

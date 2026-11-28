@@ -40,9 +40,9 @@ class PeriodNavigator extends StatelessWidget {
               onPressed: previous == null ? null : () => onChanged(previous),
             ),
             ConstrainedBox(
-              constraints: const BoxConstraints(minWidth: 130, maxWidth: 220),
+              constraints: const BoxConstraints(minWidth: 96, maxWidth: 180),
               child: Text(
-                selection.label(),
+                selection.compactLabel(),
                 key: const Key('period-navigator-label'),
                 textAlign: TextAlign.center,
                 overflow: TextOverflow.ellipsis,

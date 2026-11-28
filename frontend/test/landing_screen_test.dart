@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:smarteat/config/app_version.dart';
 import 'package:smarteat/screens/landing_screen.dart';
 import 'package:smarteat/theme.dart';
 import 'package:smarteat/widgets/sage_avatar.dart';
@@ -72,6 +73,10 @@ void main() {
     expect(find.byKey(const Key('landing-download-android')), findsOneWidget);
     expect(find.byKey(const Key('landing-download-windows')), findsOneWidget);
     expect(find.byKey(const Key('landing-download-pwa')), findsOneWidget);
+    expect(
+      find.text('Current download version ${AppVersion.display}'),
+      findsOneWidget,
+    );
     expect(find.text('Illustrative sample data'), findsOneWidget);
     expect(find.text('SAMPLE'), findsOneWidget);
     expect(find.text('LIVE'), findsNothing);

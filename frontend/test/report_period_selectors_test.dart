@@ -90,7 +90,7 @@ void main() {
       changes: changes,
     );
 
-    expect(find.text('All months this year'), findsOneWidget);
+    expect(find.text('YTD'), findsOneWidget);
     expect(
         tester
             .widget<IconButton>(find.byKey(const Key('period-navigator-next')))

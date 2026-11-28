@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../config/app_downloads.dart';
+import '../config/app_version.dart';
 import '../theme.dart';
 import '../utils/web_download_stub.dart'
     if (dart.library.js_interop) '../utils/web_download_web.dart';
@@ -673,6 +674,15 @@ class _LandingScreenState extends State<LandingScreen>
             color: Colors.white.withValues(alpha: 0.52),
             fontSize: 14,
             fontWeight: FontWeight.w500,
+          ),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          'Current download version ${AppVersion.display}',
+          style: TextStyle(
+            color: Colors.white.withValues(alpha: 0.42),
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
           ),
         ),
         const SizedBox(height: 24),

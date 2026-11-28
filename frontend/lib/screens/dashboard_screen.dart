@@ -102,6 +102,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     0: DateTime.now(),
   };
   final Map<int, int> _tabGenerations = <int, int>{};
+  final Map<String, Widget> _tabWidgetCache = <String, Widget>{};
   bool _isRoleLoading = true;
   String? _roleError;
   bool _isAdmin = false;
@@ -550,9 +551,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
     if (!active && !_visitedTabs.contains(index)) {
       return const SizedBox.shrink();
     }
-    final key =
-        fixedKey ?? ValueKey('tab_$index#${_tabGenerations[index] ?? 0}');
-    return builder(key);
+    final generation = _tabGenerations[index] ?? 0;
+    final key = fixedKey ?? ValueKey('tab_$index#$generation');
+    final cacheKey = '${_isAdminRole ? 'admin' : 'staff'}:$index:$generation:'
+        '$_globalSearchQuery:$_staffManagementInitialTab';
+    final cached = _tabWidgetCache[cacheKey];
+    if (cached != null) return cached;
+    final tab = builder(key);
+    _tabWidgetCache[cacheKey] = tab;
+    return tab;
   }
 
   void _setAdminViewEnabled(bool enabled) {

@@ -53,7 +53,10 @@ class AIAssistantProvider extends ChangeNotifier {
   String get activePage => _activePage;
 
   // ── Insights ─────────────────────────────────────────────────────────────
+  static const Duration _insightsTtl = Duration(seconds: 45);
+
   List<Insight> _activeInsights = [];
+  final Map<String, DateTime> _insightsLoadedAt = <String, DateTime>{};
   List<Insight> get activeInsights => _activeInsights;
 
   bool _loadingInsights = false;
@@ -441,7 +444,7 @@ class AIAssistantProvider extends ChangeNotifier {
     if (_disposed || FirebaseAuth.instance.currentUser == null) return;
     await Future.wait([
       _buildBusinessContext(),
-      _loadPageInsights(),
+      _loadPageInsights(force: true),
     ]);
   }
 
@@ -788,16 +791,25 @@ class AIAssistantProvider extends ChangeNotifier {
   }
 
   // ── Page insights (derived from BusinessContext) ─────────────────────────
-  Future<void> _loadPageInsights() async {
+  Future<void> _loadPageInsights({bool force = false}) async {
+    final page = _activePage;
+    final loadedAt = _insightsLoadedAt[page];
+    if (!force &&
+        loadedAt != null &&
+        DateTime.now().difference(loadedAt) < _insightsTtl) {
+      return;
+    }
+
     _loadingInsights = true;
     notifyListeners();
     try {
       // Reuse the cached context if fresh (< 5 min), otherwise pass null and
       // let FirestoreInsightsService build its own minimal fetch.
       final rawInsights = await FirestoreInsightsService.getInsightsForPage(
-        _activePage,
+        page,
         context: _businessContext,
       );
+      if (_disposed || page != _activePage) return;
 
       _activeInsights = rawInsights.asMap().entries.map((entry) {
         final map = entry.value;
@@ -805,13 +817,14 @@ class AIAssistantProvider extends ChangeNotifier {
           id: '${DateTime.now().millisecondsSinceEpoch}_${entry.key}',
           title: map['title'] ?? 'Insight',
           message: map['message'] ?? '',
-          page: _activePage,
+          page: page,
           isImportant: map['isImportant'] ?? false,
           icon: map['icon'] ?? Icons.info_outline,
           color: map['color'] ?? Colors.blue,
           createdAt: DateTime.now(),
         );
       }).toList();
+      _insightsLoadedAt[page] = DateTime.now();
 
       if (_activeInsights.isNotEmpty && !_isExpanded) {
         final important = _activeInsights.where((i) => i.isImportant).toList();

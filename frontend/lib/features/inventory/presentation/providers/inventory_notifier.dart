@@ -81,40 +81,33 @@ class InventoryNotifier extends ChangeNotifier {
     _state = _state.copyWith(items: items, loading: isInitialLoad);
     notifyListeners();
 
-    String? error;
-    List<MenuItemIngredient>? menu;
-    List<StockMovement>? movements;
-    List<PurchaseReceipt>? purchases;
-    List<StockAdjustment>? adjustments;
+    final errors = <String>[];
+    Future<T?> capture<T>(Future<T> future, String message) async {
+      try {
+        return await future;
+      } catch (e) {
+        errors.add('$message: $e');
+        return null;
+      }
+    }
 
-    try {
-      menu = await _repo.getMenuItemIngredients();
-    } catch (e) {
-      error = 'Menu links could not be refreshed: $e';
-    }
-    try {
-      movements = await _repo.getStockMovements();
-    } catch (e) {
-      error ??= 'Stock movements could not be refreshed: $e';
-    }
-    try {
-      purchases = await _repo.getPurchaseReceipts();
-    } catch (e) {
-      error ??= 'Purchases could not be refreshed: $e';
-    }
-    try {
-      adjustments = await _repo.getStockAdjustments();
-    } catch (e) {
-      error ??= 'Adjustments could not be refreshed: $e';
-    }
+    final results = await Future.wait<dynamic>([
+      capture(
+          _repo.getMenuItemIngredients(), 'Menu links could not be refreshed'),
+      capture(
+          _repo.getStockMovements(), 'Stock movements could not be refreshed'),
+      capture(_repo.getPurchaseReceipts(), 'Purchases could not be refreshed'),
+      capture(
+          _repo.getStockAdjustments(), 'Adjustments could not be refreshed'),
+    ]);
 
     _state = _state.copyWith(
-      menuIngredients: menu,
-      movements: movements,
-      purchases: purchases,
-      adjustments: adjustments,
+      menuIngredients: results[0] as List<MenuItemIngredient>?,
+      movements: results[1] as List<StockMovement>?,
+      purchases: results[2] as List<PurchaseReceipt>?,
+      adjustments: results[3] as List<StockAdjustment>?,
       loading: false,
-      error: error,
+      error: errors.isEmpty ? null : errors.first,
     );
     notifyListeners();
   }

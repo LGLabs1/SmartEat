@@ -6,6 +6,7 @@ class ReportPeriod {
   const ReportPeriod._();
 
   static const String yearToDateLabel = 'All months this year';
+  static const String compactYearToDateLabel = 'YTD';
 
   static DateTime month(DateTime value) => DateTime(value.year, value.month, 1);
 
@@ -50,6 +51,9 @@ class ReportPeriod {
 
   static String selectionLabel(ReportPeriodSelection selection) =>
       selection.yearToDate ? yearToDateLabel : label(selection.month);
+
+  static String compactSelectionLabel(ReportPeriodSelection selection) =>
+      selection.yearToDate ? compactYearToDateLabel : label(selection.month);
 }
 
 class ReportPeriodSelection {
@@ -72,6 +76,8 @@ class ReportPeriodSelection {
       : ReportPeriod.exclusiveEnd(anchorMonth);
 
   String label() => ReportPeriod.selectionLabel(this);
+
+  String compactLabel() => ReportPeriod.compactSelectionLabel(this);
 
   ReportPeriodSelection? next({DateTime? now}) {
     if (yearToDate) return null;

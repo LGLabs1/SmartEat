@@ -28,7 +28,7 @@ class AnimatedDashboardStack extends StatelessWidget {
                     offset: i == index ? Offset.zero : const Offset(0, 0.015),
                     duration: const Duration(milliseconds: 220),
                     curve: Curves.easeOutCubic,
-                    child: children[i],
+                    child: RepaintBoundary(child: children[i]),
                   ),
                 ),
               ),

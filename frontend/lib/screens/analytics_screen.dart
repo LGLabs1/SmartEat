@@ -834,15 +834,6 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text(
-            'Period',
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-              color: Colors.white.withValues(alpha: 0.6),
-            ),
-          ),
-          const SizedBox(width: 6),
           PeriodNavigator(
             selection: _selection,
             onChanged: (selection) {
