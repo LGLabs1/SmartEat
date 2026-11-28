@@ -318,9 +318,13 @@ service cloud.firestore {
 
     // UPDATED: removed dependency on menu doc having eateryId field
     function isMenuStockOnlyUpdate(eateryId) {
-      return isEateryImmutableUpdate(eateryId)
-        && isCreatedByImmutableOnUpdate()
-        && hasValidMenuValues(request.resource.data)
+      return (!('eateryId' in resource.data) || resource.data.eateryId == eateryId)
+        && (!('createdBy' in resource.data)
+            || request.resource.data.createdBy == resource.data.createdBy)
+        && request.resource.data.availableServings is number
+        && request.resource.data.availableServings >= 0
+        && request.resource.data.availableServings <= 1000000
+        && request.resource.data.isAvailable is bool
         && request.resource.data.diff(resource.data).changedKeys().hasOnly([
           'availableServings',
           'isAvailable',
@@ -331,9 +335,12 @@ service cloud.firestore {
 
     // UPDATED: removed dependency on inventory doc having eateryId field
     function isInventoryStockOnlyUpdate(eateryId) {
-      return isEateryImmutableUpdate(eateryId)
-        && isCreatedByImmutableOnUpdate()
-        && hasValidInventoryValues(request.resource.data)
+      return (!('eateryId' in resource.data) || resource.data.eateryId == eateryId)
+        && (!('createdBy' in resource.data)
+            || request.resource.data.createdBy == resource.data.createdBy)
+        && request.resource.data.currentStock is number
+        && request.resource.data.currentStock >= 0
+        && request.resource.data.currentStock <= 1000000000
         && request.resource.data.diff(resource.data).changedKeys().hasOnly([
           'currentStock',
           'updatedAt'

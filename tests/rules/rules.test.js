@@ -240,6 +240,53 @@ test('orders: forged totals are denied and legitimate POS flows still work', asy
   );
 });
 
+test('POS: staff stock deductions work on admin-created records', async () => {
+  await seedBase();
+  await seed(async (db) => {
+    await db.doc('eateries/E1/inventory/i1').set({
+      eateryId: 'E1',
+      createdBy: 'admin',
+      name: 'Rice',
+      currentStock: 10,
+      minStock: 2,
+      unitCost: 10,
+      sellingPrice: 20,
+    });
+    await db.doc('eateries/E1/menu/m1').set({
+      eateryId: 'E1',
+      createdBy: 'admin',
+      name: 'Rice Bowl',
+      price: 100,
+      cost: 20,
+      availableServings: 5,
+      isAvailable: true,
+      inventoryItemId: 'i1',
+    });
+  });
+
+  const staff = db('staff');
+  await assertSucceeds(
+    staff.doc('eateries/E1/inventory/i1').update({
+      currentStock: 9,
+      updatedAt: new Date(),
+    }),
+  );
+  await assertSucceeds(
+    staff.doc('eateries/E1/menu/m1').update({
+      availableServings: 9,
+      isAvailable: true,
+      updatedAt: new Date(),
+    }),
+  );
+  await assertSucceeds(
+    staff.doc('eateries/E1/stock_movements/sale-o1-i1').set({
+      eateryId: 'E1',
+      itemId: 'i1',
+      type: 'saleConsumption',
+    }),
+  );
+});
+
 test('settings: staff writes are denied and sensitive reads stay restricted', async () => {
   await seedBase();
   await seed(async (firestore) => {
