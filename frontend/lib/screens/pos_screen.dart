@@ -71,6 +71,9 @@ class _POSScreenState extends State<POSScreen> {
   String? _cartSuccessMessage;
   Timer? _successDismissTimer;
 
+  bool _showPrinterUnavailableHint = false;
+  Timer? _printerHintDismissTimer;
+
   Object? _inlineError;
   String? _inlineErrorContext;
   VoidCallback? _inlineErrorRetry;
@@ -173,6 +176,7 @@ class _POSScreenState extends State<POSScreen> {
                   isNewOrder: !_addToExistingOrder,
                   baselineQtyByMenuId: _baselineQtyByMenuId,
                   showReceiptToggle: _showReceiptToggle,
+                  showPrinterUnavailableHint: _showPrinterUnavailableHint,
                   printerAvailable: _printerAvailability.available,
                   printerMessage: _printerAvailability.message,
                   printReceipt: _printReceipt,
@@ -203,10 +207,29 @@ class _POSScreenState extends State<POSScreen> {
       _printerAvailability.available;
 
   void _setPrintReceipt(bool value) {
-    if (!_printerAvailability.available) return;
+    if (!_printerAvailability.available) {
+      if (value) _flashPrinterUnavailableHint();
+      return;
+    }
     setState(() {
       _printReceipt = value;
       _cartSheetTick.value++;
+    });
+  }
+
+  void _flashPrinterUnavailableHint() {
+    _printerHintDismissTimer?.cancel();
+    if (!mounted) return;
+    setState(() {
+      _showPrinterUnavailableHint = true;
+      _cartSheetTick.value++;
+    });
+    _printerHintDismissTimer = Timer(const Duration(seconds: 2), () {
+      if (!mounted) return;
+      setState(() {
+        _showPrinterUnavailableHint = false;
+        _cartSheetTick.value++;
+      });
     });
   }
 
@@ -225,6 +248,10 @@ class _POSScreenState extends State<POSScreen> {
         _receiptPrintingEnabled = settings.receiptPrintingEnabled;
       }
       _printerAvailability = printer;
+      if (printer.available && _showPrinterUnavailableHint) {
+        _printerHintDismissTimer?.cancel();
+        _showPrinterUnavailableHint = false;
+      }
       if (settings != null &&
           (!_receiptSettingsLoaded ||
               (!wasEnabled && settings.receiptPrintingEnabled) ||
@@ -1025,6 +1052,7 @@ class _POSScreenState extends State<POSScreen> {
   @override
   void dispose() {
     _successDismissTimer?.cancel();
+    _printerHintDismissTimer?.cancel();
     _cartSheetTick.dispose();
     super.dispose();
   }
@@ -1707,6 +1735,8 @@ class _POSScreenState extends State<POSScreen> {
                                       isNewOrder: !_addToExistingOrder,
                                       baselineQtyByMenuId: _baselineQtyByMenuId,
                                       showReceiptToggle: _showReceiptToggle,
+                                      showPrinterUnavailableHint:
+                                          _showPrinterUnavailableHint,
                                       printerAvailable:
                                           _printerAvailability.available,
                                       printerMessage:
@@ -1761,6 +1791,7 @@ class _CartPanel extends StatelessWidget {
     required this.isNewOrder,
     required this.baselineQtyByMenuId,
     this.showReceiptToggle = false,
+    this.showPrinterUnavailableHint = false,
     required this.printerAvailable,
     required this.printerMessage,
     this.printReceipt = true,
@@ -1786,6 +1817,7 @@ class _CartPanel extends StatelessWidget {
   final bool isNewOrder;
   final Map<String, int> baselineQtyByMenuId;
   final bool showReceiptToggle;
+  final bool showPrinterUnavailableHint;
   final bool printerAvailable;
   final String printerMessage;
   final bool printReceipt;
@@ -2146,7 +2178,9 @@ class _CartPanel extends StatelessWidget {
                 ),
               ),
             ),
-          if (showReceiptToggle && !printerAvailable)
+          if (showReceiptToggle &&
+              showPrinterUnavailableHint &&
+              !printerAvailable)
             Padding(
               padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
               child: ReceiptPrinterHint(message: printerMessage),
@@ -2161,9 +2195,7 @@ class _CartPanel extends StatelessWidget {
                 subtitle: const Text('Print after this order is completed.'),
                 secondary: const Icon(Icons.receipt_long_outlined),
                 value: printReceipt,
-                onChanged: isLoading || !printerAvailable
-                    ? null
-                    : onPrintReceiptChanged,
+                onChanged: isLoading ? null : onPrintReceiptChanged,
               ),
             ),
           Padding(

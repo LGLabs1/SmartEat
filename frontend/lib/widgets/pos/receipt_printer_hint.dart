@@ -17,11 +17,9 @@ class ReceiptPrinterHint extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
       decoration: BoxDecoration(
-        color: theme.colorScheme.errorContainer.withValues(alpha: 0.72),
+        color:
+            theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.55),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: theme.colorScheme.error.withValues(alpha: 0.45),
-        ),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -29,7 +27,7 @@ class ReceiptPrinterHint extends StatelessWidget {
           Icon(
             Icons.print_disabled_outlined,
             size: 18,
-            color: theme.colorScheme.onErrorContainer,
+            color: theme.colorScheme.onSurfaceVariant,
           ),
           const SizedBox(width: 8),
           Expanded(
@@ -39,8 +37,8 @@ class ReceiptPrinterHint extends StatelessWidget {
                 Text(
                   'Receipt printer unavailable',
                   style: theme.textTheme.bodySmall?.copyWith(
-                    color: theme.colorScheme.onErrorContainer,
-                    fontWeight: FontWeight.w700,
+                    color: theme.colorScheme.onSurfaceVariant,
+                    fontWeight: FontWeight.w600,
                   ),
                 ),
                 if (detail.isNotEmpty)
@@ -49,8 +47,8 @@ class ReceiptPrinterHint extends StatelessWidget {
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: theme.textTheme.bodySmall?.copyWith(
-                      color: theme.colorScheme.onErrorContainer.withValues(
-                        alpha: 0.85,
+                      color: theme.colorScheme.onSurfaceVariant.withValues(
+                        alpha: 0.75,
                       ),
                     ),
                   ),
